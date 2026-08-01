@@ -1,75 +1,52 @@
-# React + TypeScript + Vite
+# CardPilot
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+CardPilot is a mobile-friendly sports trading card identifier. A collector can photograph the front of a card, optionally add the back, and receive a structured identification with visible evidence and a confidence score.
 
-Currently, two official plugins are available:
+## Current milestone
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Camera or photo-library upload
+- Optional card-back image for better identification
+- Server-side OpenAI vision analysis (the API key never reaches the browser)
+- Structured player, sport, team, year, manufacturer, set, number, variant, and feature fields
+- Honest partial matches, confidence, and follow-up guidance
+- Responsive review screen with a reminder to verify important details
 
-## React Compiler
+CardPilot does not yet perform catalog-backed matching, pricing, condition grading, or authenticity checks. Those are separate future milestones.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Run locally
 
-## Expanding the ESLint configuration
+1. Install dependencies:
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+   ```powershell
+   npm.cmd install
+   ```
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+2. Copy `.env.example` to `.env` and add an OpenAI API key from the [OpenAI API dashboard](https://platform.openai.com/api-keys):
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+   ```env
+   OPENAI_API_KEY=your_api_key_here
+   ```
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+3. Start the web app and identification server together:
 
+   ```powershell
+   npm.cmd run dev
+   ```
+
+4. Open `http://localhost:5173`.
+
+## Production-style run
+
+```powershell
+npm.cmd run build
+npm.cmd start
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Then open `http://localhost:8787`.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Notes
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
-```
+- Supported images: JPG, PNG, WebP, and GIF, up to 12 MB each.
+- The local server sends the selected images to the OpenAI Responses API for identification and does not write uploaded images to disk.
+- The default model is `gpt-5.6-sol`. Override it with `OPENAI_MODEL` if needed.
+- AI identification is a first-pass assistant, not a guarantee. Verify the printed card number, set, parallel, and serial numbering before a purchase, sale, or grading submission.
