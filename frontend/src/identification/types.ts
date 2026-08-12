@@ -116,6 +116,10 @@ export type EbayImageSearchCandidate = {
     value: string;
     currency: string | null;
   } | null;
+  shippingCost: {
+    value: string;
+    currency: string | null;
+  } | null;
   condition: string | null;
   conditionId: string | null;
   buyingOptions: string[];
@@ -153,6 +157,59 @@ export type Correction = {
   originalValue: FieldValue;
   originalConfidence: number;
   correctedValue: FieldValue;
+};
+
+export type ActiveMarketListing = {
+  itemId: string;
+  title: string;
+  itemWebUrl: string | null;
+  imageUrl: string | null;
+  condition: string | null;
+  itemPriceCents: number;
+  shippingCostCents: number | null;
+  totalPriceCents: number;
+  currency: string;
+  matchScore: number;
+  matchedSignals: string[];
+  matchTier: "confirmed" | "strict" | "broader";
+  confirmedReference: boolean;
+};
+
+export type ActiveMarketGroup = {
+  id: string;
+  label: string;
+  classification: "raw" | "graded";
+  matchTier: "exact" | "broader";
+  currency: string;
+  listingCount: number;
+  medianAmountCents: number;
+  typicalRange: {
+    lowAmountCents: number;
+    highAmountCents: number;
+  };
+  outlierCount: number;
+  confidence: "low" | "medium" | "high";
+  listings: ActiveMarketListing[];
+};
+
+export type ActiveMarketSnapshot = {
+  schemaVersion: "1.0";
+  kind: "active_asking_snapshot";
+  source: {
+    provider: "ebay_browse";
+    displayName: "eBay Buy It Now";
+    supportsSoldHistory: false;
+  };
+  marketplaceId: string;
+  query: string;
+  searchedAt: string;
+  candidateCount: number;
+  matchedCount: number;
+  exactMatchedCount: number;
+  broaderMatchedCount: number;
+  excludedCount: number;
+  groups: ActiveMarketGroup[];
+  disclaimer: string;
 };
 
 export type SavedCollectionCard = {

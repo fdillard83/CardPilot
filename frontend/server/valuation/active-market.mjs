@@ -1,0 +1,654 @@
+const activeMarketDisclaimer =
+  "Active Buy It Now asking prices are not completed sales, appraisals, or guaranteed sale values. Shipping is included only when eBay provides it in search results.";
+
+const commonWords = new Set([
+  "the",
+  "and",
+  "card",
+  "cards",
+  "baseball",
+  "basketball",
+  "football",
+  "hockey",
+  "soccer",
+  "series",
+]);
+
+const parallelWords = new Set([
+  "aqua",
+  "atomic",
+  "black",
+  "blue",
+  "crackle",
+  "foil",
+  "gold",
+  "green",
+  "lava",
+  "mosaic",
+  "negative",
+  "orange",
+  "pink",
+  "prizm",
+  "purple",
+  "rainbow",
+  "raywave",
+  "red",
+  "refractor",
+  "sapphire",
+  "sepia",
+  "shimmer",
+  "silver",
+  "speckle",
+  "superfractor",
+  "teal",
+  "wave",
+]);
+
+const genericParallelWords = new Set(["foil", "prizm", "refractor"]);
+const productVariantWords = new Set([
+  "bowman",
+  "cosmic",
+  "donruss",
+  "finest",
+  "heritage",
+  "museum",
+  "optic",
+  "platinum",
+  "prizm",
+  "sapphire",
+  "select",
+  "sterling",
+  "update",
+]);
+
+function cleanText(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizedWords(value) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function compact(value) {
+  return normalizedWords(value).join("");
+}
+
+function significantWords(value) {
+  return normalizedWords(value).filter(
+    (word) => word.length > 1 && !commonWords.has(word),
+  );
+}
+
+function titleHasWords(title, value) {
+  const titleWords = new Set(normalizedWords(title));
+  const expected = significantWords(value);
+  return expected.length > 0 && expected.every((word) => titleWords.has(word));
+}
+
+function titleHasCardNumber(title, cardNumber) {
+  const expected = compact(cardNumber).replace(/^0+/, "");
+  if (!expected) return false;
+  return normalizedWords(title).some(
+    (word) => word.replace(/^0+/, "") === expected,
+  ) || compact(title).includes(expected);
+}
+
+function printRunFromSerial(serialNumber) {
+  const match = cleanText(serialNumber).match(
+    /(?:^|\s)(?:\d+\s*)?\/\s*(\d+)(?:\s|$)/,
+  );
+  return match?.[1] ?? null;
+}
+
+function titleHasPrintRun(title, printRun) {
+  if (!printRun) return false;
+  const escaped = printRun.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `(?:/\\s*${escaped}\\b|\\b(?:out\\s+of|numbered\\s+(?:to|out\\s+of))\\s+${escaped}\\b)`,
+    "i",
+  ).test(title);
+}
+
+function titleYears(title) {
+  return [...cleanText(title).matchAll(/\b(?:19|20)\d{2}\b/g)].map(
+    (match) => match[0],
+  );
+}
+
+function titlePrintRuns(title) {
+  const runs = [
+    ...cleanText(title).matchAll(
+      /(?:^|[^\d])(?:\d{1,3}\s*)?\/\s*(\d{1,4})\b/g,
+    ),
+    ...cleanText(title).matchAll(
+      /\b(?:out\s+of|numbered\s+(?:to|out\s+of))\s+(\d{1,4})\b/gi,
+    ),
+  ].map((match) => match[1].replace(/^0+/, "") || "0");
+  return [...new Set(runs)];
+}
+
+function normalizedCardNumber(value) {
+  return compact(value).replace(/^0+/, "");
+}
+
+function titleCardNumbers(title) {
+  return [...cleanText(title).matchAll(/(?:#|\bno\.?)\s*([a-z0-9][a-z0-9-]*)/gi)]
+    .map((match) => normalizedCardNumber(match[1]))
+    .filter(Boolean);
+}
+
+function hasBroaderMatchConflict(title, fields) {
+  const expectedYear = cleanText(fields.year);
+  const years = titleYears(title);
+  if (expectedYear && years.length > 0 && !years.includes(expectedYear)) {
+    return true;
+  }
+
+  const expectedPrintRun = printRunFromSerial(fields.serialNumber)?.replace(
+    /^0+/,
+    "",
+  );
+  const printRuns = titlePrintRuns(title);
+  if (
+    expectedPrintRun &&
+    printRuns.length > 0 &&
+    !printRuns.includes(expectedPrintRun)
+  ) {
+    return true;
+  }
+
+  const expectedCardNumber = normalizedCardNumber(fields.cardNumber);
+  const cardNumbers = titleCardNumbers(title);
+  if (
+    expectedCardNumber &&
+    cardNumbers.length > 0 &&
+    !cardNumbers.includes(expectedCardNumber)
+  ) {
+    return true;
+  }
+
+  const expectedParallelWords = new Set(
+    normalizedWords(fields.parallel).filter((word) => parallelWords.has(word)),
+  );
+  if (expectedParallelWords.size > 0) {
+    const conflictingParallel = normalizedWords(title)
+      .filter((word) => parallelWords.has(word))
+      .some(
+        (word) =>
+          !expectedParallelWords.has(word) && !genericParallelWords.has(word),
+      );
+    if (conflictingParallel) return true;
+  }
+
+  const expectedProductWords = new Set(
+    normalizedWords(
+      [fields.manufacturer, fields.product, fields.setOrInsert]
+        .map(cleanText)
+        .filter(Boolean)
+        .join(" "),
+    ),
+  );
+  return normalizedWords(title).some(
+    (word) =>
+      productVariantWords.has(word) && !expectedProductWords.has(word),
+  );
+}
+
+function uniqueParts(parts) {
+  return parts.filter(
+    (part, index) =>
+      part &&
+      parts.findIndex(
+        (candidate) => candidate.toLowerCase() === part.toLowerCase(),
+      ) === index,
+  );
+}
+
+export function buildActiveMarketQuery(fields) {
+  const printRun = printRunFromSerial(fields.serialNumber);
+  return uniqueParts(
+    [
+      fields.year,
+      fields.player,
+      fields.manufacturer,
+      fields.product,
+      fields.setOrInsert,
+      fields.cardNumber
+        ? `#${cleanText(fields.cardNumber).replace(/^#/, "")}`
+        : "",
+      fields.parallel,
+      printRun ? `/${printRun}` : "",
+      fields.autograph === true ? "autograph" : "",
+      fields.memorabilia === true ? "patch relic" : "",
+    ]
+      .map(cleanText)
+      .filter(Boolean),
+  )
+    .join(" ")
+    .slice(0, 500);
+}
+
+function obviousMismatch(title, fields) {
+  const normalized = ` ${normalizedWords(title).join(" ")} `;
+  if (
+    /\b(lot|break|reprint|replica|facsimile|proxy|digital|custom)\b/i.test(
+      normalized,
+    ) ||
+    /\b(complete|team)\s+set\b/i.test(normalized) ||
+    /\b(sealed|unopened|hobby|blaster)\s+(box|pack|case)\b/i.test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+
+  const autographTitle = /\b(auto|autograph|autographed|signed)\b/i.test(
+    normalized,
+  );
+  if (fields.autograph === true && !autographTitle) return true;
+  if (fields.autograph === false && autographTitle) return true;
+
+  const memorabiliaTitle = /\b(patch|relic|swatch|memorabilia)\b/i.test(
+    normalized,
+  );
+  if (fields.memorabilia === true && !memorabiliaTitle) return true;
+  if (fields.memorabilia === false && memorabiliaTitle) return true;
+
+  if (!cleanText(fields.parallel)) {
+    const titleWords = normalizedWords(title);
+    if (titleWords.some((word) => parallelWords.has(word))) return true;
+  }
+  return false;
+}
+
+function evaluateMatch(candidate, fields) {
+  const title = candidate.title;
+  if (obviousMismatch(title, fields)) return null;
+
+  const checks = [
+    {
+      id: "player",
+      weight: 5,
+      required: Boolean(cleanText(fields.player)),
+      matched: titleHasWords(title, fields.player),
+    },
+    {
+      id: "year",
+      weight: 3,
+      required: Boolean(cleanText(fields.year)),
+      matched: titleHasWords(title, fields.year),
+    },
+    {
+      id: "card_number",
+      weight: 4,
+      required: Boolean(cleanText(fields.cardNumber)),
+      matched: titleHasCardNumber(title, fields.cardNumber),
+    },
+    {
+      id: "parallel",
+      weight: 4,
+      required: Boolean(cleanText(fields.parallel)),
+      matched: titleHasWords(title, fields.parallel),
+    },
+    {
+      id: "print_run",
+      weight: 4,
+      required: Boolean(printRunFromSerial(fields.serialNumber)),
+      matched: titleHasPrintRun(
+        title,
+        printRunFromSerial(fields.serialNumber),
+      ),
+    },
+    {
+      id: "product",
+      weight: 2,
+      required: false,
+      matched: titleHasWords(title, fields.product),
+    },
+    {
+      id: "set",
+      weight: 2,
+      required: false,
+      matched: titleHasWords(title, fields.setOrInsert),
+    },
+  ].filter(
+    (check) =>
+      check.required ||
+      (check.id === "product" && cleanText(fields.product)) ||
+      (check.id === "set" && cleanText(fields.setOrInsert)),
+  );
+
+  if (checks.some((check) => check.required && !check.matched)) return null;
+  const possibleWeight = checks.reduce((sum, check) => sum + check.weight, 0);
+  const matchedWeight = checks
+    .filter((check) => check.matched)
+    .reduce((sum, check) => sum + check.weight, 0);
+  const score = possibleWeight > 0 ? matchedWeight / possibleWeight : 0;
+  if (score < 0.65) return null;
+  return {
+    score: Math.round(score * 100) / 100,
+    matchedSignals: checks
+      .filter((check) => check.matched)
+      .map((check) => check.id),
+  };
+}
+
+function evaluateBroaderMatch(candidate, fields) {
+  const title = candidate.title;
+  if (
+    obviousMismatch(title, fields) ||
+    !cleanText(fields.player) ||
+    !titleHasWords(title, fields.player) ||
+    hasBroaderMatchConflict(title, fields)
+  ) {
+    return null;
+  }
+
+  const checks = [
+    { id: "player", weight: 5, matched: true },
+    { id: "year", weight: 3, matched: titleHasWords(title, fields.year) },
+    {
+      id: "card_number",
+      weight: 4,
+      matched: titleHasCardNumber(title, fields.cardNumber),
+    },
+    {
+      id: "parallel",
+      weight: 4,
+      matched: titleHasWords(title, fields.parallel),
+    },
+    {
+      id: "print_run",
+      weight: 4,
+      matched: titleHasPrintRun(
+        title,
+        printRunFromSerial(fields.serialNumber),
+      ),
+    },
+    { id: "product", weight: 2, matched: titleHasWords(title, fields.product) },
+    { id: "set", weight: 2, matched: titleHasWords(title, fields.setOrInsert) },
+  ].filter(
+    (check) =>
+      check.id === "player" ||
+      (check.id === "year" && cleanText(fields.year)) ||
+      (check.id === "card_number" && cleanText(fields.cardNumber)) ||
+      (check.id === "parallel" && cleanText(fields.parallel)) ||
+      (check.id === "print_run" && printRunFromSerial(fields.serialNumber)) ||
+      (check.id === "product" && cleanText(fields.product)) ||
+      (check.id === "set" && cleanText(fields.setOrInsert)),
+  );
+  const matchedSignals = checks
+    .filter((check) => check.matched)
+    .map((check) => check.id);
+  if (matchedSignals.every((signal) => signal === "player")) return null;
+  const expectedDiscriminators = checks
+    .filter((check) =>
+      ["card_number", "parallel", "print_run"].includes(check.id),
+    )
+    .map((check) => check.id);
+  if (
+    expectedDiscriminators.length > 0 &&
+    !expectedDiscriminators.some((signal) => matchedSignals.includes(signal))
+  ) {
+    return null;
+  }
+
+  const possibleWeight = checks.reduce((sum, check) => sum + check.weight, 0);
+  const matchedWeight = checks
+    .filter((check) => check.matched)
+    .reduce((sum, check) => sum + check.weight, 0);
+  const score = possibleWeight > 0 ? matchedWeight / possibleWeight : 0;
+  if (score < 0.5) return null;
+  return {
+    score: Math.round(score * 100) / 100,
+    matchedSignals,
+  };
+}
+
+function parseCents(price) {
+  const value = Number(price?.value);
+  return Number.isFinite(value) && value >= 0 ? Math.round(value * 100) : null;
+}
+
+function detectedGrade(title, condition) {
+  const text = `${title} ${condition ?? ""}`;
+  const match = text.match(
+    /\b(PSA|BGS|SGC|CGC|CSG|TAG|HGA|GMA|ISA|KSA)\s*(10|9\.5|9|8\.5|8|7\.5|7|6\.5|6|5\.5|5|4\.5|4|3\.5|3|2\.5|2|1\.5|1)\b/i,
+  );
+  if (match) {
+    const company = match[1].toUpperCase();
+    const grade = match[2];
+    return {
+      id: `${company.toLowerCase()}_${grade.replace(".", "_")}`,
+      label: `${company} ${grade}`,
+      classification: "graded",
+    };
+  }
+  if (/\bgraded\b/i.test(text)) {
+    return { id: "graded_other", label: "Other graded", classification: "graded" };
+  }
+  return { id: "raw", label: "Raw / ungraded", classification: "raw" };
+}
+
+function quantile(sorted, percentile) {
+  if (sorted.length === 1) return sorted[0];
+  const position = (sorted.length - 1) * percentile;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sorted[lower];
+  return Math.round(
+    sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower),
+  );
+}
+
+function groupStatistics(listings) {
+  const sorted = [...listings].sort(
+    (left, right) => left.totalPriceCents - right.totalPriceCents,
+  );
+  let included = sorted;
+  if (sorted.length >= 5) {
+    const prices = sorted.map((listing) => listing.totalPriceCents);
+    const firstQuartile = quantile(prices, 0.25);
+    const thirdQuartile = quantile(prices, 0.75);
+    const interquartileRange = thirdQuartile - firstQuartile;
+    const lowerFence = Math.max(0, firstQuartile - interquartileRange * 1.5);
+    const upperFence = thirdQuartile + interquartileRange * 1.5;
+    included = sorted.filter(
+      (listing) =>
+        listing.totalPriceCents >= lowerFence &&
+        listing.totalPriceCents <= upperFence,
+    );
+  }
+  const prices = included.map((listing) => listing.totalPriceCents);
+  const medianAmountCents = quantile(prices, 0.5);
+  return {
+    included,
+    medianAmountCents,
+    typicalRange: {
+      lowAmountCents: quantile(prices, included.length >= 4 ? 0.25 : 0),
+      highAmountCents: quantile(prices, included.length >= 4 ? 0.75 : 1),
+    },
+    outlierCount: sorted.length - included.length,
+    confidence:
+      included.length >= 5
+        ? "high"
+        : included.length >= 3
+          ? "medium"
+          : "low",
+  };
+}
+
+export function buildActiveMarketSnapshot({
+  fields,
+  marketplaceId,
+  candidates,
+  confirmedReferenceItemId = null,
+  searchedAt = new Date().toISOString(),
+}) {
+  const query = buildActiveMarketQuery(fields);
+  const eligibleCandidates = candidates.filter((candidate) => {
+    if (!candidate.buyingOptions.includes("FIXED_PRICE")) return false;
+    const itemPriceCents = parseCents(candidate.price);
+    const currency = candidate.price?.currency;
+    return itemPriceCents !== null && Boolean(currency);
+  });
+
+  function listingFromMatch(candidate, match, matchTier) {
+    const itemPriceCents = parseCents(candidate.price);
+    const currency = candidate.price.currency;
+    const shippingCostCents =
+      candidate.shippingCost?.currency === currency
+        ? parseCents(candidate.shippingCost)
+        : null;
+    return {
+      itemId: candidate.itemId,
+      title: candidate.title,
+      itemWebUrl: candidate.itemWebUrl,
+      imageUrl: candidate.imageUrl,
+      condition: candidate.condition,
+      itemPriceCents,
+      shippingCostCents,
+      totalPriceCents: itemPriceCents + (shippingCostCents ?? 0),
+      currency,
+      matchScore: match.score,
+      matchedSignals: match.matchedSignals,
+      matchTier,
+      confirmedReference: matchTier === "confirmed",
+      grade: detectedGrade(candidate.title, candidate.condition),
+    };
+  }
+
+  const exactListings = eligibleCandidates.flatMap((candidate) => {
+    const isConfirmedReference =
+      Boolean(confirmedReferenceItemId) &&
+      candidate.itemId === confirmedReferenceItemId;
+    const match = isConfirmedReference
+      ? { score: 1, matchedSignals: ["confirmed_reference"] }
+      : evaluateMatch(candidate, fields);
+    if (!match) return [];
+    return [
+      listingFromMatch(
+        candidate,
+        match,
+        isConfirmedReference ? "confirmed" : "strict",
+      ),
+    ];
+  });
+  const exactItemIds = new Set(exactListings.map((listing) => listing.itemId));
+  const broaderListings =
+    exactListings.length < 3
+      ? eligibleCandidates.flatMap((candidate) => {
+          if (exactItemIds.has(candidate.itemId)) return [];
+          const match = evaluateBroaderMatch(candidate, fields);
+          return match
+            ? [listingFromMatch(candidate, match, "broader")]
+            : [];
+        })
+      : [];
+  const matchedListings = [...exactListings, ...broaderListings];
+
+  const buckets = new Map();
+  for (const listing of matchedListings) {
+    const groupMatchTier =
+      listing.matchTier === "broader" ? "broader" : "exact";
+    const key = `${groupMatchTier}:${listing.grade.id}:${listing.currency}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(listing);
+  }
+  const groups = [...buckets.values()]
+    .map((listings) => {
+      const statistics = groupStatistics(listings);
+      const { grade, currency } = listings[0];
+      const matchTier =
+        listings[0].matchTier === "broader" ? "broader" : "exact";
+      return {
+        id: matchTier === "broader" ? `broader_${grade.id}` : grade.id,
+        label: grade.label,
+        classification: grade.classification,
+        matchTier,
+        currency,
+        listingCount: statistics.included.length,
+        medianAmountCents: statistics.medianAmountCents,
+        typicalRange: statistics.typicalRange,
+        outlierCount: statistics.outlierCount,
+        confidence:
+          matchTier === "broader" ? "low" : statistics.confidence,
+        listings: statistics.included
+          .sort((left, right) => right.matchScore - left.matchScore)
+          .slice(0, 10)
+          .map(({ grade: _grade, ...listing }) => listing),
+      };
+    })
+    .sort((left, right) => {
+      if (left.matchTier !== right.matchTier) {
+        return left.matchTier === "exact" ? -1 : 1;
+      }
+      if (left.classification !== right.classification) {
+        return left.classification === "raw" ? -1 : 1;
+      }
+      return right.listingCount - left.listingCount;
+    });
+
+  return {
+    schemaVersion: "1.0",
+    kind: "active_asking_snapshot",
+    source: {
+      provider: "ebay_browse",
+      displayName: "eBay Buy It Now",
+      supportsSoldHistory: false,
+    },
+    marketplaceId,
+    query,
+    searchedAt,
+    candidateCount: candidates.length,
+    matchedCount: matchedListings.length,
+    exactMatchedCount: exactListings.length,
+    broaderMatchedCount: broaderListings.length,
+    excludedCount: candidates.length - matchedListings.length,
+    groups,
+    disclaimer: activeMarketDisclaimer,
+  };
+}
+
+export class ActiveMarketService {
+  constructor({ ebayClient, now = () => Date.now(), cacheDurationMs = 10 * 60 * 1000 }) {
+    if (!ebayClient) throw new TypeError("An eBay Browse client is required.");
+    this.ebayClient = ebayClient;
+    this.now = now;
+    this.cacheDurationMs = cacheDurationMs;
+    this.cache = new Map();
+  }
+
+  async snapshot(fields, { confirmedReferenceItemId = null } = {}) {
+    const query = buildActiveMarketQuery(fields);
+    if (!query) {
+      throw new TypeError(
+        "Add a player, year, set, or card number before checking the active market.",
+      );
+    }
+    const cacheKey = `${query.toLowerCase()}|reference:${confirmedReferenceItemId ?? "none"}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && cached.expiresAt > this.now()) return cached.snapshot;
+
+    const result = await this.ebayClient.searchByKeywords({ query, limit: 50 });
+    const snapshot = buildActiveMarketSnapshot({
+      fields,
+      marketplaceId: result.marketplaceId,
+      candidates: result.candidates,
+      confirmedReferenceItemId,
+      searchedAt: new Date(this.now()).toISOString(),
+    });
+    this.cache.set(cacheKey, {
+      snapshot,
+      expiresAt: this.now() + this.cacheDurationMs,
+    });
+    return snapshot;
+  }
+}
+
+export { activeMarketDisclaimer };

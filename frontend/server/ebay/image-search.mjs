@@ -2,6 +2,8 @@ import { EbayApiError } from "./oauth-client.mjs";
 
 const EBAY_PRODUCTION_IMAGE_SEARCH_URL =
   "https://api.ebay.com/buy/browse/v1/item_summary/search_by_image";
+const EBAY_PRODUCTION_KEYWORD_SEARCH_URL =
+  "https://api.ebay.com/buy/browse/v1/item_summary/search";
 const EBAY_PRODUCTION_ITEM_URL =
   "https://api.ebay.com/buy/browse/v1/item";
 
@@ -40,6 +42,15 @@ function normalizePrice(price) {
   };
 }
 
+function normalizeShippingCost(shippingOptions) {
+  if (!Array.isArray(shippingOptions)) return null;
+  for (const option of shippingOptions) {
+    const cost = normalizePrice(option?.shippingCost);
+    if (cost) return cost;
+  }
+  return null;
+}
+
 function normalizeCandidate(item, index) {
   const itemId = optionalString(item?.itemId);
   if (!itemId) return null;
@@ -53,6 +64,7 @@ function normalizeCandidate(item, index) {
     itemWebUrl: optionalString(item.itemWebUrl),
     imageUrl: optionalString(item.image?.imageUrl),
     price: normalizePrice(item.price),
+    shippingCost: normalizeShippingCost(item.shippingOptions),
     condition: optionalString(item.condition),
     conditionId: optionalString(item.conditionId),
     buyingOptions: Array.isArray(item.buyingOptions)
@@ -181,6 +193,7 @@ export class EbayImageSearchClient {
     marketplaceId = "EBAY_US",
     fetchImpl = globalThis.fetch,
     searchUrl = EBAY_PRODUCTION_IMAGE_SEARCH_URL,
+    keywordSearchUrl = EBAY_PRODUCTION_KEYWORD_SEARCH_URL,
     itemUrl = EBAY_PRODUCTION_ITEM_URL,
     timeoutMs = 15_000,
   }) {
@@ -192,6 +205,7 @@ export class EbayImageSearchClient {
     this.marketplaceId = marketplaceId;
     this.fetch = fetchImpl;
     this.searchUrl = searchUrl;
+    this.keywordSearchUrl = keywordSearchUrl;
     this.itemUrl = itemUrl;
     this.timeoutMs = timeoutMs;
   }
@@ -218,6 +232,49 @@ export class EbayImageSearchClient {
       .map(normalizeCandidate)
       .filter(Boolean);
 
+    return {
+      marketplaceId: this.marketplaceId,
+      total: Number.isInteger(payload?.total) ? payload.total : candidates.length,
+      candidates,
+    };
+  }
+
+  async searchByKeywords({ query, limit = 50, categoryId = "212" }) {
+    if (typeof query !== "string" || !query.trim()) {
+      throw new TypeError("An eBay search description is required.");
+    }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+      throw new TypeError("The eBay search limit must be 1 through 200.");
+    }
+
+    const response = await this.authorizedRequest((accessToken) =>
+      this.requestKeywordSearch({
+        accessToken,
+        query: query.trim(),
+        limit,
+        categoryId,
+      }),
+    );
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new EbayApiError("eBay Browse keyword search failed.", {
+        service: "browse",
+        status: response.status,
+        code: ebayErrorCode(payload),
+      });
+    }
+
+    const itemSummaries = Array.isArray(payload?.itemSummaries)
+      ? payload.itemSummaries
+      : [];
+    const candidates = itemSummaries
+      .map(normalizeCandidate)
+      .filter(
+        (candidate) =>
+          candidate &&
+          candidate.price &&
+          candidate.buyingOptions.includes("FIXED_PRICE"),
+      );
     return {
       marketplaceId: this.marketplaceId,
       total: Number.isInteger(payload?.total) ? payload.total : candidates.length,
@@ -304,6 +361,36 @@ export class EbayImageSearchClient {
     }
   }
 
+  async requestKeywordSearch({
+    accessToken,
+    query,
+    limit,
+    categoryId,
+  }) {
+    const url = new URL(this.keywordSearchUrl);
+    url.searchParams.set("q", query);
+    url.searchParams.set("limit", String(limit));
+    url.searchParams.set("filter", "buyingOptions:{FIXED_PRICE}");
+    if (categoryId) url.searchParams.set("category_ids", categoryId);
+
+    try {
+      return await this.fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${accessToken}`,
+          "X-EBAY-C-MARKETPLACE-ID": this.marketplaceId,
+        },
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (cause) {
+      throw new EbayApiError("The eBay Browse API could not be reached.", {
+        service: "browse",
+        cause,
+      });
+    }
+  }
+
   async requestItem({ accessToken, itemId }) {
     const url = `${this.itemUrl}/${encodeURIComponent(itemId)}`;
 
@@ -328,6 +415,7 @@ export class EbayImageSearchClient {
 
 export {
   EBAY_PRODUCTION_IMAGE_SEARCH_URL,
+  EBAY_PRODUCTION_KEYWORD_SEARCH_URL,
   EBAY_PRODUCTION_ITEM_URL,
   imageBase64FromDataUrl,
   suggestedCardNumberFromTitle,

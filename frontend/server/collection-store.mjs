@@ -96,6 +96,13 @@ export class CollectionStore {
       .map(publicRecord);
   }
 
+  async get(collectionId) {
+    await this.mutation;
+    const records = await this.readRecords();
+    const record = records.find((item) => item.collectionId === collectionId);
+    return record ? publicRecord(record) : null;
+  }
+
   async create(input) {
     const validated = CollectionCreateSchema.parse(input);
     return this.enqueue(async () => {

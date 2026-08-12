@@ -54,6 +54,11 @@ test("collection records persist images and support update and removal", async (
     assert.match(created.images.backUrl, /\/images\/back$/);
     assert.equal((await store.list()).length, 1);
 
+    assert.equal(
+      (await store.get(created.collectionId)).collectionId,
+      created.collectionId,
+    );
+
     const frontImage = await store.image(created.collectionId, "front");
     assert.equal(frontImage.mimeType, "image/jpeg");
     assert.equal((await readFile(frontImage.filePath)).toString(), "foo");

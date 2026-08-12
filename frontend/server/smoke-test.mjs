@@ -18,6 +18,9 @@ try {
   if (!healthResponse.ok || health.ok !== true) {
     throw new Error("The health endpoint did not return a healthy response.");
   }
+  if (typeof health.services?.activeMarketConfigured !== "boolean") {
+    throw new Error("The health endpoint did not report active-market readiness.");
+  }
 
   const homeResponse = await fetch(baseUrl);
   const home = await homeResponse.text();
@@ -69,6 +72,15 @@ try {
   const collection = await collectionResponse.json();
   if (!collectionResponse.ok || !Array.isArray(collection.cards)) {
     throw new Error("The collection endpoint did not return a card list.");
+  }
+
+  const missingActiveMarketResponse = await fetch(
+    `${baseUrl}/api/collection/not-a-card/active-market`,
+  );
+  if (missingActiveMarketResponse.status !== 404) {
+    throw new Error(
+      `The active-market endpoint returned ${missingActiveMarketResponse.status}; expected 404 for a missing card.`,
+    );
   }
 
   const invalidCollectionResponse = await fetch(`${baseUrl}/api/collection`, {

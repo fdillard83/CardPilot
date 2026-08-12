@@ -22,12 +22,14 @@ CardPilot is a mobile-friendly sports trading card identifier. A collector start
 - Local correction logging that retains original values and never treats one edit as global truth
 - Private local collection storage with saved photos, search, filters, editing, and removal
 - Automatic collection save and navigation when the collector confirms a card
+- On-demand eBay Buy It Now snapshots with raw and graded cards separated
 - Optimized upload payloads, parallel eBay matching, and visible scan progress
 - A repeatable, opt-in accuracy evaluation library for verified sample cards
 
 CardPilot now has a small source-linked catalog adapter for the active Nolan Ryan regression, but it is not yet a complete trading-card catalog. The provider boundary and versioned result are designed for future valuation and verification engines.
 
-CardPilot now includes local collection tracking. Full market valuation,
+CardPilot now includes local collection tracking and descriptive active-listing
+snapshots. Sold-sales valuation,
 condition grading, listing automation, authentication, accounts, and cloud sync
 remain future milestones. See [the identification architecture](docs/identification-architecture.md)
 and [sold-sales provider options](docs/sold-sales-provider-options.md).
@@ -44,7 +46,9 @@ and [sold-sales provider options](docs/sold-sales-provider-options.md).
    API key from the [OpenAI API dashboard](https://platform.openai.com/api-keys).
    To enable image-search candidates, also add Production credentials from
    [eBay Application Keys](https://developer.ebay.com/my/keys) and select a
-   supported `EBAY_MARKETPLACE_ID`.
+   supported `EBAY_MARKETPLACE_ID`. The same eBay credentials power both image
+   matching and collection active-market searches. Keep every credential
+   server-side and never prefix it with `VITE_`.
 
 3. Start the web app and identification server together:
 
@@ -102,6 +106,38 @@ comparables. Sold-price history requires a separately authorized data source
 and should be presented as a distinct valuation signal rather than mixed into
 visual identification.
 
+## Active-market route
+
+`GET /api/collection/:collectionId/active-market` builds a keyword search from
+the collector-confirmed details and queries the eBay Production Browse API for
+fixed-price listings. An exact serial stamp such as `63/85` is reduced to the
+product-level print run `/85`, so one physical copy is not confused with
+another.
+
+CardPilot rejects obvious lots, boxes, reprints, conflicting parallels, and
+other title mismatches. Closely matching listings are grouped into raw and
+grade-specific sections. Each section shows the median active ask, a typical
+asking range, and its source listings. Unusually priced outliers are excluded
+when enough listings exist. Item price and API-supplied shipping are kept
+separate and combined only when they use the same currency.
+
+If the collector confirmed an eBay listing as the same card during
+identification, that still-active listing is retained as a trusted reference
+even when its seller title omits otherwise required details such as the year.
+
+When fewer than three exact listings are available, CardPilot also runs a
+guarded fallback pass. It can tolerate missing seller-title details, but still
+rejects conflicting players, years, card numbers, parallels, product variants,
+and serial print runs. Broader comparisons are grouped separately, capped at
+low confidence, and never blended into the exact-match median or range.
+
+Snapshots are fetched on demand and cached in server memory for ten minutes;
+they are not stored on collection records. The Browse API supplies active
+seller asking prices rather than completed sales, so the interface never labels
+the result as sold comps, fair market value, or an appraisal. True sold comps
+remain reserved for a separately licensed data provider. See
+[sold-sales provider options](docs/sold-sales-provider-options.md).
+
 ## Checks
 
 ```powershell
@@ -121,6 +157,7 @@ API usage.
 - Supported images: JPG, PNG, WebP, and GIF, up to 12 MB each.
 - The local server sends the selected images to the OpenAI Responses API for identification and does not write uploaded images to disk.
 - eBay image search sends only the requested front image to the Production Browse API. OAuth tokens are cached in server memory and refreshed before expiry; the Client Secret and access tokens are never returned to browser code.
+- eBay keyword searches run through the Express server. The Client Secret and cached OAuth access token are never returned to browser code.
 - User corrections are stored locally in `.data/corrections.jsonl`; that directory is ignored by Git.
 - Saved collection records and card photos are stored under `.data`; that directory is ignored by Git.
 - Front-only scans use `gpt-5.4-mini` by default for lower latency and reliable visual extraction. Override it with `OPENAI_FAST_MODEL`.

@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   fieldDefinitions,
   formatFieldValue,
+  type ActiveMarketSnapshot,
   type FieldKey,
   type FieldValue,
   type SavedCollectionCard,
@@ -26,6 +27,198 @@ function createDraft(card: SavedCollectionCard) {
   return { ...card.fields };
 }
 
+function formatPrice(amountCents: number, currency: string) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+  }).format(amountCents / 100);
+}
+
+function confidenceLabel(confidence: "low" | "medium" | "high") {
+  if (confidence === "high") return "Stronger snapshot";
+  if (confidence === "medium") return "Useful snapshot";
+  return "Limited snapshot";
+}
+
+function ActiveMarketPanel({
+  card,
+  snapshot,
+  isLoading,
+  error,
+  onRetry,
+}: {
+  card: SavedCollectionCard;
+  snapshot: ActiveMarketSnapshot | null;
+  isLoading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  return (
+    <section
+      className="valuation-panel"
+      aria-labelledby={`active-market-${card.collectionId}`}
+    >
+      <div className="valuation-heading">
+        <div>
+          <span className="step-label">Current marketplace snapshot</span>
+          <h3 id={`active-market-${card.collectionId}`}>
+            Comparable Buy It Now listings
+          </h3>
+        </div>
+        <span className="valuation-source">eBay Buy It Now</span>
+      </div>
+
+      {error && (
+        <div className="valuation-error" role="alert">
+          <strong>Active listings are unavailable.</strong>
+          <span>{error}</span>
+          <button type="button" onClick={onRetry}>Try again</button>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="valuation-loading" role="status">
+          <span className="spinner" /> Finding closely matching active listings...
+        </div>
+      ) : snapshot ? (
+        <>
+          <div className="market-summary">
+            <div>
+              <span>Search used</span>
+              <strong>{snapshot.query}</strong>
+            </div>
+            <div className="valuation-meta">
+              <span>{snapshot.exactMatchedCount} exact matches</span>
+              {snapshot.broaderMatchedCount > 0 && (
+                <span>{snapshot.broaderMatchedCount} broader comparisons</span>
+              )}
+              <span>{snapshot.excludedCount} results excluded</span>
+              <span>Checked {new Date(snapshot.searchedAt).toLocaleString()}</span>
+            </div>
+          </div>
+
+          {snapshot.broaderMatchedCount > 0 && (
+            <div className="market-fallback-note">
+              <strong>Broader comparison mode was used.</strong>
+              <span>
+                Too few exact listings were available, so these lower-confidence
+                comparisons relax missing title details while still rejecting
+                conflicting players, years, parallels, card numbers, and print runs.
+              </span>
+            </div>
+          )}
+
+          {snapshot.groups.length > 0 ? (
+            <div className="market-groups">
+              {snapshot.groups.map((group) => (
+                <article className="market-group" key={`${group.id}-${group.currency}`}>
+                  <div className="market-group-heading">
+                    <div>
+                      <span>
+                        {group.matchTier === "broader" ? "Broader " : ""}
+                        {group.classification === "raw" ? "ungraded comparisons" : "graded comparisons"}
+                      </span>
+                      <h4>{group.label}</h4>
+                    </div>
+                    <span className={`market-confidence market-confidence-${group.confidence}`}>
+                      {confidenceLabel(group.confidence)}
+                    </span>
+                  </div>
+                  <div className="valuation-prices">
+                    <div>
+                      <span>Median active ask</span>
+                      <strong>{formatPrice(group.medianAmountCents, group.currency)}</strong>
+                    </div>
+                    <div>
+                      <span>Typical asking range</span>
+                      <strong>
+                        {formatPrice(group.typicalRange.lowAmountCents, group.currency)}–
+                        {formatPrice(group.typicalRange.highAmountCents, group.currency)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Listings used</span>
+                      <strong>{group.listingCount}</strong>
+                    </div>
+                  </div>
+                  {group.outlierCount > 0 && (
+                    <p className="market-note">
+                      {group.outlierCount} unusually priced listing{group.outlierCount === 1 ? " was" : "s were"} left out of the summary.
+                    </p>
+                  )}
+                  <div className="market-listings">
+                    {group.listings.map((listing) => {
+                      const listingContents = (
+                        <>
+                          {listing.imageUrl ? (
+                            <img src={listing.imageUrl} alt="" />
+                          ) : (
+                            <span className="market-listing-placeholder">No photo</span>
+                          )}
+                          <span className="market-listing-copy">
+                            <strong>{listing.title}</strong>
+                            {listing.confirmedReference && (
+                              <span className="market-reference-badge">
+                                Confirmed during identification
+                              </span>
+                            )}
+                            {listing.matchTier === "broader" && (
+                              <span className="market-broader-badge">
+                                Broader comparison
+                              </span>
+                            )}
+                            <small>{listing.condition ?? "Condition not provided"}</small>
+                            <em>
+                              {formatPrice(listing.totalPriceCents, listing.currency)} total shown
+                            </em>
+                            <small>
+                              {formatPrice(listing.itemPriceCents, listing.currency)} item
+                              {listing.shippingCostCents !== null
+                                ? ` + ${formatPrice(listing.shippingCostCents, listing.currency)} shipping`
+                                : "; shipping not included in the API result"}
+                            </small>
+                          </span>
+                        </>
+                      );
+                      return listing.itemWebUrl ? (
+                        <a
+                          className="market-listing"
+                          href={listing.itemWebUrl}
+                          key={listing.itemId}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {listingContents}
+                        </a>
+                      ) : (
+                        <div className="market-listing" key={listing.itemId}>
+                          {listingContents}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="valuation-loading">
+              No close fixed-price matches were found. More complete card details can improve the search.
+            </div>
+          )}
+
+          <p className="valuation-disclaimer">
+            {snapshot.disclaimer} Raw and graded cards are summarized separately.
+          </p>
+        </>
+      ) : error ? null : (
+        <div className="valuation-loading">
+          No active-market snapshot has been loaded.
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function CollectionView({
   cards,
   isLoading,
@@ -46,6 +239,12 @@ export function CollectionView({
   const [draft, setDraft] = useState<Record<FieldKey, FieldValue> | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [marketCardId, setMarketCardId] = useState<string | null>(null);
+  const [marketSnapshot, setMarketSnapshot] =
+    useState<ActiveMarketSnapshot | null>(null);
+  const [marketBusy, setMarketBusy] = useState(false);
+  const [marketError, setMarketError] = useState<string | null>(null);
+  const marketRequestIdRef = useRef(0);
 
   const sports = useMemo(
     () =>
@@ -70,9 +269,62 @@ export function CollectionView({
   }, [cards, filter, query, sport]);
 
   const beginEdit = (card: SavedCollectionCard) => {
+    marketRequestIdRef.current += 1;
+    setMarketCardId(null);
+    setMarketSnapshot(null);
+    setMarketBusy(false);
+    setMarketError(null);
     setEditingId(card.collectionId);
     setDraft(createDraft(card));
     setActionError(null);
+  };
+
+  const loadActiveMarket = async (card: SavedCollectionCard) => {
+    if (marketBusy) return;
+    const requestId = ++marketRequestIdRef.current;
+    setMarketCardId(card.collectionId);
+    setMarketSnapshot(null);
+    setMarketError(null);
+    setMarketBusy(true);
+    try {
+      const response = await fetch(
+        `/api/collection/${encodeURIComponent(card.collectionId)}/active-market`,
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | (ActiveMarketSnapshot & { error?: string })
+        | { error?: string }
+        | null;
+      if (requestId !== marketRequestIdRef.current) return;
+      if (!response.ok || !payload || !("groups" in payload)) {
+        throw new Error(
+          payload?.error ?? "CardPilot could not search active eBay listings.",
+        );
+      }
+      setMarketSnapshot(payload);
+    } catch (caughtError) {
+      if (requestId !== marketRequestIdRef.current) return;
+      setMarketError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not search active eBay listings.",
+      );
+    } finally {
+      if (requestId === marketRequestIdRef.current) {
+        setMarketBusy(false);
+      }
+    }
+  };
+
+  const toggleActiveMarket = (card: SavedCollectionCard) => {
+    if (marketBusy) return;
+    if (marketCardId === card.collectionId) {
+      marketRequestIdRef.current += 1;
+      setMarketCardId(null);
+      setMarketSnapshot(null);
+      setMarketError(null);
+    } else {
+      void loadActiveMarket(card);
+    }
   };
 
   const saveEdit = async (card: SavedCollectionCard) => {
@@ -225,8 +477,12 @@ export function CollectionView({
         <div className="collection-grid">
           {filteredCards.map((card) => {
             const isEditing = editingId === card.collectionId && draft;
+            const isMarketOpen = marketCardId === card.collectionId;
             return (
-              <article className="collection-card" key={card.collectionId}>
+              <article
+                className={`collection-card${isMarketOpen ? " collection-card-expanded" : ""}`}
+                key={card.collectionId}
+              >
                 <div className="collection-card-image">
                   <img src={card.images.frontUrl} alt={`Front of ${card.title}`} />
                   {card.fields.serialNumber && <span>Numbered {card.fields.serialNumber}</span>}
@@ -294,11 +550,27 @@ export function CollectionView({
                     <small>Updated {new Date(card.updatedAt).toLocaleDateString()}</small>
                     <div className="collection-card-actions">
                       <button type="button" onClick={() => beginEdit(card)}>Edit details</button>
+                      <button
+                        type="button"
+                        disabled={marketBusy}
+                        onClick={() => toggleActiveMarket(card)}
+                      >
+                        {isMarketOpen ? "Close market" : "Check active market"}
+                      </button>
                       <button type="button" disabled={busyId !== null} onClick={() => void removeCard(card)}>
                         {busyId === card.collectionId ? "Removing..." : "Remove"}
                       </button>
                     </div>
                   </div>
+                )}
+                {isMarketOpen && !isEditing && (
+                  <ActiveMarketPanel
+                    card={card}
+                    snapshot={marketSnapshot}
+                    isLoading={marketBusy}
+                    error={marketError}
+                    onRetry={() => void loadActiveMarket(card)}
+                  />
                 )}
               </article>
             );

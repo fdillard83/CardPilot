@@ -17,6 +17,7 @@ import {
 } from "./identification/image-intake.mjs";
 import { createCorrectionLogger } from "./correction-log.mjs";
 import { CollectionStore } from "./collection-store.mjs";
+import { ActiveMarketService } from "./valuation/active-market.mjs";
 
 const serverFile = fileURLToPath(import.meta.url);
 const currentDirectory = path.dirname(serverFile);
@@ -40,6 +41,9 @@ const ebayImageSearch = ebayConfigured
       marketplaceId: ebayMarketplaceId,
     })
   : null;
+const activeMarket = ebayImageSearch
+  ? new ActiveMarketService({ ebayClient: ebayImageSearch })
+  : null;
 const correctionLogger = createCorrectionLogger({
   filePath: path.resolve(currentDirectory, "../.data/corrections.jsonl"),
 });
@@ -58,6 +62,7 @@ app.get("/api/health", (_request, response) => {
     services: {
       openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
       ebayConfigured,
+      activeMarketConfigured: ebayConfigured,
     },
   });
 });
@@ -158,6 +163,65 @@ app.get(
       }
       console.error("Collection image loading failed", error);
       response.status(500).end();
+    }
+  },
+);
+
+app.get(
+  "/api/collection/:collectionId/active-market",
+  async (request, response) => {
+    try {
+      const card = await collectionStore.get(request.params.collectionId);
+      if (!card) {
+        response.status(404).json({ error: "That saved card was not found." });
+        return;
+      }
+      if (!activeMarket) {
+        response.status(503).json({
+          error:
+            "Active eBay market search is not configured yet. Add the Production eBay credentials and restart CardPilot.",
+        });
+        return;
+      }
+      response.json(
+        await activeMarket.snapshot(card.fields, {
+          confirmedReferenceItemId: card.ebayReference?.itemId ?? null,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof TypeError) {
+        response.status(422).json({ error: error.message });
+        return;
+      }
+      if (error instanceof EbayApiError) {
+        console.error("eBay active-market search failed", {
+          service: error.service,
+          status: error.status,
+          code: error.code,
+        });
+        if (error.status === 429) {
+          response.status(429).json({
+            error: "eBay market search is busy. Wait a moment and try again.",
+          });
+          return;
+        }
+        if (
+          error.service === "oauth" ||
+          error.status === 401 ||
+          error.status === 403
+        ) {
+          response.status(503).json({
+            error:
+              "eBay Browse API access was rejected. Verify the Production credentials and Buy API access.",
+          });
+          return;
+        }
+      } else {
+        console.error("eBay active-market search failed", error);
+      }
+      response.status(502).json({
+        error: "CardPilot could not reach eBay market search. Please try again.",
+      });
     }
   },
 );

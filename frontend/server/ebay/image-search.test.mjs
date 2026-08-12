@@ -71,12 +71,71 @@ test("image search sends only Base64 image data and normalizes candidates", asyn
     itemWebUrl: "https://www.ebay.com/itm/123",
     imageUrl: "https://i.ebayimg.com/example.jpg",
     price: { value: "9.99", currency: "USD" },
+    shippingCost: null,
     condition: "Ungraded",
     conditionId: "4000",
     buyingOptions: ["FIXED_PRICE"],
     categories: [
       { categoryId: "212", categoryName: "Sports Trading Cards" },
     ],
+  });
+});
+
+test("keyword search requests fixed-price sports cards and keeps shipping separate", async () => {
+  let request;
+  const client = new EbayImageSearchClient({
+    oauthClient: {
+      async getAccessToken() {
+        return "application-token";
+      },
+      invalidate() {},
+    },
+    marketplaceId: "EBAY_US",
+    fetchImpl: async (url, options) => {
+      request = { url, options };
+      return jsonResponse({
+        total: 2,
+        itemSummaries: [
+          {
+            itemId: "v1|123|0",
+            title: "2026 Topps Nolan Ryan Green Foil #CN-14 /85",
+            itemWebUrl: "https://www.ebay.com/itm/123",
+            image: { imageUrl: "https://i.ebayimg.com/123.jpg" },
+            price: { value: "40.00", currency: "USD" },
+            shippingOptions: [
+              { shippingCost: { value: "4.50", currency: "USD" } },
+            ],
+            buyingOptions: ["FIXED_PRICE"],
+          },
+          {
+            itemId: "v1|456|0",
+            title: "Auction result must be ignored",
+            price: { value: "1.00", currency: "USD" },
+            buyingOptions: ["AUCTION"],
+          },
+        ],
+      });
+    },
+  });
+
+  const result = await client.searchByKeywords({
+    query: "2026 Nolan Ryan CN-14 Green Foil /85",
+  });
+
+  assert.equal(request.options.method, "GET");
+  assert.equal(
+    request.url.searchParams.get("q"),
+    "2026 Nolan Ryan CN-14 Green Foil /85",
+  );
+  assert.equal(request.url.searchParams.get("category_ids"), "212");
+  assert.equal(
+    request.url.searchParams.get("filter"),
+    "buyingOptions:{FIXED_PRICE}",
+  );
+  assert.equal(result.candidates.length, 1);
+  assert.deepEqual(result.candidates[0].shippingCost, {
+    value: "4.50",
+    currency: "USD",
   });
 });
 
