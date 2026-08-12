@@ -213,7 +213,7 @@ export function CollectionView({
       ) : cards.length === 0 ? (
         <div className="collection-empty">
           <strong>Your collection is ready for its first card.</strong>
-          <span>Identify and confirm a card, then choose Save to Collection.</span>
+          <span>Choose a card photo, review the identification, and confirm it.</span>
           <button className="secondary-button" type="button" onClick={onScanCard}>Scan a card</button>
         </div>
       ) : filteredCards.length === 0 ? (

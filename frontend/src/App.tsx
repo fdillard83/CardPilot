@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent, FormEvent } from "react";
+import type { ChangeEvent } from "react";
 import "./App.css";
 import { CollectionView } from "./collection/CollectionView";
 import { ConfirmationEditor } from "./identification/ConfirmationEditor";
@@ -422,6 +422,7 @@ function App() {
   } | null>(null);
   const ebayRequestIdRef = useRef(0);
   const ebayItemRequestIdRef = useRef(0);
+  const identificationRequestIdRef = useRef(0);
   const [frontFile, setFrontFile] = useState<File | null>(null);
   const [backFile, setBackFile] = useState<File | null>(null);
   const [identification, setIdentification] =
@@ -459,7 +460,6 @@ function App() {
   const [collectionError, setCollectionError] = useState<string | null>(null);
   const [savedCollectionId, setSavedCollectionId] = useState<string | null>(null);
   const [isSavingCollection, setIsSavingCollection] = useState(false);
-  const [collectionMessage, setCollectionMessage] = useState<string | null>(null);
   const [identificationProgress, setIdentificationProgress] = useState("");
   const [identificationElapsedSeconds, setIdentificationElapsedSeconds] = useState(0);
 
@@ -517,53 +517,57 @@ function App() {
   }, [isIdentifying]);
 
   const openPicker = (side: ImageSide) => {
+    if (isIdentifying) return;
     if (side === "front") frontInputRef.current?.click();
     else backInputRef.current?.click();
   };
 
-  const handleFileChange =
-    (side: ImageSide) => (event: ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      event.target.value = "";
-      if (!file) return;
+  const handleFileChange = (
+    side: ImageSide,
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
 
-      const validationError = validateImage(file);
-      if (validationError) {
-        setError(validationError);
-        return;
-      }
+    const validationError = validateImage(file);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
 
-      setError(null);
-      setIdentification(null);
-      originalIdentificationRef.current = null;
-      preparedImagesRef.current = null;
-      setIsEditing(false);
-      setResolution(null);
-      setSelectedCandidateId(null);
-      setApplyingCandidateId(null);
-      ebayRequestIdRef.current += 1;
-      setEbaySearch(null);
-      setIsSearchingEbay(false);
-      setEbayError(null);
-      ebayItemRequestIdRef.current += 1;
-      setSelectedEbayCandidateId(null);
-      setSelectedEbayDetails(null);
-      setIsLoadingEbayDetails(false);
-      setEbayDetailsError(null);
-      setEditorInitialValues({});
-      setConfirmedEbayCandidateId(null);
-      setIsConfirmingEbayMatch(false);
-      setConfirmedEbayUpdatedFields([]);
-      setSavedCollectionId(null);
-      setCollectionMessage(null);
+    setError(null);
+    setIdentification(null);
+    originalIdentificationRef.current = null;
+    preparedImagesRef.current = null;
+    setIsEditing(false);
+    setResolution(null);
+    setSelectedCandidateId(null);
+    setApplyingCandidateId(null);
+    ebayRequestIdRef.current += 1;
+    setEbaySearch(null);
+    setIsSearchingEbay(false);
+    setEbayError(null);
+    ebayItemRequestIdRef.current += 1;
+    setSelectedEbayCandidateId(null);
+    setSelectedEbayDetails(null);
+    setIsLoadingEbayDetails(false);
+    setEbayDetailsError(null);
+    setEditorInitialValues({});
+    setConfirmedEbayCandidateId(null);
+    setIsConfirmingEbayMatch(false);
+    setConfirmedEbayUpdatedFields([]);
+    setSavedCollectionId(null);
 
-      if (side === "front") {
-        setFrontFile(file);
-        setBackFile(null);
-      } else {
-        setBackFile(file);
-      }
-    };
+    if (side === "front") {
+      setFrontFile(file);
+      setBackFile(null);
+      void identifyCard(file, null);
+    } else {
+      setBackFile(file);
+      if (frontFile) void identifyCard(frontFile, file);
+    }
+  };
 
   const loadEbayCandidates = async (frontImage: string) => {
     const requestId = ++ebayRequestIdRef.current;
@@ -615,9 +619,12 @@ function App() {
     }
   };
 
-  const identifyCard = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!frontFile || isIdentifying) return;
+  const identifyCard = async (
+    selectedFrontFile: File,
+    selectedBackFile: File | null,
+  ) => {
+    if (isIdentifying) return;
+    const requestId = ++identificationRequestIdRef.current;
 
     setIdentificationProgress("Preparing card photos");
     setIdentificationElapsedSeconds(0);
@@ -640,13 +647,17 @@ function App() {
     setConfirmedEbayCandidateId(null);
     setIsConfirmingEbayMatch(false);
     setConfirmedEbayUpdatedFields([]);
+    setSavedCollectionId(null);
 
     try {
       const [frontImage, backImage, frontDetailImages] = await Promise.all([
-        fileToOptimizedDataUrl(frontFile),
-        backFile ? fileToOptimizedDataUrl(backFile) : Promise.resolve(null),
-        createFrontDetailImages(frontFile),
+        fileToOptimizedDataUrl(selectedFrontFile),
+        selectedBackFile
+          ? fileToOptimizedDataUrl(selectedBackFile)
+          : Promise.resolve(null),
+        createFrontDetailImages(selectedFrontFile),
       ]);
+      if (requestId !== identificationRequestIdRef.current) return;
       preparedImagesRef.current = { frontImage, backImage };
       void loadEbayCandidates(frontImage);
       const response = await fetch("/api/identify-card", {
@@ -658,37 +669,41 @@ function App() {
         | { identification?: CardIdentification; error?: string }
         | null;
 
+      if (requestId !== identificationRequestIdRef.current) return;
+
       if (!response.ok || !payload?.identification) {
         throw new Error(
           payload?.error ??
             (response.status >= 500
-              ? "CardPilot's local service was interrupted. Your photo is still selected - tap Identify this card to try again."
+              ? "CardPilot's local service was interrupted. Your photo is still selected—try identification again."
               : "CardPilot could not identify this card."),
         );
       }
 
       originalIdentificationRef.current = payload.identification;
       setIdentification(payload.identification);
-      setResolution(
-        payload.identification.decision.action === "auto_accept" ? "auto" : null,
-      );
+      setResolution(null);
       if (payload.identification.status === "not_sports_card") {
         ebayRequestIdRef.current += 1;
         setEbaySearch(null);
         setIsSearchingEbay(false);
       }
     } catch (caughtError) {
+      if (requestId !== identificationRequestIdRef.current) return;
       setError(
         caughtError instanceof Error
           ? caughtError.message
           : "CardPilot could not identify this card.",
       );
     } finally {
-      setIsIdentifying(false);
+      if (requestId === identificationRequestIdRef.current) {
+        setIsIdentifying(false);
+      }
     }
   };
 
   const resetScan = () => {
+    identificationRequestIdRef.current += 1;
     setFrontFile(null);
     setBackFile(null);
     setIdentification(null);
@@ -712,8 +727,22 @@ function App() {
     setIsConfirmingEbayMatch(false);
     setConfirmedEbayUpdatedFields([]);
     setSavedCollectionId(null);
-    setCollectionMessage(null);
+    setIsIdentifying(false);
+    setIdentificationProgress("");
+    setIdentificationElapsedSeconds(0);
     setError(null);
+  };
+
+  const startNewScan = () => {
+    resetScan();
+    setView("scan");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const removeBackPhoto = () => {
+    if (!frontFile || isIdentifying) return;
+    setBackFile(null);
+    void identifyCard(frontFile, null);
   };
 
   const clearSelectedEbayMatch = () => {
@@ -789,7 +818,9 @@ function App() {
   };
 
   const saveCorrections = async (values: Record<FieldKey, FieldValue>) => {
-    if (!identification) return;
+    if (!identification) {
+      throw new Error("There is no identified card to update.");
+    }
     const baseline = originalIdentificationRef.current ?? identification;
     const corrections: Correction[] = fieldDefinitions.flatMap(({ key }) => {
       const original = baseline.fields[key];
@@ -830,36 +861,47 @@ function App() {
       }
     }
 
-    setIdentification((current) => {
-      if (!current) return current;
-      const fields = { ...current.fields };
-      for (const { key } of fieldDefinitions) {
-        if (!Object.is(current.fields[key].value, values[key])) {
-          fields[key] = {
-            ...current.fields[key],
-            value: values[key],
-            inferenceSource: "user_correction",
-          };
-        }
+    const fields = { ...identification.fields };
+    for (const { key } of fieldDefinitions) {
+      if (!Object.is(identification.fields[key].value, values[key])) {
+        fields[key] = {
+          ...identification.fields[key],
+          value: values[key],
+          inferenceSource: "user_correction",
+        };
       }
-      return { ...current, fields };
-    });
+    }
+    const updatedIdentification = { ...identification, fields };
+    setIdentification(updatedIdentification);
     setIsEditing(false);
     setEditorInitialValues({});
     setResolution("confirmed");
+    return updatedIdentification;
   };
 
-  const saveToCollection = async () => {
-    if (!identification || !frontFile || isSavingCollection) return;
+  const saveIdentificationToCollection = async (
+    cardIdentification: CardIdentification,
+    ebayCandidateId: string | null = confirmedEbayCandidateId,
+  ) => {
+    if (cardIdentification.status === "not_sports_card") {
+      throw new Error("Confirm a sports card identification before adding it.");
+    }
+    if (!frontFile) {
+      throw new Error("Choose a card photo before adding it to your collection.");
+    }
+    if (isSavingCollection) {
+      throw new Error("This card is already being added to your collection.");
+    }
 
     setIsSavingCollection(true);
     setError(null);
-    setCollectionMessage(null);
     try {
       const fields = Object.fromEntries(
-        fieldDefinitions.map(({ key }) => [key, identification.fields[key].value]),
+        fieldDefinitions.map(({ key }) => [
+          key,
+          cardIdentification.fields[key].value,
+        ]),
       ) as Record<FieldKey, FieldValue>;
-      const isUpdate = Boolean(savedCollectionId);
       let requestBody: object = { fields };
       let requestUrl = "/api/collection";
       let method = "POST";
@@ -874,16 +916,16 @@ function App() {
             backImage: backFile
               ? await fileToOptimizedDataUrl(backFile)
               : null,
-          };
+        };
         preparedImagesRef.current = preparedImages;
         const confirmedEbayCandidate = ebaySearch?.candidates.find(
-          (candidate) => candidate.id === confirmedEbayCandidateId,
+          (candidate) => candidate.id === ebayCandidateId,
         );
         requestBody = {
-          identificationId: identification.identificationId,
+          identificationId: cardIdentification.identificationId,
           fields,
-          overallConfidence: identification.overallConfidence,
-          decision: identification.decision.action,
+          overallConfidence: cardIdentification.overallConfidence,
+          decision: cardIdentification.decision.action,
           frontImage: preparedImages.frontImage,
           backImage: preparedImages.backImage,
           ebayReference: confirmedEbayCandidate
@@ -915,18 +957,36 @@ function App() {
           (card) => card.collectionId !== payload.card?.collectionId,
         ),
       ]);
-      setCollectionMessage(
-        isUpdate ? "Saved collection card updated." : "Card saved to My Collection.",
-      );
+      setView("collection");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return payload.card;
     } catch (caughtError) {
-      setError(
+      const message =
         caughtError instanceof Error
           ? caughtError.message
-          : "CardPilot could not save this card.",
-      );
+          : "CardPilot could not save this card.";
+      setError(message);
+      throw caughtError instanceof Error ? caughtError : new Error(message);
     } finally {
       setIsSavingCollection(false);
     }
+  };
+
+  const confirmCardAndCollect = async () => {
+    if (!identification || identification.status === "not_sports_card") return;
+    setResolution("confirmed");
+    try {
+      await saveIdentificationToCollection(identification);
+    } catch {
+      // The save helper keeps the result on screen and displays the error.
+    }
+  };
+
+  const saveCorrectionsAndCollect = async (
+    values: Record<FieldKey, FieldValue>,
+  ) => {
+    const updatedIdentification = await saveCorrections(values);
+    await saveIdentificationToCollection(updatedIdentification);
   };
 
   const applyCandidate = async (
@@ -943,8 +1003,9 @@ function App() {
     try {
       setError(null);
       setApplyingCandidateId(candidate.id);
-      await saveCorrections(values);
+      const updatedIdentification = await saveCorrections(values);
       setSelectedCandidateId(candidate.id);
+      await saveIdentificationToCollection(updatedIdentification);
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
@@ -1064,25 +1125,20 @@ function App() {
     setIsConfirmingEbayMatch(true);
     setEbayDetailsError(null);
     try {
-      await saveCorrections(values);
+      const updatedIdentification = await saveCorrections(values);
       setConfirmedEbayCandidateId(candidateId);
       setConfirmedEbayUpdatedFields(updatedFields);
+      await saveIdentificationToCollection(updatedIdentification, candidateId);
     } catch (caughtError) {
       setEbayDetailsError(
         caughtError instanceof Error
           ? caughtError.message
-          : "CardPilot could not apply this listing's details.",
+          : "CardPilot could not confirm and add this card.",
       );
     } finally {
       setIsConfirmingEbayMatch(false);
     }
   };
-
-  const canSaveToCollection = Boolean(
-    identification &&
-      identification.status !== "not_sports_card" &&
-      (resolution || selectedCandidateId || confirmedEbayCandidateId),
-  );
 
   return (
     <div className="app-shell">
@@ -1091,7 +1147,7 @@ function App() {
           className="brand"
           type="button"
           aria-label="Open CardPilot scanner"
-          onClick={() => setView("scan")}
+          onClick={startNewScan}
         >
           <span className="brand-mark">CP</span>
           <span>CardPilot</span>
@@ -1100,7 +1156,7 @@ function App() {
           <button
             className={view === "scan" ? "active" : ""}
             type="button"
-            onClick={() => setView("scan")}
+            onClick={startNewScan}
           >
             Identify
           </button>
@@ -1121,7 +1177,7 @@ function App() {
             isLoading={isLoadingCollection}
             error={collectionError}
             onCardsChange={setCollectionCards}
-            onScanCard={() => setView("scan")}
+            onScanCard={startNewScan}
           />
         ) : (
           <>
@@ -1151,12 +1207,12 @@ function App() {
               <span className="live-pill"><span /> Ready</span>
             </div>
 
-            <form onSubmit={identifyCard}>
-              <input className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" capture="environment" ref={frontInputRef} onChange={handleFileChange("front")} />
-              <input className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" capture="environment" ref={backInputRef} onChange={handleFileChange("back")} />
+            <div className="scanner-flow">
+              <input className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" capture="environment" ref={frontInputRef} onChange={(event) => handleFileChange("front", event)} />
+              <input className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" capture="environment" ref={backInputRef} onChange={(event) => handleFileChange("back", event)} />
 
               {!frontPreview ? (
-                <button className="capture-zone" type="button" onClick={() => openPicker("front")}>
+                <button className="capture-zone" type="button" disabled={isIdentifying} onClick={() => openPicker("front")}>
                   <span className="camera-disc"><CameraIcon /></span>
                   <strong>Take or choose a photo</strong>
                   <span>Center the full front of the card in the frame</span>
@@ -1167,16 +1223,16 @@ function App() {
                   <div className="primary-photo">
                     <img src={frontPreview} alt="Selected front of sports card" />
                     <span className="photo-label">Front</span>
-                    <button className="change-photo" type="button" onClick={() => openPicker("front")}>Change</button>
+                    <button className="change-photo" type="button" disabled={isIdentifying} onClick={() => openPicker("front")}>Change</button>
                   </div>
                   {backPreview ? (
                     <div className="back-photo">
                       <img src={backPreview} alt="Selected back of sports card" />
                       <span>Optional back added</span>
-                      <button type="button" onClick={() => setBackFile(null)}>Remove</button>
+                      <button type="button" disabled={isIdentifying} onClick={removeBackPhoto}>Remove</button>
                     </div>
                   ) : (
-                    <button className="add-back" type="button" onClick={() => openPicker("back")}>
+                    <button className="add-back" type="button" disabled={isIdentifying} onClick={() => openPicker("back")}>
                       <span>+</span>
                       <span><strong>Add card back</strong><small>Optional evidence booster</small></span>
                     </button>
@@ -1191,19 +1247,25 @@ function App() {
                 </div>
               )}
 
-              <button className="identify-button" type="submit" disabled={!frontFile || isIdentifying}>
-                {isIdentifying ? (
-                  <><span className="spinner" /> {identificationProgress} ({identificationElapsedSeconds}s)</>
-                ) : (
-                  <><SparkIcon /> Identify this card <ArrowIcon /></>
-                )}
-              </button>
-              {isIdentifying && (
-                <p className="scan-progress-note" role="status">
-                  Image matching is running alongside identification to save time.
-                </p>
-              )}
-            </form>
+              {isIdentifying ? (
+                <>
+                  <div className="identify-button identify-button-status" role="status">
+                    <span className="spinner" /> {identificationProgress} ({identificationElapsedSeconds}s)
+                  </div>
+                  <p className="scan-progress-note">
+                    Identification started automatically. Image matching is running alongside it.
+                  </p>
+                </>
+              ) : error && frontFile && !identification ? (
+                <button
+                  className="identify-button"
+                  type="button"
+                  onClick={() => void identifyCard(frontFile, backFile)}
+                >
+                  <SparkIcon /> Try identification again <ArrowIcon />
+                </button>
+              ) : null}
+            </div>
           </section>
         </section>
 
@@ -1249,7 +1311,8 @@ function App() {
                   setIsEditing(false);
                   setEditorInitialValues({});
                 }}
-                onSave={saveCorrections}
+                submitLabel="Save and add to collection"
+                onSave={saveCorrectionsAndCollect}
               />
             ) : (
               <div className="result-grid">
@@ -1464,37 +1527,21 @@ function App() {
 
             {!isEditing && (
               <div className="result-actions">
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={!canSaveToCollection || isSavingCollection}
-                  onClick={() => void saveToCollection()}
-                >
-                  {isSavingCollection
-                    ? "Saving..."
-                    : savedCollectionId
-                      ? "Update saved card"
-                      : "Save to Collection"}
-                </button>
                 {identification.backPhoto.suggested && !backFile && (
                   <button className="secondary-button" type="button" onClick={() => openPicker("back")}>Take back photo</button>
                 )}
-                {identification.decision.action === "confirm" && !resolution && (
-                  <button className="secondary-button" type="button" onClick={() => setResolution("confirmed")}>Confirm result</button>
+                {identification.status !== "not_sports_card" && (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={isSavingCollection}
+                    onClick={() => void confirmCardAndCollect()}
+                  >
+                    {isSavingCollection ? "Adding to collection..." : "Confirm card"}
+                  </button>
                 )}
                 <button className="outline-button" type="button" onClick={() => openEditor()}>Edit result</button>
-                {identification.decision.action !== "auto_accept" && !resolution && (
-                  <button className="outline-button" type="button" onClick={() => setResolution("override")}>Use anyway</button>
-                )}
-                <button className="text-button" type="button" onClick={resetScan}>Scan another card</button>
-              </div>
-            )}
-
-            {collectionMessage && (
-              <div className="collection-save-status" role="status">
-                <CheckIcon />
-                <span>{collectionMessage}</span>
-                <button type="button" onClick={() => setView("collection")}>View collection</button>
+                <button className="text-button" type="button" onClick={startNewScan}>Scan another card</button>
               </div>
             )}
 

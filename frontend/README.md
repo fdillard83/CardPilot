@@ -5,6 +5,7 @@ CardPilot is a mobile-friendly sports trading card identifier. A collector start
 ## Current milestone
 
 - Camera or photo-library upload
+- Automatic identification as soon as a front photo is selected
 - Staged identification pipeline: intake, evidence extraction, candidates, verification, confidence, and decision
 - One-call front-only workflow with focused corner crops for faster small-text reading
 - Character-by-character verification for anniversary marks, years, card numbers, and serial numbers
@@ -20,6 +21,7 @@ CardPilot is a mobile-friendly sports trading card identifier. A collector start
 - Editable confirmation screen for every returned field
 - Local correction logging that retains original values and never treats one edit as global truth
 - Private local collection storage with saved photos, search, filters, editing, and removal
+- Automatic collection save and navigation when the collector confirms a card
 - Optimized upload payloads, parallel eBay matching, and visible scan progress
 - A repeatable, opt-in accuracy evaluation library for verified sample cards
 
@@ -86,9 +88,9 @@ Serial-number suggestions use only the known print run, such as `/99`. CardPilot
 does not copy an exact stamp such as `23/99` from a seller's listing because the
 collector's physical copy may have a different number. Selecting a listing
 alone never changes the identification. When the collector explicitly confirms
-it is the same card, CardPilot immediately applies the available listing details
-and reports which fields changed. The collector can then add a photo showing
-their own serial stamp, or review and edit any card detail.
+it is the same card, CardPilot immediately applies the available listing details,
+saves the card, and opens My Collection. Before confirming, the collector can add
+a photo showing their own serial stamp or review and edit any card detail.
 
 Card details show **Numbered card** as a derived Yes/No value and label the
 exact stamp separately as **Numbered Card Serial Number**. For example, `63/85`
