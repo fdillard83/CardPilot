@@ -212,6 +212,73 @@ export type ActiveMarketSnapshot = {
   disclaimer: string;
 };
 
+export type SoldComparable = {
+  id: string;
+  title: string;
+  platform: string;
+  listingType: string | null;
+  saleDate: string | null;
+  soldAt: string | null;
+  salePriceCents: number;
+  originalPriceCents: number | null;
+  shippingPriceCents: number | null;
+  currency: string;
+  bids: number | null;
+  imageUrl: string | null;
+  listingUrl: string | null;
+  condition: string | null;
+  grader: string | null;
+  grade: string | null;
+  matchScore: number;
+  matchedSignals: string[];
+  matchTier: "exact" | "broader";
+};
+
+export type SoldCompsGroup = {
+  id: string;
+  label: string;
+  platform: string;
+  matchTier: "exact" | "broader";
+  currency: string;
+  saleCount: number;
+  medianSalePriceCents: number;
+  typicalRange: {
+    lowAmountCents: number;
+    highAmountCents: number;
+  };
+  outlierCount: number;
+  confidence: "low" | "medium" | "high";
+  sales: SoldComparable[];
+};
+
+export type SoldCompsSnapshot = {
+  schemaVersion: "1.0";
+  kind: "sold_comparables";
+  source: {
+    provider: "the_card_api";
+    displayName: "The Card API";
+  };
+  query: string;
+  queriesUsed: string[];
+  searchedAt: string;
+  coverage: {
+    from: string | null;
+    to: string | null;
+    platforms: string[];
+  };
+  conditionProfile: {
+    classification: "raw" | "graded";
+    label: string;
+  };
+  candidateCount: number;
+  confirmedPriceCount: number;
+  exactMatchedCount: number;
+  broaderMatchedCount: number;
+  excludedCount: number;
+  groups: SoldCompsGroup[];
+  disclaimer: string;
+};
+
 export type GradingProfile = {
   isGraded: boolean;
   company: string | null;

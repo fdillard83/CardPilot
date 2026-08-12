@@ -2036,6 +2036,39 @@ main {
   color: var(--soft-ink);
 }
 
+.sold-comps-panel {
+  background:
+    linear-gradient(180deg, rgba(83, 178, 255, 0.055), transparent 52%),
+    rgba(6, 13, 11, 0.44);
+}
+
+.sold-comps-panel .valuation-source {
+  border-color: rgba(83, 178, 255, 0.32);
+  color: #91ccff;
+}
+
+.sold-summary {
+  border-color: rgba(83, 178, 255, 0.24);
+  background: rgba(83, 178, 255, 0.045);
+}
+
+.sold-group {
+  border-color: rgba(83, 178, 255, 0.2);
+}
+
+.sold-group .valuation-prices strong,
+.sold-listing .market-listing-copy em {
+  color: #91ccff;
+}
+
+.sold-listing:hover {
+  border-color: rgba(83, 178, 255, 0.38);
+}
+
+.sold-empty {
+  line-height: 1.5;
+}
+
 .collection-editor-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

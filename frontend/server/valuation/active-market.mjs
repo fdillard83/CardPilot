@@ -410,6 +410,14 @@ function evaluateBroaderMatch(candidate, fields) {
   };
 }
 
+export function evaluateCardTitleMatch(title, fields, { broader = false } = {}) {
+  const candidate = { title: cleanText(title) };
+  if (!candidate.title) return null;
+  return broader
+    ? evaluateBroaderMatch(candidate, fields)
+    : evaluateMatch(candidate, fields);
+}
+
 function parseCents(price) {
   const value = Number(price?.value);
   return Number.isFinite(value) && value >= 0 ? Math.round(value * 100) : null;

@@ -18,6 +18,11 @@ import {
 import { createCorrectionLogger } from "./correction-log.mjs";
 import { CollectionStore } from "./collection-store.mjs";
 import { ActiveMarketService } from "./valuation/active-market.mjs";
+import {
+  TheCardApiClient,
+  TheCardApiError,
+} from "./sold-comps/the-card-api-client.mjs";
+import { SoldCompsService } from "./sold-comps/sold-comps.mjs";
 
 const serverFile = fileURLToPath(import.meta.url);
 const currentDirectory = path.dirname(serverFile);
@@ -44,6 +49,12 @@ const ebayImageSearch = ebayConfigured
 const activeMarket = ebayImageSearch
   ? new ActiveMarketService({ ebayClient: ebayImageSearch })
   : null;
+const theCardApiKey = process.env.THE_CARD_API_KEY?.trim();
+const soldComps = theCardApiKey
+  ? new SoldCompsService({
+      cardApiClient: new TheCardApiClient({ apiKey: theCardApiKey }),
+    })
+  : null;
 const correctionLogger = createCorrectionLogger({
   filePath: path.resolve(currentDirectory, "../.data/corrections.jsonl"),
 });
@@ -63,6 +74,7 @@ app.get("/api/health", (_request, response) => {
       openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
       ebayConfigured,
       activeMarketConfigured: ebayConfigured,
+      soldCompsConfigured: Boolean(soldComps),
     },
   });
 });
@@ -221,6 +233,58 @@ app.get(
       }
       response.status(502).json({
         error: "CardPilot could not reach eBay market search. Please try again.",
+      });
+    }
+  },
+);
+
+app.get(
+  "/api/collection/:collectionId/sold-comps",
+  async (request, response) => {
+    try {
+      const card = await collectionStore.get(request.params.collectionId);
+      if (!card) {
+        response.status(404).json({ error: "That saved card was not found." });
+        return;
+      }
+      if (!soldComps) {
+        response.status(503).json({
+          error:
+            "Completed-sales search is not configured yet. Add THE_CARD_API_KEY to frontend/.env and restart CardPilot.",
+        });
+        return;
+      }
+      response.json(await soldComps.snapshot(card.fields, card.grading));
+    } catch (error) {
+      if (error instanceof TypeError) {
+        response.status(422).json({ error: error.message });
+        return;
+      }
+      if (error instanceof TheCardApiError) {
+        console.error("The Card API sold-comps search failed", {
+          status: error.status,
+          code: error.code,
+        });
+        if (error.status === 429) {
+          response.status(429).json({
+            error:
+              "Completed-sales search has reached its current request limit. Wait and try again later.",
+          });
+          return;
+        }
+        if (error.status === 401 || error.status === 403) {
+          response.status(503).json({
+            error:
+              "The Card API key was rejected. Verify THE_CARD_API_KEY and restart CardPilot.",
+          });
+          return;
+        }
+      } else {
+        console.error("The Card API sold-comps search failed", error);
+      }
+      response.status(502).json({
+        error:
+          "CardPilot could not reach the completed-sales provider. Please try again.",
       });
     }
   },
@@ -511,6 +575,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === serverFile) {
     if (!ebayConfigured) {
       console.log(
         "EBAY_CLIENT_ID or EBAY_CLIENT_SECRET is not set; eBay image search is disabled.",
+      );
+    }
+    if (!soldComps) {
+      console.log(
+        "THE_CARD_API_KEY is not set; completed-sales comparisons are disabled.",
       );
     }
   });

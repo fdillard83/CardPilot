@@ -21,6 +21,9 @@ try {
   if (typeof health.services?.activeMarketConfigured !== "boolean") {
     throw new Error("The health endpoint did not report active-market readiness.");
   }
+  if (typeof health.services?.soldCompsConfigured !== "boolean") {
+    throw new Error("The health endpoint did not report sold-comps readiness.");
+  }
 
   const homeResponse = await fetch(baseUrl);
   const home = await homeResponse.text();
@@ -80,6 +83,15 @@ try {
   if (missingActiveMarketResponse.status !== 404) {
     throw new Error(
       `The active-market endpoint returned ${missingActiveMarketResponse.status}; expected 404 for a missing card.`,
+    );
+  }
+
+  const missingSoldCompsResponse = await fetch(
+    `${baseUrl}/api/collection/not-a-card/sold-comps`,
+  );
+  if (missingSoldCompsResponse.status !== 404) {
+    throw new Error(
+      `The sold-comps endpoint returned ${missingSoldCompsResponse.status}; expected 404 for a missing card.`,
     );
   }
 

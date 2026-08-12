@@ -24,16 +24,18 @@ CardPilot is a mobile-friendly sports trading card identifier. A collector start
 - Raw-by-default collection condition profiles with optional grading details
 - Automatic collection save and navigation when the collector confirms a card
 - On-demand eBay Buy It Now snapshots with raw and graded cards separated
+- Experimental on-demand completed-sales comparisons from The Card API
 - Optimized upload payloads, parallel eBay matching, and visible scan progress
 - A repeatable, opt-in accuracy evaluation library for verified sample cards
 
 CardPilot now has a small source-linked catalog adapter for the active Nolan Ryan regression, but it is not yet a complete trading-card catalog. The provider boundary and versioned result are designed for future valuation and verification engines.
 
-CardPilot now includes local collection tracking and descriptive active-listing
-snapshots. Sold-sales valuation, detailed raw-condition assessment, listing
-automation, authentication, accounts, and cloud sync
-remain future milestones. See [the identification architecture](docs/identification-architecture.md)
-and [sold-sales provider options](docs/sold-sales-provider-options.md).
+CardPilot now includes local collection tracking, descriptive active-listing
+snapshots, and an experimental completed-sales comparison view. Detailed
+raw-condition assessment, listing automation, authentication, accounts, and
+cloud sync remain future milestones. See
+[the identification architecture](docs/identification-architecture.md) and
+[sold-sales provider options](docs/sold-sales-provider-options.md).
 
 ## Run locally
 
@@ -48,8 +50,9 @@ and [sold-sales provider options](docs/sold-sales-provider-options.md).
    To enable image-search candidates, also add Production credentials from
    [eBay Application Keys](https://developer.ebay.com/my/keys) and select a
    supported `EBAY_MARKETPLACE_ID`. The same eBay credentials power both image
-   matching and collection active-market searches. Keep every credential
-   server-side and never prefix it with `VITE_`.
+   matching and collection active-market searches. To evaluate completed-sales
+   comparisons, add a The Card API key as `THE_CARD_API_KEY`. Keep every
+   credential server-side and never prefix it with `VITE_`.
 
 3. Start the web app and identification server together:
 
@@ -139,6 +142,26 @@ the result as sold comps, fair market value, or an appraisal. True sold comps
 remain reserved for a separately licensed data provider. See
 [sold-sales provider options](docs/sold-sales-provider-options.md).
 
+## Completed-sales route
+
+`GET /api/collection/:collectionId/sold-comps` searches The Card API from the
+existing Express backend. It uses the collector-confirmed card details and the
+saved raw-or-graded condition profile. Raw is the default; graded searches send
+the saved grading company and grade as provider filters.
+
+Only provider-confirmed sale prices are summarized. Exact title matches and
+guarded broader matches are grouped separately, and marketplace platforms are
+also kept separate because price and buyer-premium treatment can differ. Each
+group shows a median sold price, typical range, count, and source records.
+Unusually priced outliers are excluded when enough records exist.
+
+The provider key is sent only as the server-side `x-market-api-key` header. The
+browser receives normalized comparison data and never receives the key. Results
+are cached in server memory for ten minutes and are not written to collection
+records, which keeps the current free-tier evaluation session-only. A zero-result
+search means no qualifying record was found in the provider's available window;
+it does not mean the card has no value.
+
 ## Checks
 
 ```powershell
@@ -159,6 +182,7 @@ API usage.
 - The local server sends the selected images to the OpenAI Responses API for identification and does not write uploaded images to disk.
 - eBay image search sends only the requested front image to the Production Browse API. OAuth tokens are cached in server memory and refreshed before expiry; the Client Secret and access tokens are never returned to browser code.
 - eBay keyword searches run through the Express server. The Client Secret and cached OAuth access token are never returned to browser code.
+- The Card API completed-sales searches run through the Express server. `THE_CARD_API_KEY` is never returned to browser code, and free-tier results remain in memory only.
 - User corrections are stored locally in `.data/corrections.jsonl`; that directory is ignored by Git.
 - Saved collection records and card photos are stored under `.data`; that directory is ignored by Git.
 - Front-only scans use `gpt-5.4-mini` by default for lower latency and reliable visual extraction. Override it with `OPENAI_FAST_MODEL`.

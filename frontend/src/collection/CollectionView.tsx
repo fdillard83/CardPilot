@@ -7,6 +7,7 @@ import {
   type FieldValue,
   type GradingProfile,
   type SavedCollectionCard,
+  type SoldCompsSnapshot,
 } from "../identification/types";
 
 type CollectionFilter = "all" | "numbered" | "autograph" | "rookie";
@@ -39,6 +40,24 @@ function confidenceLabel(confidence: "low" | "medium" | "high") {
   if (confidence === "high") return "Stronger snapshot";
   if (confidence === "medium") return "Useful snapshot";
   return "Limited snapshot";
+}
+
+function saleDateLabel(value: string | null) {
+  if (!value) return "Sale date not provided";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : `Sold ${date.toLocaleDateString()}`;
+}
+
+function listingTypeLabel(value: string | null) {
+  if (!value) return "Completed sale";
+  const labels: Record<string, string> = {
+    auction: "Auction",
+    fixed_price: "Buy It Now",
+    best_offer: "Best Offer",
+  };
+  return labels[value.toLowerCase()] ?? value.replaceAll("_", " ");
 }
 
 function groupMatchesSavedCondition(
@@ -246,6 +265,171 @@ function ActiveMarketPanel({
   );
 }
 
+function SoldCompsPanel({
+  card,
+  snapshot,
+  isLoading,
+  error,
+  onRetry,
+}: {
+  card: SavedCollectionCard;
+  snapshot: SoldCompsSnapshot | null;
+  isLoading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  const coverageLabel = snapshot?.coverage.from || snapshot?.coverage.to
+    ? `${snapshot.coverage.from ?? "earliest available"} to ${snapshot.coverage.to ?? "latest available"}`
+    : "Provider lookback window not reported";
+  return (
+    <section
+      className="valuation-panel sold-comps-panel"
+      aria-labelledby={`sold-comps-${card.collectionId}`}
+    >
+      <div className="valuation-heading">
+        <div>
+          <span className="step-label">Completed marketplace sales</span>
+          <h3 id={`sold-comps-${card.collectionId}`}>Comparable sold cards</h3>
+        </div>
+        <span className="valuation-source">The Card API</span>
+      </div>
+
+      {error && (
+        <div className="valuation-error" role="alert">
+          <strong>Completed sales are unavailable.</strong>
+          <span>{error}</span>
+          <button type="button" onClick={onRetry}>Try again</button>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="valuation-loading" role="status">
+          <span className="spinner" /> Finding closely matching completed sales...
+        </div>
+      ) : snapshot ? (
+        <>
+          <div className="market-summary sold-summary">
+            <div>
+              <span>Search used</span>
+              <strong>{snapshot.query}</strong>
+            </div>
+            <div className="valuation-meta">
+              <span>{snapshot.conditionProfile.label}</span>
+              <span>{snapshot.exactMatchedCount} exact sold matches</span>
+              {snapshot.broaderMatchedCount > 0 && (
+                <span>{snapshot.broaderMatchedCount} broader sold comparisons</span>
+              )}
+              <span>{snapshot.excludedCount} records excluded</span>
+              <span>Coverage: {coverageLabel}</span>
+              <span>Checked {new Date(snapshot.searchedAt).toLocaleString()}</span>
+            </div>
+          </div>
+
+          {snapshot.broaderMatchedCount > 0 && (
+            <div className="market-fallback-note">
+              <strong>Broader sold comparisons are shown separately.</strong>
+              <span>
+                Exact sold records were scarce. These lower-confidence results
+                tolerate missing title details while rejecting known conflicts,
+                and they never change the exact-match median.
+              </span>
+            </div>
+          )}
+
+          {snapshot.groups.length > 0 ? (
+            <div className="market-groups">
+              {snapshot.groups.map((group) => (
+                <article className="market-group sold-group" key={`${group.id}-${group.currency}`}>
+                  <div className="market-group-heading">
+                    <div>
+                      <span>{group.matchTier === "exact" ? "Exact completed sales" : "Broader completed sales"}</span>
+                      <h4>{group.platform}</h4>
+                    </div>
+                    <span className={`market-confidence market-confidence-${group.confidence}`}>
+                      {confidenceLabel(group.confidence)}
+                    </span>
+                  </div>
+                  <div className="valuation-prices">
+                    <div>
+                      <span>Median sold price</span>
+                      <strong>{formatPrice(group.medianSalePriceCents, group.currency)}</strong>
+                    </div>
+                    <div>
+                      <span>Typical sold range</span>
+                      <strong>
+                        {formatPrice(group.typicalRange.lowAmountCents, group.currency)}–
+                        {formatPrice(group.typicalRange.highAmountCents, group.currency)}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Sales used</span>
+                      <strong>{group.saleCount}</strong>
+                    </div>
+                  </div>
+                  {group.outlierCount > 0 && (
+                    <p className="market-note">
+                      {group.outlierCount} unusually priced sale{group.outlierCount === 1 ? " was" : "s were"} left out of the summary.
+                    </p>
+                  )}
+                  <div className="market-listings">
+                    {group.sales.map((sale) => {
+                      const saleContents = (
+                        <>
+                          {sale.imageUrl ? (
+                            <img src={sale.imageUrl} alt="" />
+                          ) : (
+                            <span className="market-listing-placeholder">No photo</span>
+                          )}
+                          <span className="market-listing-copy">
+                            <strong>{sale.title}</strong>
+                            {sale.matchTier === "broader" && (
+                              <span className="market-broader-badge">Broader comparison</span>
+                            )}
+                            <small>{listingTypeLabel(sale.listingType)} · {saleDateLabel(sale.soldAt ?? sale.saleDate)}</small>
+                            <em>{formatPrice(sale.salePriceCents, sale.currency)} sold price</em>
+                            <small>
+                              {sale.condition ?? "Condition not provided"}
+                              {sale.bids !== null ? ` · ${sale.bids} bids` : ""}
+                            </small>
+                          </span>
+                        </>
+                      );
+                      return sale.listingUrl ? (
+                        <a
+                          className="market-listing sold-listing"
+                          href={sale.listingUrl}
+                          key={sale.id}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {saleContents}
+                        </a>
+                      ) : (
+                        <div className="market-listing sold-listing" key={sale.id}>
+                          {saleContents}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="valuation-loading sold-empty">
+              No qualifying completed sales were found in the provider's current
+              lookback window. That does not mean the card has no value.
+            </div>
+          )}
+
+          <p className="valuation-disclaimer">{snapshot.disclaimer}</p>
+        </>
+      ) : error ? null : (
+        <div className="valuation-loading">No sold-comparison search has been loaded.</div>
+      )}
+    </section>
+  );
+}
+
 export function CollectionView({
   cards,
   isLoading,
@@ -273,6 +457,11 @@ export function CollectionView({
   const [marketBusy, setMarketBusy] = useState(false);
   const [marketError, setMarketError] = useState<string | null>(null);
   const marketRequestIdRef = useRef(0);
+  const [soldCardId, setSoldCardId] = useState<string | null>(null);
+  const [soldSnapshot, setSoldSnapshot] = useState<SoldCompsSnapshot | null>(null);
+  const [soldBusy, setSoldBusy] = useState(false);
+  const [soldError, setSoldError] = useState<string | null>(null);
+  const soldRequestIdRef = useRef(0);
 
   const sports = useMemo(
     () =>
@@ -302,6 +491,11 @@ export function CollectionView({
     setMarketSnapshot(null);
     setMarketBusy(false);
     setMarketError(null);
+    soldRequestIdRef.current += 1;
+    setSoldCardId(null);
+    setSoldSnapshot(null);
+    setSoldBusy(false);
+    setSoldError(null);
     setEditingId(card.collectionId);
     setDraft(createDraft(card));
     setGradingDraft({ ...card.grading });
@@ -309,7 +503,12 @@ export function CollectionView({
   };
 
   const loadActiveMarket = async (card: SavedCollectionCard) => {
-    if (marketBusy) return;
+    if (marketBusy || soldBusy) return;
+    soldRequestIdRef.current += 1;
+    setSoldCardId(null);
+    setSoldSnapshot(null);
+    setSoldBusy(false);
+    setSoldError(null);
     const requestId = ++marketRequestIdRef.current;
     setMarketCardId(card.collectionId);
     setMarketSnapshot(null);
@@ -345,7 +544,7 @@ export function CollectionView({
   };
 
   const toggleActiveMarket = (card: SavedCollectionCard) => {
-    if (marketBusy) return;
+    if (marketBusy || soldBusy) return;
     if (marketCardId === card.collectionId) {
       marketRequestIdRef.current += 1;
       setMarketCardId(null);
@@ -353,6 +552,57 @@ export function CollectionView({
       setMarketError(null);
     } else {
       void loadActiveMarket(card);
+    }
+  };
+
+  const loadSoldComps = async (card: SavedCollectionCard) => {
+    if (soldBusy || marketBusy) return;
+    marketRequestIdRef.current += 1;
+    setMarketCardId(null);
+    setMarketSnapshot(null);
+    setMarketBusy(false);
+    setMarketError(null);
+    const requestId = ++soldRequestIdRef.current;
+    setSoldCardId(card.collectionId);
+    setSoldSnapshot(null);
+    setSoldError(null);
+    setSoldBusy(true);
+    try {
+      const response = await fetch(
+        `/api/collection/${encodeURIComponent(card.collectionId)}/sold-comps`,
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | (SoldCompsSnapshot & { error?: string })
+        | { error?: string }
+        | null;
+      if (requestId !== soldRequestIdRef.current) return;
+      if (!response.ok || !payload || !("groups" in payload)) {
+        throw new Error(
+          payload?.error ?? "CardPilot could not search completed sales.",
+        );
+      }
+      setSoldSnapshot(payload);
+    } catch (caughtError) {
+      if (requestId !== soldRequestIdRef.current) return;
+      setSoldError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not search completed sales.",
+      );
+    } finally {
+      if (requestId === soldRequestIdRef.current) setSoldBusy(false);
+    }
+  };
+
+  const toggleSoldComps = (card: SavedCollectionCard) => {
+    if (soldBusy || marketBusy) return;
+    if (soldCardId === card.collectionId) {
+      soldRequestIdRef.current += 1;
+      setSoldCardId(null);
+      setSoldSnapshot(null);
+      setSoldError(null);
+    } else {
+      void loadSoldComps(card);
     }
   };
 
@@ -517,9 +767,10 @@ export function CollectionView({
           {filteredCards.map((card) => {
             const isEditing = editingId === card.collectionId && draft;
             const isMarketOpen = marketCardId === card.collectionId;
+            const isSoldOpen = soldCardId === card.collectionId;
             return (
               <article
-                className={`collection-card${isMarketOpen ? " collection-card-expanded" : ""}`}
+                className={`collection-card${isMarketOpen || isSoldOpen ? " collection-card-expanded" : ""}`}
                 key={card.collectionId}
               >
                 <div className="collection-card-image">
@@ -695,10 +946,17 @@ export function CollectionView({
                       <button type="button" onClick={() => beginEdit(card)}>Edit details</button>
                       <button
                         type="button"
-                        disabled={marketBusy}
+                        disabled={marketBusy || soldBusy}
                         onClick={() => toggleActiveMarket(card)}
                       >
                         {isMarketOpen ? "Close market" : "Check active market"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={soldBusy || marketBusy}
+                        onClick={() => toggleSoldComps(card)}
+                      >
+                        {isSoldOpen ? "Close sold comps" : "Check sold comps"}
                       </button>
                       <button type="button" disabled={busyId !== null} onClick={() => void removeCard(card)}>
                         {busyId === card.collectionId ? "Removing..." : "Remove"}
@@ -713,6 +971,15 @@ export function CollectionView({
                     isLoading={marketBusy}
                     error={marketError}
                     onRetry={() => void loadActiveMarket(card)}
+                  />
+                )}
+                {isSoldOpen && !isEditing && (
+                  <SoldCompsPanel
+                    card={card}
+                    snapshot={soldSnapshot}
+                    isLoading={soldBusy}
+                    error={soldError}
+                    onRetry={() => void loadSoldComps(card)}
                   />
                 )}
               </article>
