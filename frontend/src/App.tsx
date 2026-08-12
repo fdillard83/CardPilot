@@ -1,30 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent, FormEvent, ReactNode } from "react";
+import type { ChangeEvent, FormEvent } from "react";
 import "./App.css";
-
-type CardIdentification = {
-  status: "identified" | "partial" | "not_sports_card";
-  sport: string | null;
-  playerName: string | null;
-  team: string | null;
-  year: string | null;
-  manufacturer: string | null;
-  brand: string | null;
-  setName: string | null;
-  cardNumber: string | null;
-  parallelOrVariant: string | null;
-  serialNumber: string | null;
-  rookieCard: boolean | null;
-  autographed: boolean | null;
-  memorabilia: boolean | null;
-  confidence: number;
-  summary: string;
-  visibleEvidence: string[];
-  needsBackImage: boolean;
-  followUpHint: string | null;
-};
+import { CollectionView } from "./collection/CollectionView";
+import { ConfirmationEditor } from "./identification/ConfirmationEditor";
+import {
+  fieldDefinitions,
+  formatFieldValue,
+  type CardIdentification,
+  type Correction,
+  type EbayImageSearchCandidate,
+  type EbayImageSearchResult,
+  type EbayItemDetails,
+  type FieldKey,
+  type FieldValue,
+  type SavedCollectionCard,
+} from "./identification/types";
 
 type ImageSide = "front" | "back";
+type Resolution = "auto" | "confirmed" | "override" | null;
+type FrontDetailImage = { label: string; image: string };
 
 const MAX_FILE_SIZE = 12 * 1024 * 1024;
 const SUPPORTED_IMAGE_TYPES = new Set([
@@ -87,30 +81,333 @@ function fileToDataUrl(file: File) {
       if (typeof reader.result === "string") resolve(reader.result);
       else reject(new Error("The selected image could not be read."));
     };
-    reader.onerror = () => reject(new Error("The selected image could not be read."));
+    reader.onerror = () =>
+      reject(new Error("The selected image could not be read."));
     reader.readAsDataURL(file);
   });
+}
+
+async function fileToOptimizedDataUrl(file: File, maxDimension = 2400) {
+  if (typeof createImageBitmap !== "function" || file.type === "image/gif") {
+    return fileToDataUrl(file);
+  }
+
+  let bitmap: ImageBitmap | null = null;
+  try {
+    bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+    if (scale === 1 && file.size < 2.5 * 1024 * 1024) {
+      return fileToDataUrl(file);
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) return fileToDataUrl(file);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.92);
+  } catch {
+    return fileToDataUrl(file);
+  } finally {
+    bitmap?.close();
+  }
+}
+
+async function createFrontDetailImages(file: File): Promise<FrontDetailImage[]> {
+  if (typeof createImageBitmap !== "function") return [];
+
+  let bitmap: ImageBitmap | null = null;
+  try {
+    bitmap = await createImageBitmap(file);
+    const cropWidth = Math.max(1, Math.round(bitmap.width * 0.55));
+    const cropHeight = Math.max(1, Math.round(bitmap.height * 0.55));
+    const zones = [
+      { label: "top-left", x: 0, y: 0 },
+      { label: "top-right", x: bitmap.width - cropWidth, y: 0 },
+      { label: "bottom-left", x: 0, y: bitmap.height - cropHeight },
+      {
+        label: "bottom-right",
+        x: bitmap.width - cropWidth,
+        y: bitmap.height - cropHeight,
+      },
+    ];
+
+    return zones.flatMap((zone) => {
+      const scale = Math.min(2, 960 / Math.max(cropWidth, cropHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(cropWidth * scale));
+      canvas.height = Math.max(1, Math.round(cropHeight * scale));
+      const context = canvas.getContext("2d");
+      if (!context) return [];
+
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = "high";
+      context.drawImage(
+        bitmap as ImageBitmap,
+        zone.x,
+        zone.y,
+        cropWidth,
+        cropHeight,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
+
+      return [
+        {
+          label: zone.label,
+          image: canvas.toDataURL("image/jpeg", 0.88),
+        },
+      ];
+    });
+  } catch {
+    return [];
+  } finally {
+    bitmap?.close();
+  }
 }
 
 function validateImage(file: File) {
   if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
     return "Use a JPG, PNG, WebP, or GIF image.";
   }
-
   if (file.size > MAX_FILE_SIZE) {
     return "Choose an image smaller than 12 MB.";
   }
-
   return null;
 }
 
-function Detail({ label, value }: { label: string; value: ReactNode }) {
-  if (value === null || value === "") return null;
+function formatListingPrice(
+  price: EbayImageSearchCandidate["price"],
+) {
+  if (!price) return "Price not listed";
+  const numericValue = Number(price.value);
+  if (!price.currency || !Number.isFinite(numericValue)) {
+    return [price.currency, price.value].filter(Boolean).join(" ");
+  }
+
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: price.currency,
+    }).format(numericValue);
+  } catch {
+    return `${price.currency} ${price.value}`;
+  }
+}
+
+function isExactSerialNumber(value: FieldValue) {
+  return typeof value === "string" && /^\d{1,5}\/\d{1,5}$/.test(value.trim());
+}
+
+function isPrintRunOnly(value: FieldValue) {
+  return typeof value === "string" && /^\/\d{1,5}$/.test(value.trim());
+}
+
+function EbayMatchCard({
+  candidate,
+  isSelected,
+  isLoadingDetails,
+  isInteractionLocked,
+  isConfirming,
+  isConfirmed,
+  suggestions,
+  detailsError,
+  updatedFieldLabels,
+  onSelect,
+  onConfirm,
+  onReview,
+}: {
+  candidate: EbayImageSearchCandidate;
+  isSelected: boolean;
+  isLoadingDetails: boolean;
+  isInteractionLocked: boolean;
+  isConfirming: boolean;
+  isConfirmed: boolean;
+  suggestions: Partial<Record<FieldKey, FieldValue>>;
+  detailsError: string | null;
+  updatedFieldLabels: string[];
+  onSelect: () => void;
+  onConfirm: () => void;
+  onReview: () => void;
+}) {
+  const suggestionCount = Object.keys(suggestions).length;
+
+  return (
+    <article
+      className={`ebay-match-card${isSelected ? " ebay-match-card-selected" : ""}`}
+    >
+      <div className="ebay-match-image">
+        {candidate.imageUrl ? (
+          <img src={candidate.imageUrl} alt="" loading="lazy" />
+        ) : (
+          <span>No listing image</span>
+        )}
+        <span className="ebay-match-rank">Match {candidate.rank}</span>
+      </div>
+      <div className="ebay-match-body">
+        <h4>{candidate.title}</h4>
+        <div className="ebay-match-meta">
+          <strong>{formatListingPrice(candidate.price)}</strong>
+          {candidate.condition && <span>{candidate.condition}</span>}
+        </div>
+        {isSelected ? (
+          <div className="ebay-inline-selection" role="status">
+            <div className="ebay-inline-selection-heading">
+              <CheckIcon />
+              <strong>
+                {isConfirmed ? "Same card confirmed" : "Closest match selected"}
+              </strong>
+            </div>
+
+            {isLoadingDetails ? (
+              <small>Checking seller-provided card details...</small>
+            ) : detailsError ? (
+              <small className="ebay-inline-error">{detailsError}</small>
+            ) : suggestionCount > 0 ? (
+              <>
+                <small>CardPilot can use these listing details:</small>
+                <div className="ebay-suggestions">
+                  {suggestions.cardNumber && (
+                    <span>Card number: {suggestions.cardNumber}</span>
+                  )}
+                  {suggestions.year && <span>Year: {suggestions.year}</span>}
+                  {suggestions.parallel && (
+                    <span>Parallel: {suggestions.parallel}</span>
+                  )}
+                  {suggestions.serialNumber && (
+                    <span>Print run: {suggestions.serialNumber}</span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <small>
+                This listing does not include extra year, card-number,
+                parallel, or print-run details. You can still confirm the visual
+                match.
+              </small>
+            )}
+
+            {isConfirmed && (
+              <small className="ebay-update-result">
+                {updatedFieldLabels.length > 0
+                  ? `Updated CardPilot: ${updatedFieldLabels.join(", ")}.`
+                  : suggestionCount > 0
+                    ? "CardPilot's details already matched the available listing details."
+                    : "No additional listing details were available to update."}
+              </small>
+            )}
+
+            <div className="ebay-inline-actions">
+              {isConfirmed ? (
+                <button type="button" onClick={onReview}>
+                  Review card details
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isLoadingDetails || isConfirming}
+                  onClick={onConfirm}
+                >
+                  {isConfirming
+                    ? "Updating CardPilot..."
+                    : "Confirm same card & update details"}
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={isConfirming}
+                onClick={onSelect}
+              >
+                {isConfirmed ? "Choose a different match" : "Clear selection"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            className="ebay-select-button"
+            type="button"
+            onClick={onSelect}
+            disabled={isInteractionLocked}
+          >
+            This looks like my card
+          </button>
+        )}
+        {candidate.itemWebUrl && (
+          <a
+            href={candidate.itemWebUrl}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`View ${candidate.title} on eBay`}
+          >
+            View active listing <ArrowIcon />
+          </a>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function FieldCard({
+  fieldKey,
+  identification,
+  onEdit,
+}: {
+  fieldKey: FieldKey;
+  identification: CardIdentification;
+  onEdit: () => void;
+}) {
+  const definition = fieldDefinitions.find(({ key }) => key === fieldKey);
+  const field = identification.fields[fieldKey];
+  if (!definition) return null;
 
   return (
     <div className="detail-item">
-      <dt>{label}</dt>
-      <dd>{value}</dd>
+      <div className="detail-label-row">
+        <dt>{definition.label}</dt>
+        <button type="button" onClick={onEdit} aria-label={`Edit ${definition.label}`}>
+          Edit
+        </button>
+      </div>
+      <dd>{formatFieldValue(field.value)}</dd>
+      <small>
+        {field.inferenceSource === "user_correction"
+          ? "User edited"
+          : `${Math.round(field.confidence * 100)}% field confidence`}
+      </small>
+    </div>
+  );
+}
+
+function NumberedCardField({
+  identification,
+  onEdit,
+}: {
+  identification: CardIdentification;
+  onEdit: () => void;
+}) {
+  const serialNumber = identification.fields.serialNumber.value;
+  const isNumbered =
+    typeof serialNumber === "string" && serialNumber.trim().length > 0;
+
+  return (
+    <div className="detail-item">
+      <div className="detail-label-row">
+        <dt>Numbered card</dt>
+        <button type="button" onClick={onEdit} aria-label="Edit numbered card">
+          Edit
+        </button>
+      </div>
+      <dd>{isNumbered ? "Yes" : "No"}</dd>
+      <small>
+        {isNumbered
+          ? `Derived from serial number ${serialNumber}`
+          : "No serial number recorded"}
+      </small>
     </div>
   );
 }
@@ -118,40 +415,203 @@ function Detail({ label, value }: { label: string; value: ReactNode }) {
 function App() {
   const frontInputRef = useRef<HTMLInputElement>(null);
   const backInputRef = useRef<HTMLInputElement>(null);
+  const originalIdentificationRef = useRef<CardIdentification | null>(null);
+  const preparedImagesRef = useRef<{
+    frontImage: string;
+    backImage: string | null;
+  } | null>(null);
+  const ebayRequestIdRef = useRef(0);
+  const ebayItemRequestIdRef = useRef(0);
   const [frontFile, setFrontFile] = useState<File | null>(null);
   const [backFile, setBackFile] = useState<File | null>(null);
-  const [identification, setIdentification] = useState<CardIdentification | null>(null);
+  const [identification, setIdentification] =
+    useState<CardIdentification | null>(null);
   const [isIdentifying, setIsIdentifying] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [resolution, setResolution] = useState<Resolution>(null);
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
+  const [applyingCandidateId, setApplyingCandidateId] = useState<string | null>(null);
+  const [ebaySearch, setEbaySearch] =
+    useState<EbayImageSearchResult | null>(null);
+  const [isSearchingEbay, setIsSearchingEbay] = useState(false);
+  const [ebayError, setEbayError] = useState<string | null>(null);
+  const [selectedEbayCandidateId, setSelectedEbayCandidateId] = useState<
+    string | null
+  >(null);
+  const [selectedEbayDetails, setSelectedEbayDetails] =
+    useState<EbayItemDetails | null>(null);
+  const [isLoadingEbayDetails, setIsLoadingEbayDetails] = useState(false);
+  const [ebayDetailsError, setEbayDetailsError] = useState<string | null>(null);
+  const [editorInitialValues, setEditorInitialValues] = useState<
+    Partial<Record<FieldKey, FieldValue>>
+  >({});
+  const [confirmedEbayCandidateId, setConfirmedEbayCandidateId] = useState<
+    string | null
+  >(null);
+  const [isConfirmingEbayMatch, setIsConfirmingEbayMatch] = useState(false);
+  const [confirmedEbayUpdatedFields, setConfirmedEbayUpdatedFields] = useState<
+    FieldKey[]
+  >([]);
   const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<"scan" | "collection">("scan");
+  const [collectionCards, setCollectionCards] = useState<SavedCollectionCard[]>([]);
+  const [isLoadingCollection, setIsLoadingCollection] = useState(true);
+  const [collectionError, setCollectionError] = useState<string | null>(null);
+  const [savedCollectionId, setSavedCollectionId] = useState<string | null>(null);
+  const [isSavingCollection, setIsSavingCollection] = useState(false);
+  const [collectionMessage, setCollectionMessage] = useState<string | null>(null);
+  const [identificationProgress, setIdentificationProgress] = useState("");
+  const [identificationElapsedSeconds, setIdentificationElapsedSeconds] = useState(0);
 
   const frontPreview = usePreviewUrl(frontFile);
   const backPreview = usePreviewUrl(backFile);
+
+  useEffect(() => {
+    let isCurrent = true;
+    void fetch("/api/collection")
+      .then(async (response) => {
+        const payload = (await response.json().catch(() => null)) as
+          | { cards?: SavedCollectionCard[]; error?: string }
+          | null;
+        if (!response.ok || !Array.isArray(payload?.cards)) {
+          throw new Error(payload?.error ?? "CardPilot could not load your collection.");
+        }
+        if (isCurrent) setCollectionCards(payload.cards);
+      })
+      .catch((caughtError) => {
+        if (isCurrent) {
+          setCollectionError(
+            caughtError instanceof Error
+              ? caughtError.message
+              : "CardPilot could not load your collection.",
+          );
+        }
+      })
+      .finally(() => {
+        if (isCurrent) setIsLoadingCollection(false);
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isIdentifying) return;
+
+    const startedAt = Date.now();
+    const updateProgress = () => {
+      const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+      setIdentificationElapsedSeconds(elapsedSeconds);
+      setIdentificationProgress(
+        elapsedSeconds < 3
+          ? "Preparing card photos"
+          : elapsedSeconds < 10
+            ? "Reading visible text and numbers"
+            : elapsedSeconds < 22
+              ? "Verifying card details"
+              : "Finishing the evidence review",
+      );
+    };
+    const timer = window.setInterval(updateProgress, 1000);
+    return () => window.clearInterval(timer);
+  }, [isIdentifying]);
 
   const openPicker = (side: ImageSide) => {
     if (side === "front") frontInputRef.current?.click();
     else backInputRef.current?.click();
   };
 
-  const handleFileChange = (side: ImageSide) => (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
+  const handleFileChange =
+    (side: ImageSide) => (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) return;
 
-    if (!file) return;
+      const validationError = validateImage(file);
+      if (validationError) {
+        setError(validationError);
+        return;
+      }
 
-    const validationError = validateImage(file);
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
+      setError(null);
+      setIdentification(null);
+      originalIdentificationRef.current = null;
+      preparedImagesRef.current = null;
+      setIsEditing(false);
+      setResolution(null);
+      setSelectedCandidateId(null);
+      setApplyingCandidateId(null);
+      ebayRequestIdRef.current += 1;
+      setEbaySearch(null);
+      setIsSearchingEbay(false);
+      setEbayError(null);
+      ebayItemRequestIdRef.current += 1;
+      setSelectedEbayCandidateId(null);
+      setSelectedEbayDetails(null);
+      setIsLoadingEbayDetails(false);
+      setEbayDetailsError(null);
+      setEditorInitialValues({});
+      setConfirmedEbayCandidateId(null);
+      setIsConfirmingEbayMatch(false);
+      setConfirmedEbayUpdatedFields([]);
+      setSavedCollectionId(null);
+      setCollectionMessage(null);
 
-    setError(null);
-    setIdentification(null);
+      if (side === "front") {
+        setFrontFile(file);
+        setBackFile(null);
+      } else {
+        setBackFile(file);
+      }
+    };
 
-    if (side === "front") {
-      setFrontFile(file);
-      setBackFile(null);
-    } else {
-      setBackFile(file);
+  const loadEbayCandidates = async (frontImage: string) => {
+    const requestId = ++ebayRequestIdRef.current;
+    setIsSearchingEbay(true);
+    setEbaySearch(null);
+    setEbayError(null);
+    ebayItemRequestIdRef.current += 1;
+    setSelectedEbayCandidateId(null);
+    setSelectedEbayDetails(null);
+    setIsLoadingEbayDetails(false);
+    setEbayDetailsError(null);
+    setConfirmedEbayCandidateId(null);
+    setIsConfirmingEbayMatch(false);
+    setConfirmedEbayUpdatedFields([]);
+
+    try {
+      const response = await fetch("/api/ebay/image-search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ frontImage, limit: 6 }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | (Partial<EbayImageSearchResult> & { error?: string })
+        | null;
+
+      if (!response.ok || !Array.isArray(payload?.candidates)) {
+        throw new Error(
+          payload?.error ?? "CardPilot could not load eBay image matches.",
+        );
+      }
+
+      if (requestId !== ebayRequestIdRef.current) return;
+      setEbaySearch({
+        marketplaceId: payload.marketplaceId ?? "EBAY_US",
+        total: payload.total ?? payload.candidates.length,
+        candidates: payload.candidates,
+      });
+    } catch (caughtError) {
+      if (requestId !== ebayRequestIdRef.current) return;
+      setEbayError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not load eBay image matches.",
+      );
+    } finally {
+      if (requestId === ebayRequestIdRef.current) {
+        setIsSearchingEbay(false);
+      }
     }
   };
 
@@ -159,31 +619,64 @@ function App() {
     event.preventDefault();
     if (!frontFile || isIdentifying) return;
 
+    setIdentificationProgress("Preparing card photos");
+    setIdentificationElapsedSeconds(0);
     setIsIdentifying(true);
     setError(null);
     setIdentification(null);
+    setResolution(null);
+    setSelectedCandidateId(null);
+    setApplyingCandidateId(null);
+    ebayRequestIdRef.current += 1;
+    setEbaySearch(null);
+    setIsSearchingEbay(false);
+    setEbayError(null);
+    ebayItemRequestIdRef.current += 1;
+    setSelectedEbayCandidateId(null);
+    setSelectedEbayDetails(null);
+    setIsLoadingEbayDetails(false);
+    setEbayDetailsError(null);
+    setEditorInitialValues({});
+    setConfirmedEbayCandidateId(null);
+    setIsConfirmingEbayMatch(false);
+    setConfirmedEbayUpdatedFields([]);
 
     try {
-      const [frontImage, backImage] = await Promise.all([
-        fileToDataUrl(frontFile),
-        backFile ? fileToDataUrl(backFile) : Promise.resolve(null),
+      const [frontImage, backImage, frontDetailImages] = await Promise.all([
+        fileToOptimizedDataUrl(frontFile),
+        backFile ? fileToOptimizedDataUrl(backFile) : Promise.resolve(null),
+        createFrontDetailImages(frontFile),
       ]);
-
+      preparedImagesRef.current = { frontImage, backImage };
+      void loadEbayCandidates(frontImage);
       const response = await fetch("/api/identify-card", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ frontImage, backImage }),
+        body: JSON.stringify({ frontImage, backImage, frontDetailImages }),
       });
-
       const payload = (await response.json().catch(() => null)) as
         | { identification?: CardIdentification; error?: string }
         | null;
 
       if (!response.ok || !payload?.identification) {
-        throw new Error(payload?.error ?? "CardPilot could not identify this card.");
+        throw new Error(
+          payload?.error ??
+            (response.status >= 500
+              ? "CardPilot's local service was interrupted. Your photo is still selected - tap Identify this card to try again."
+              : "CardPilot could not identify this card."),
+        );
       }
 
+      originalIdentificationRef.current = payload.identification;
       setIdentification(payload.identification);
+      setResolution(
+        payload.identification.decision.action === "auto_accept" ? "auto" : null,
+      );
+      if (payload.identification.status === "not_sports_card") {
+        ebayRequestIdRef.current += 1;
+        setEbaySearch(null);
+        setIsSearchingEbay(false);
+      }
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
@@ -199,13 +692,274 @@ function App() {
     setFrontFile(null);
     setBackFile(null);
     setIdentification(null);
+    originalIdentificationRef.current = null;
+    preparedImagesRef.current = null;
+    setIsEditing(false);
+    setResolution(null);
+    setSelectedCandidateId(null);
+    setApplyingCandidateId(null);
+    ebayRequestIdRef.current += 1;
+    setEbaySearch(null);
+    setIsSearchingEbay(false);
+    setEbayError(null);
+    ebayItemRequestIdRef.current += 1;
+    setSelectedEbayCandidateId(null);
+    setSelectedEbayDetails(null);
+    setIsLoadingEbayDetails(false);
+    setEbayDetailsError(null);
+    setEditorInitialValues({});
+    setConfirmedEbayCandidateId(null);
+    setIsConfirmingEbayMatch(false);
+    setConfirmedEbayUpdatedFields([]);
+    setSavedCollectionId(null);
+    setCollectionMessage(null);
     setError(null);
   };
 
+  const clearSelectedEbayMatch = () => {
+    ebayItemRequestIdRef.current += 1;
+    setSelectedEbayCandidateId(null);
+    setSelectedEbayDetails(null);
+    setIsLoadingEbayDetails(false);
+    setEbayDetailsError(null);
+    setConfirmedEbayCandidateId(null);
+    setIsConfirmingEbayMatch(false);
+    setConfirmedEbayUpdatedFields([]);
+  };
+
+  const selectEbayCandidate = async (candidate: EbayImageSearchCandidate) => {
+    if (isConfirmingEbayMatch) return;
+
+    if (selectedEbayCandidateId === candidate.id) {
+      clearSelectedEbayMatch();
+      return;
+    }
+
+    const requestId = ++ebayItemRequestIdRef.current;
+    setSelectedEbayCandidateId(candidate.id);
+    setSelectedEbayDetails(null);
+    setIsLoadingEbayDetails(true);
+    setEbayDetailsError(null);
+    setConfirmedEbayCandidateId(null);
+    setConfirmedEbayUpdatedFields([]);
+
+    try {
+      const response = await fetch(
+        `/api/ebay/items/${encodeURIComponent(candidate.itemId)}`,
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { item?: EbayItemDetails; error?: string }
+        | null;
+
+      if (!response.ok || !payload?.item) {
+        throw new Error(
+          payload?.error ?? "CardPilot could not load that listing's details.",
+        );
+      }
+
+      if (requestId !== ebayItemRequestIdRef.current) return;
+      setSelectedEbayDetails(payload.item);
+    } catch (caughtError) {
+      if (requestId !== ebayItemRequestIdRef.current) return;
+      setEbayDetailsError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not load that listing's details.",
+      );
+    } finally {
+      if (requestId === ebayItemRequestIdRef.current) {
+        setIsLoadingEbayDetails(false);
+      }
+    }
+  };
+
+  const retryEbaySearch = async () => {
+    if (!frontFile || isSearchingEbay) return;
+
+    try {
+      const frontImage = await fileToOptimizedDataUrl(frontFile);
+      await loadEbayCandidates(frontImage);
+    } catch (caughtError) {
+      setEbayError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "The selected image could not be read.",
+      );
+    }
+  };
+
+  const saveCorrections = async (values: Record<FieldKey, FieldValue>) => {
+    if (!identification) return;
+    const baseline = originalIdentificationRef.current ?? identification;
+    const corrections: Correction[] = fieldDefinitions.flatMap(({ key }) => {
+      const original = baseline.fields[key];
+      const correctedValue = values[key];
+      return Object.is(original.value, correctedValue)
+        ? []
+        : [
+            {
+              field: key,
+              originalValue: original.value,
+              originalConfidence: original.confidence,
+              correctedValue,
+            },
+          ];
+    });
+
+    if (corrections.length > 0) {
+      const response = await fetch("/api/corrections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          identificationId: baseline.identificationId,
+          schemaVersion: baseline.schemaVersion,
+          corrections,
+          metadata: {
+            overallConfidence: baseline.overallConfidence,
+            decision: baseline.decision.action,
+            backPhotoProvided: baseline.backPhoto.provided,
+            source: "editable_confirmation",
+          },
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: string }
+        | null;
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "CardPilot could not save this correction.");
+      }
+    }
+
+    setIdentification((current) => {
+      if (!current) return current;
+      const fields = { ...current.fields };
+      for (const { key } of fieldDefinitions) {
+        if (!Object.is(current.fields[key].value, values[key])) {
+          fields[key] = {
+            ...current.fields[key],
+            value: values[key],
+            inferenceSource: "user_correction",
+          };
+        }
+      }
+      return { ...current, fields };
+    });
+    setIsEditing(false);
+    setEditorInitialValues({});
+    setResolution("confirmed");
+  };
+
+  const saveToCollection = async () => {
+    if (!identification || !frontFile || isSavingCollection) return;
+
+    setIsSavingCollection(true);
+    setError(null);
+    setCollectionMessage(null);
+    try {
+      const fields = Object.fromEntries(
+        fieldDefinitions.map(({ key }) => [key, identification.fields[key].value]),
+      ) as Record<FieldKey, FieldValue>;
+      const isUpdate = Boolean(savedCollectionId);
+      let requestBody: object = { fields };
+      let requestUrl = "/api/collection";
+      let method = "POST";
+
+      if (savedCollectionId) {
+        requestUrl = `/api/collection/${encodeURIComponent(savedCollectionId)}`;
+        method = "PUT";
+      } else {
+        const preparedImages =
+          preparedImagesRef.current ?? {
+            frontImage: await fileToOptimizedDataUrl(frontFile),
+            backImage: backFile
+              ? await fileToOptimizedDataUrl(backFile)
+              : null,
+          };
+        preparedImagesRef.current = preparedImages;
+        const confirmedEbayCandidate = ebaySearch?.candidates.find(
+          (candidate) => candidate.id === confirmedEbayCandidateId,
+        );
+        requestBody = {
+          identificationId: identification.identificationId,
+          fields,
+          overallConfidence: identification.overallConfidence,
+          decision: identification.decision.action,
+          frontImage: preparedImages.frontImage,
+          backImage: preparedImages.backImage,
+          ebayReference: confirmedEbayCandidate
+            ? {
+                itemId: confirmedEbayCandidate.itemId,
+                title: confirmedEbayCandidate.title,
+                itemWebUrl: confirmedEbayCandidate.itemWebUrl,
+              }
+            : null,
+        };
+      }
+
+      const response = await fetch(requestUrl, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { card?: SavedCollectionCard; error?: string }
+        | null;
+      if (!response.ok || !payload?.card) {
+        throw new Error(payload?.error ?? "CardPilot could not save this card.");
+      }
+
+      setSavedCollectionId(payload.card.collectionId);
+      setCollectionCards((current) => [
+        payload.card as SavedCollectionCard,
+        ...current.filter(
+          (card) => card.collectionId !== payload.card?.collectionId,
+        ),
+      ]);
+      setCollectionMessage(
+        isUpdate ? "Saved collection card updated." : "Card saved to My Collection.",
+      );
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not save this card.",
+      );
+    } finally {
+      setIsSavingCollection(false);
+    }
+  };
+
+  const applyCandidate = async (
+    candidate: CardIdentification["candidateMatches"][number],
+  ) => {
+    if (!identification) return;
+    const values = Object.fromEntries(
+      fieldDefinitions.map(({ key }) => [
+        key,
+        candidate.values[key] ?? identification.fields[key].value,
+      ]),
+    ) as Record<FieldKey, FieldValue>;
+
+    try {
+      setError(null);
+      setApplyingCandidateId(candidate.id);
+      await saveCorrections(values);
+      setSelectedCandidateId(candidate.id);
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not apply this catalog match.",
+      );
+    } finally {
+      setApplyingCandidateId(null);
+    }
+  };
+
   const confidenceTone = identification
-    ? identification.confidence >= 80
+    ? identification.overallConfidence >= 0.95
       ? "high"
-      : identification.confidence >= 55
+      : identification.overallConfidence >= 0.8
         ? "medium"
         : "low"
     : "low";
@@ -213,45 +967,178 @@ function App() {
   const resultTitle = identification
     ? identification.status === "not_sports_card"
       ? "Sports card not confirmed"
-      : [identification.year, identification.brand ?? identification.manufacturer, identification.playerName]
+      : [
+          identification.fields.year.value,
+          identification.fields.product.value ??
+            identification.fields.brand.value ??
+            identification.fields.manufacturer.value,
+          identification.fields.player.value,
+        ]
           .filter(Boolean)
           .join(" ") || "Sports card identified"
     : "";
 
-  const cardFlags = identification
+  const decisionLabel = identification
+    ? confirmedEbayCandidateId
+      ? "eBay visual match confirmed"
+      : selectedCandidateId
+      ? "Catalog match selected"
+      : resolution === "confirmed"
+        ? "Corrections saved"
+      : resolution === "override"
+        ? "Using result as-is"
+        : identification.decision.action === "auto_accept"
+          ? "High confidence - ready"
+          : identification.decision.action === "confirm"
+            ? "One-tap confirmation"
+            : "Review recommended"
+    : "";
+
+  const unresolvedDetailLabels = identification
     ? [
-        identification.rookieCard ? "Rookie card" : null,
-        identification.autographed ? "Autographed" : null,
-        identification.memorabilia ? "Memorabilia" : null,
-      ].filter(Boolean)
+        identification.fields.cardNumber.value === null ? "card number" : null,
+        identification.fields.parallel.value === null ? "parallel" : null,
+        isPrintRunOnly(identification.fields.serialNumber.value)
+          ? "exact serial number"
+          : null,
+      ].filter((value): value is string => Boolean(value))
     : [];
+  const ebaySuggestedValues: Partial<Record<FieldKey, FieldValue>> = {};
+  if (selectedEbayDetails?.suggestions.year) {
+    ebaySuggestedValues.year = selectedEbayDetails.suggestions.year;
+  }
+  if (selectedEbayDetails?.suggestions.cardNumber) {
+    ebaySuggestedValues.cardNumber =
+      selectedEbayDetails.suggestions.cardNumber;
+  }
+  if (selectedEbayDetails?.suggestions.parallel) {
+    ebaySuggestedValues.parallel = selectedEbayDetails.suggestions.parallel;
+  }
+  if (
+    selectedEbayDetails?.suggestions.serialNumber &&
+    !isExactSerialNumber(identification?.fields.serialNumber.value ?? null)
+  ) {
+    ebaySuggestedValues.serialNumber =
+      selectedEbayDetails.suggestions.serialNumber;
+  }
+  const confirmedEbayUpdatedFieldLabels = confirmedEbayUpdatedFields.map(
+    (key) =>
+      fieldDefinitions.find((definition) => definition.key === key)?.label ?? key,
+  );
+
+  const openEditor = (
+    initialValues: Partial<Record<FieldKey, FieldValue>> = {},
+  ) => {
+    setEditorInitialValues(initialValues);
+    setIsEditing(true);
+  };
+
+  const confirmSelectedEbayMatch = async () => {
+    if (
+      !identification ||
+      !selectedEbayCandidateId ||
+      isLoadingEbayDetails ||
+      isConfirmingEbayMatch
+    ) {
+      return;
+    }
+
+    const candidateId = selectedEbayCandidateId;
+    const suggestedFields = Object.keys(ebaySuggestedValues) as FieldKey[];
+    const updatedFields = suggestedFields.filter(
+      (key) =>
+        !Object.is(
+          identification.fields[key].value,
+          ebaySuggestedValues[key],
+        ),
+    );
+    const values = Object.fromEntries(
+      fieldDefinitions.map(({ key }) => [
+        key,
+        Object.prototype.hasOwnProperty.call(ebaySuggestedValues, key)
+          ? ebaySuggestedValues[key]
+          : identification.fields[key].value,
+      ]),
+    ) as Record<FieldKey, FieldValue>;
+
+    setIsConfirmingEbayMatch(true);
+    setEbayDetailsError(null);
+    try {
+      await saveCorrections(values);
+      setConfirmedEbayCandidateId(candidateId);
+      setConfirmedEbayUpdatedFields(updatedFields);
+    } catch (caughtError) {
+      setEbayDetailsError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not apply this listing's details.",
+      );
+    } finally {
+      setIsConfirmingEbayMatch(false);
+    }
+  };
+
+  const canSaveToCollection = Boolean(
+    identification &&
+      identification.status !== "not_sports_card" &&
+      (resolution || selectedCandidateId || confirmedEbayCandidateId),
+  );
 
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="CardPilot home">
+        <button
+          className="brand"
+          type="button"
+          aria-label="Open CardPilot scanner"
+          onClick={() => setView("scan")}
+        >
           <span className="brand-mark">CP</span>
           <span>CardPilot</span>
-        </a>
-        <span className="prototype-badge">Sports beta</span>
+        </button>
+        <nav className="topbar-nav" aria-label="CardPilot sections">
+          <button
+            className={view === "scan" ? "active" : ""}
+            type="button"
+            onClick={() => setView("scan")}
+          >
+            Identify
+          </button>
+          <button
+            className={view === "collection" ? "active" : ""}
+            type="button"
+            onClick={() => setView("collection")}
+          >
+            My Collection <span>{collectionCards.length}</span>
+          </button>
+        </nav>
       </header>
 
       <main id="top">
+        {view === "collection" ? (
+          <CollectionView
+            cards={collectionCards}
+            isLoading={isLoadingCollection}
+            error={collectionError}
+            onCardsChange={setCollectionCards}
+            onScanCard={() => setView("scan")}
+          />
+        ) : (
+          <>
         <section className="hero-section">
           <div className="hero-copy">
             <div className="eyebrow">
               <span className="eyebrow-icon"><SparkIcon /></span>
-              AI-assisted sports card ID
+              Evidence-first sports card ID
             </div>
-            <h1>Know what’s in the sleeve.</h1>
+            <h1>Know what's in the sleeve.</h1>
             <p className="hero-lede">
-              Photograph a sports card and CardPilot will pull out the player,
-              year, set, card number, and other visible details in seconds.
+              Start with one front photo. CardPilot asks for more evidence only when
+              it could materially improve the match.
             </p>
-
             <div className="trust-row" aria-label="How CardPilot works">
-              <span><CheckIcon /> Front photo required</span>
-              <span><CheckIcon /> Back photo improves accuracy</span>
+              <span><CheckIcon /> Front photo is the default</span>
+              <span><CheckIcon /> Back photo is always optional</span>
             </div>
           </div>
 
@@ -265,64 +1152,33 @@ function App() {
             </div>
 
             <form onSubmit={identifyCard}>
-              <input
-                className="visually-hidden"
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                capture="environment"
-                ref={frontInputRef}
-                onChange={handleFileChange("front")}
-              />
-              <input
-                className="visually-hidden"
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                capture="environment"
-                ref={backInputRef}
-                onChange={handleFileChange("back")}
-              />
+              <input className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" capture="environment" ref={frontInputRef} onChange={handleFileChange("front")} />
+              <input className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" capture="environment" ref={backInputRef} onChange={handleFileChange("back")} />
 
               {!frontPreview ? (
-                <button
-                  className="capture-zone"
-                  type="button"
-                  onClick={() => openPicker("front")}
-                >
+                <button className="capture-zone" type="button" onClick={() => openPicker("front")}>
                   <span className="camera-disc"><CameraIcon /></span>
                   <strong>Take or choose a photo</strong>
                   <span>Center the full front of the card in the frame</span>
-                  <small>JPG, PNG, WebP or GIF · up to 12 MB</small>
+                  <small>JPG, PNG, WebP or GIF - up to 12 MB</small>
                 </button>
               ) : (
                 <div className="photo-stage">
                   <div className="primary-photo">
                     <img src={frontPreview} alt="Selected front of sports card" />
                     <span className="photo-label">Front</span>
-                    <button
-                      className="change-photo"
-                      type="button"
-                      onClick={() => openPicker("front")}
-                    >
-                      Change
-                    </button>
+                    <button className="change-photo" type="button" onClick={() => openPicker("front")}>Change</button>
                   </div>
-
                   {backPreview ? (
                     <div className="back-photo">
                       <img src={backPreview} alt="Selected back of sports card" />
-                      <span>Back added</span>
-                      <button type="button" onClick={() => setBackFile(null)}>
-                        Remove
-                      </button>
+                      <span>Optional back added</span>
+                      <button type="button" onClick={() => setBackFile(null)}>Remove</button>
                     </div>
                   ) : (
-                    <button
-                      className="add-back"
-                      type="button"
-                      onClick={() => openPicker("back")}
-                    >
+                    <button className="add-back" type="button" onClick={() => openPicker("back")}>
                       <span>+</span>
-                      <span><strong>Add card back</strong><small>Optional, recommended</small></span>
+                      <span><strong>Add card back</strong><small>Optional evidence booster</small></span>
                     </button>
                   )}
                 </div>
@@ -335,17 +1191,18 @@ function App() {
                 </div>
               )}
 
-              <button
-                className="identify-button"
-                type="submit"
-                disabled={!frontFile || isIdentifying}
-              >
+              <button className="identify-button" type="submit" disabled={!frontFile || isIdentifying}>
                 {isIdentifying ? (
-                  <><span className="spinner" /> Reading the card…</>
+                  <><span className="spinner" /> {identificationProgress} ({identificationElapsedSeconds}s)</>
                 ) : (
                   <><SparkIcon /> Identify this card <ArrowIcon /></>
                 )}
               </button>
+              {isIdentifying && (
+                <p className="scan-progress-note" role="status">
+                  Image matching is running alongside identification to save time.
+                </p>
+              )}
             </form>
           </section>
         </section>
@@ -354,79 +1211,305 @@ function App() {
           <section className="result-card" aria-labelledby="result-title" aria-live="polite">
             <div className="result-topline">
               <div>
-                <span className="step-label">Step 02 · Review</span>
+                <span className="step-label">Step 02 - {decisionLabel}</span>
                 <h2 id="result-title">{resultTitle}</h2>
                 <p>{identification.summary}</p>
               </div>
               <div className={`confidence confidence-${confidenceTone}`}>
-                <strong>{identification.confidence}%</strong>
-                <span>confidence</span>
+                <strong>{Math.round(identification.overallConfidence * 100)}%</strong>
+                <span>overall</span>
               </div>
             </div>
 
-            {cardFlags.length > 0 && (
-              <div className="flag-row">
-                {cardFlags.map((flag) => <span key={flag}>{flag}</span>)}
+            {selectedCandidateId && (
+              <div className="catalog-selection" role="status">
+                <CheckIcon />
+                <span>
+                  <strong>Catalog match applied</strong>
+                  {
+                    identification.candidateMatches.find(
+                      (candidate) => candidate.id === selectedCandidateId,
+                    )?.label
+                  }
+                </span>
               </div>
             )}
 
-            <div className="result-grid">
-              <dl className="details-grid">
-                <Detail label="Player" value={identification.playerName} />
-                <Detail label="Sport" value={identification.sport} />
-                <Detail label="Team" value={identification.team} />
-                <Detail label="Year / season" value={identification.year} />
-                <Detail label="Manufacturer" value={identification.manufacturer} />
-                <Detail label="Brand" value={identification.brand} />
-                <Detail label="Set" value={identification.setName} />
-                <Detail label="Card number" value={identification.cardNumber} />
-                <Detail label="Parallel / variant" value={identification.parallelOrVariant} />
-                <Detail label="Serial number" value={identification.serialNumber} />
-              </dl>
+            {identification.decision.blockers.length > 0 && (
+              <div className="flag-row warning-flags">
+                {identification.decision.blockers.map((blocker) => <span key={blocker}>{blocker}</span>)}
+              </div>
+            )}
 
-              <aside className="evidence-panel">
-                <h3>What CardPilot could see</h3>
-                {identification.visibleEvidence.length > 0 ? (
-                  <ul>
-                    {identification.visibleEvidence.map((clue) => (
-                      <li key={clue}><CheckIcon /> {clue}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p>No reliable visual clues were extracted.</p>
-                )}
-              </aside>
-            </div>
+            {isEditing ? (
+              <ConfirmationEditor
+                identification={identification}
+                initialValues={editorInitialValues}
+                onCancel={() => {
+                  setIsEditing(false);
+                  setEditorInitialValues({});
+                }}
+                onSave={saveCorrections}
+              />
+            ) : (
+              <div className="result-grid">
+                <dl className="details-grid">
+                  {fieldDefinitions.flatMap(({ key }) => [
+                    ...(key === "serialNumber"
+                      ? [
+                          <NumberedCardField
+                            key="numberedCard"
+                            identification={identification}
+                            onEdit={() => openEditor()}
+                          />,
+                        ]
+                      : []),
+                    <FieldCard
+                      key={key}
+                      fieldKey={key}
+                      identification={identification}
+                      onEdit={() => openEditor()}
+                    />,
+                  ])}
+                </dl>
 
-            {(identification.needsBackImage || identification.followUpHint) && (
+                <aside className="evidence-panel">
+                  <h3>Why CardPilot chose this</h3>
+                  {identification.evidence.length > 0 ? (
+                    <ul>
+                      {identification.evidence.slice(0, 8).map((clue) => (
+                        <li key={clue.id}><CheckIcon /> <span>{clue.observation}<small>{clue.source === "back_image" ? "Card back" : "Card front"}</small></span></li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>No reliable visual clues were extracted.</p>
+                  )}
+
+                  {identification.missingEvidence.length > 0 && (
+                    <div className="missing-evidence">
+                      <h4>Still uncertain</h4>
+                      {identification.missingEvidence.slice(0, 4).map((missing) => (
+                        <p key={`${missing.field}-${missing.description}`}>{missing.description}</p>
+                      ))}
+                    </div>
+                  )}
+
+                  {identification.candidateMatches.length > 0 && (
+                    <div className="candidate-list">
+                      <h4>
+                        {identification.candidateMatches.some(
+                          (candidate) => candidate.source === "catalog",
+                        )
+                          ? "Possible catalog matches"
+                          : "Possible matches"}
+                      </h4>
+                      {identification.candidateMatches.slice(0, 3).map((candidate) => {
+                        const isSelected = selectedCandidateId === candidate.id;
+                        const isApplying = applyingCandidateId === candidate.id;
+                        return (
+                        <div
+                          className={`candidate-card${isSelected ? " candidate-card-selected" : ""}`}
+                          key={candidate.id}
+                        >
+                          <div className="candidate-heading">
+                            <strong>{candidate.label}</strong>
+                            {candidate.source === "catalog" && (
+                              <em>{isSelected ? "Selected" : "Catalog"}</em>
+                            )}
+                          </div>
+                          <span>{Math.round(candidate.matchConfidence * 100)}% evidence match</span>
+                          <p>{candidate.basis}</p>
+                          {candidate.source === "catalog" && (
+                            <button
+                              type="button"
+                              disabled={isSelected || applyingCandidateId !== null}
+                              onClick={() => void applyCandidate(candidate)}
+                            >
+                              {isSelected
+                                ? "Match applied"
+                                : isApplying
+                                  ? "Applying..."
+                                  : "Use this match"}
+                            </button>
+                          )}
+                        </div>
+                      )})}
+                    </div>
+                  )}
+                </aside>
+              </div>
+            )}
+
+            {!isEditing && unresolvedDetailLabels.length > 0 && (
+              <div className="unknown-resolution">
+                <div>
+                  <strong>
+                    Help resolve {unresolvedDetailLabels.join(" and ")}
+                  </strong>
+                  <span>
+                    {!backFile
+                      ? "These details are often printed on the card back. Add it and identify again, enter them manually, or optionally choose the closest visual match below."
+                      : "These details were not readable from the photos. Enter them manually or optionally choose the closest visual match below."}
+                  </span>
+                </div>
+                <div className="unknown-resolution-actions">
+                  {!backFile && (
+                    <button type="button" onClick={() => openPicker("back")}>
+                      Add card back
+                    </button>
+                  )}
+                  <button type="button" onClick={() => openEditor()}>
+                    Enter details manually
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!isEditing && identification.status !== "not_sports_card" && (
+              <section
+                className="ebay-results"
+                aria-labelledby="ebay-results-title"
+                aria-live="polite"
+              >
+                <div className="ebay-results-heading">
+                  <div>
+                    <span className="ebay-source-badge">eBay Browse</span>
+                    <h3 id="ebay-results-title">Visually similar active listings</h3>
+                    <p>
+                      Compare listing photos and titles before choosing an exact
+                      card, parallel, or variation.
+                    </p>
+                  </div>
+                  {ebaySearch && ebaySearch.candidates.length > 0 && (
+                    <span className="ebay-result-count">
+                      {ebaySearch.candidates.length} visual matches
+                    </span>
+                  )}
+                </div>
+
+                {isSearchingEbay ? (
+                  <div className="ebay-status" role="status">
+                    <span className="spinner" /> Searching active eBay listings...
+                  </div>
+                ) : ebayError ? (
+                  <div className="ebay-status ebay-status-error">
+                    <span>{ebayError}</span>
+                    <button type="button" onClick={() => void retryEbaySearch()}>
+                      Try eBay again
+                    </button>
+                  </div>
+                ) : ebaySearch?.candidates.length ? (
+                  <>
+                    <div className="ebay-match-grid">
+                      {ebaySearch.candidates.map((candidate) => (
+                        <EbayMatchCard
+                          key={candidate.id}
+                          candidate={candidate}
+                          isSelected={selectedEbayCandidateId === candidate.id}
+                          isLoadingDetails={
+                            isLoadingEbayDetails &&
+                            selectedEbayCandidateId === candidate.id
+                          }
+                          isInteractionLocked={
+                            isLoadingEbayDetails || isConfirmingEbayMatch
+                          }
+                          isConfirming={
+                            isConfirmingEbayMatch &&
+                            selectedEbayCandidateId === candidate.id
+                          }
+                          isConfirmed={
+                            confirmedEbayCandidateId === candidate.id
+                          }
+                          suggestions={
+                            selectedEbayCandidateId === candidate.id
+                              ? ebaySuggestedValues
+                              : {}
+                          }
+                          detailsError={
+                            selectedEbayCandidateId === candidate.id
+                              ? ebayDetailsError
+                              : null
+                          }
+                          updatedFieldLabels={
+                            confirmedEbayCandidateId === candidate.id
+                              ? confirmedEbayUpdatedFieldLabels
+                              : []
+                          }
+                          onSelect={() => void selectEbayCandidate(candidate)}
+                          onConfirm={() => void confirmSelectedEbayMatch()}
+                          onReview={() => openEditor()}
+                        />
+                      ))}
+                    </div>
+                    <p className="ebay-disclaimer">
+                      Active listing prices are seller asking prices, not verified
+                      sales or appraisals. Seller titles are search leads and do not
+                      overwrite CardPilot's visible-evidence identification.
+                    </p>
+                  </>
+                ) : ebaySearch ? (
+                  <div className="ebay-status">
+                    No visually similar active listings were found for this photo.
+                  </div>
+                ) : null}
+              </section>
+            )}
+
+            {identification.backPhoto.suggested && !backFile && (
               <div className="follow-up-note">
-                <strong>{identification.needsBackImage ? "A back photo could improve this match." : "Identification note"}</strong>
-                <span>{identification.followUpHint ?? "Scan the card back to reveal its number, copyright line, and set details."}</span>
+                <strong>A back photo could materially improve this match.</strong>
+                <span>{identification.backPhoto.reason} Estimated gain: +{Math.round(identification.backPhoto.expectedConfidenceGain * 100)} points.</span>
               </div>
             )}
 
-            <div className="result-actions">
-              {identification.needsBackImage && !backFile && (
-                <button className="secondary-button" type="button" onClick={() => openPicker("back")}>
-                  Add back photo
+            {!isEditing && (
+              <div className="result-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={!canSaveToCollection || isSavingCollection}
+                  onClick={() => void saveToCollection()}
+                >
+                  {isSavingCollection
+                    ? "Saving..."
+                    : savedCollectionId
+                      ? "Update saved card"
+                      : "Save to Collection"}
                 </button>
-              )}
-              <button className="text-button" type="button" onClick={resetScan}>
-                Scan another card
-              </button>
-            </div>
+                {identification.backPhoto.suggested && !backFile && (
+                  <button className="secondary-button" type="button" onClick={() => openPicker("back")}>Take back photo</button>
+                )}
+                {identification.decision.action === "confirm" && !resolution && (
+                  <button className="secondary-button" type="button" onClick={() => setResolution("confirmed")}>Confirm result</button>
+                )}
+                <button className="outline-button" type="button" onClick={() => openEditor()}>Edit result</button>
+                {identification.decision.action !== "auto_accept" && !resolution && (
+                  <button className="outline-button" type="button" onClick={() => setResolution("override")}>Use anyway</button>
+                )}
+                <button className="text-button" type="button" onClick={resetScan}>Scan another card</button>
+              </div>
+            )}
+
+            {collectionMessage && (
+              <div className="collection-save-status" role="status">
+                <CheckIcon />
+                <span>{collectionMessage}</span>
+                <button type="button" onClick={() => setView("collection")}>View collection</button>
+              </div>
+            )}
 
             <p className="review-disclaimer">
-              AI-assisted identification can be wrong. Verify the card number, set,
-              and variant before buying, selling, or grading.
+              AI-assisted identification can be wrong. Verify card number, set, and variant before buying, selling, grading, or listing.
             </p>
           </section>
+        )}
+          </>
         )}
       </main>
 
       <footer>
         <span>CardPilot</span>
-        <span>Built for collectors who want a faster first look.</span>
+        <span>Fast by default. Extra evidence only when it matters.</span>
       </footer>
     </div>
   );

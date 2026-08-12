@@ -1,0 +1,60 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { fieldKeys } from "./contracts.mjs";
+import { CatalogCandidateGenerator } from "./candidate-generator.mjs";
+
+function field(value) {
+  return {
+    value,
+    confidence: value === null ? 0 : 0.95,
+    evidenceIds: [],
+    inferenceSource: value === null ? "unknown" : "visible",
+    missingEvidence: [],
+  };
+}
+
+function extraction(player = "Nolan Ryan") {
+  const values = {
+    player,
+    sport: "Baseball",
+    team: "Angels",
+    year: null,
+    manufacturer: "Topps",
+    product: null,
+    brand: "Topps",
+    setOrInsert: null,
+    cardNumber: null,
+    rookieStatus: null,
+    parallel: null,
+    serialNumber: null,
+    autograph: false,
+    memorabilia: false,
+    imageVariation: null,
+  };
+  return {
+    fields: Object.fromEntries(fieldKeys.map((key) => [key, field(values[key])])),
+    visibleMarks: [{ text: "75 Years of Baseball", kind: "anniversary_mark" }],
+    visualFeatures: [
+      { description: "reflective green foil outer border" },
+      { description: "stylized Angels wordmark" },
+    ],
+    candidateSuggestions: [],
+  };
+}
+
+test("Nolan Ryan evidence returns independent 2026 catalog candidates", async () => {
+  const candidates = await new CatalogCandidateGenerator().generate(extraction());
+
+  assert.ok(candidates.length >= 2);
+  assert.equal(candidates[0].source, "catalog");
+  assert.equal(candidates[0].values.year, "2026");
+  assert.match(candidates[0].label, /Series 2/i);
+  assert.ok(candidates.every((candidate) => candidate.catalogRecordId));
+});
+
+test("unrelated players do not receive the Nolan catalog records", async () => {
+  const candidates = await new CatalogCandidateGenerator().generate(
+    extraction("Shohei Ohtani"),
+  );
+  assert.deepEqual(candidates, []);
+});

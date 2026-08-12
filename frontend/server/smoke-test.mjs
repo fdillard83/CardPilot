@@ -37,6 +37,51 @@ try {
     throw new Error(`The identification endpoint returned ${identifyResponse.status}; expected ${expectedStatus}.`);
   }
 
+  const ebayResponse = await fetch(`${baseUrl}/api/ebay/image-search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const ebayConfigured = Boolean(
+    process.env.EBAY_CLIENT_ID?.trim() &&
+      process.env.EBAY_CLIENT_SECRET?.trim(),
+  );
+  const expectedEbayStatus = ebayConfigured ? 400 : 503;
+  if (ebayResponse.status !== expectedEbayStatus) {
+    throw new Error(
+      `The eBay image-search endpoint returned ${ebayResponse.status}; expected ${expectedEbayStatus}.`,
+    );
+  }
+
+  const correctionResponse = await fetch(`${baseUrl}/api/corrections`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+
+  if (correctionResponse.status !== 400) {
+    throw new Error(
+      `The correction endpoint returned ${correctionResponse.status}; expected 400.`,
+    );
+  }
+
+  const collectionResponse = await fetch(`${baseUrl}/api/collection`);
+  const collection = await collectionResponse.json();
+  if (!collectionResponse.ok || !Array.isArray(collection.cards)) {
+    throw new Error("The collection endpoint did not return a card list.");
+  }
+
+  const invalidCollectionResponse = await fetch(`${baseUrl}/api/collection`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (invalidCollectionResponse.status !== 400) {
+    throw new Error(
+      `The collection endpoint returned ${invalidCollectionResponse.status}; expected 400 for invalid data.`,
+    );
+  }
+
   console.log("CardPilot server smoke test passed.");
 } finally {
   await new Promise((resolve, reject) => {

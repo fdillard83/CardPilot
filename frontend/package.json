@@ -9,7 +9,9 @@
     "dev:web": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test": "node --test",
     "test:server": "node server/smoke-test.mjs",
+    "eval:accuracy": "node scripts/run-accuracy-eval.mjs",
     "preview": "vite preview",
     "start": "node server/index.mjs"
   },

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "Nolan Ryan test card",
+    "frontImage": "../../Nolan_Ryan_Test_Card.jpg",
+    "expected": {
+      "player": "Nolan Ryan"
+    }
+  },
+  {
+    "name": "Michael McGreevy numbered autograph",
+    "frontImage": "../../Michael_MCGreevy_85_Auto.jpg",
+    "expected": {
+      "player": "Michael McGreevy",
+      "autograph": true,
+      "serialNumber": "63/85"
+    }
+  },
+  {
+    "name": "Moises Ballesteros rookie debut",
+    "frontImage": "../../Moises_Ballesteros_Rookie_Debut.jpg",
+    "expected": {
+      "player": "Moises Ballesteros"
+    }
+  },
+  {
+    "name": "Nick Kurtz Power Players",
+    "frontImage": "../../Nick_Kurtz_Power_Player.jpg",
+    "expected": {
+      "player": "Nick Kurtz"
+    }
+  }
+]
