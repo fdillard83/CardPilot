@@ -212,6 +212,13 @@ export type ActiveMarketSnapshot = {
   disclaimer: string;
 };
 
+export type GradingProfile = {
+  isGraded: boolean;
+  company: string | null;
+  grade: string | null;
+  certificationNumber: string | null;
+};
+
 export type SavedCollectionCard = {
   collectionId: string;
   identificationId: string;
@@ -219,6 +226,7 @@ export type SavedCollectionCard = {
   fields: Record<FieldKey, FieldValue>;
   overallConfidence: number;
   decision: DecisionAction;
+  grading: GradingProfile;
   ebayReference: {
     itemId: string;
     title: string;

@@ -50,6 +50,12 @@ test("collection records persist images and support update and removal", async (
     });
 
     assert.equal(created.title, "2026 Nolan Ryan Crooked Numbers");
+    assert.deepEqual(created.grading, {
+      isGraded: false,
+      company: null,
+      grade: null,
+      certificationNumber: null,
+    });
     assert.match(created.images.frontUrl, /\/images\/front$/);
     assert.match(created.images.backUrl, /\/images\/back$/);
     assert.equal((await store.list()).length, 1);
@@ -65,9 +71,26 @@ test("collection records persist images and support update and removal", async (
 
     const updated = await store.update(created.collectionId, {
       fields: { ...fields, player: "Nolan Ryan (confirmed)" },
+      grading: {
+        isGraded: true,
+        company: "PSA",
+        grade: "10",
+        certificationNumber: "12345678",
+      },
     });
     assert.equal(updated.fields.player, "Nolan Ryan (confirmed)");
+    assert.deepEqual(updated.grading, {
+      isGraded: true,
+      company: "PSA",
+      grade: "10",
+      certificationNumber: "12345678",
+    });
     assert.notEqual(updated.updatedAt, created.updatedAt);
+
+    const identityOnlyUpdate = await store.update(created.collectionId, {
+      fields: { ...updated.fields, team: "California Angels" },
+    });
+    assert.deepEqual(identityOnlyUpdate.grading, updated.grading);
 
     assert.equal(await store.remove(created.collectionId), true);
     assert.deepEqual(await store.list(), []);

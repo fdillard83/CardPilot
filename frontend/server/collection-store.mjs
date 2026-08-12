@@ -19,6 +19,39 @@ const EbayReferenceSchema = z
   })
   .strict();
 
+const rawGradingProfile = Object.freeze({
+  isGraded: false,
+  company: null,
+  grade: null,
+  certificationNumber: null,
+});
+
+export const GradingProfileSchema = z
+  .object({
+    isGraded: z.boolean(),
+    company: z.string().trim().min(1).max(50).nullable(),
+    grade: z.string().trim().min(1).max(20).nullable(),
+    certificationNumber: z.string().trim().min(1).max(80).nullable(),
+  })
+  .strict()
+  .superRefine((profile, context) => {
+    if (profile.isGraded && (!profile.company || !profile.grade)) {
+      context.addIssue({
+        code: "custom",
+        message: "Graded cards require a grading company and grade.",
+      });
+    }
+    if (
+      !profile.isGraded &&
+      (profile.company || profile.grade || profile.certificationNumber)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Raw cards cannot include grading details.",
+      });
+    }
+  });
+
 export const CollectionCreateSchema = z
   .object({
     identificationId: z.string().min(1).max(200),
@@ -28,14 +61,21 @@ export const CollectionCreateSchema = z
     frontImage: imageDataUrl,
     backImage: imageDataUrl.nullable().default(null),
     ebayReference: EbayReferenceSchema.nullable().default(null),
+    grading: GradingProfileSchema.default(rawGradingProfile),
   })
   .strict();
 
 export const CollectionUpdateSchema = z
   .object({
     fields: CandidateValuesSchema,
+    grading: GradingProfileSchema.optional(),
   })
   .strict();
+
+function gradingFromRecord(record) {
+  const parsed = GradingProfileSchema.safeParse(record.grading);
+  return parsed.success ? parsed.data : { ...rawGradingProfile };
+}
 
 function titleFromFields(fields) {
   return (
@@ -69,6 +109,7 @@ function publicRecord(record) {
     overallConfidence: record.overallConfidence,
     decision: record.decision,
     ebayReference: record.ebayReference,
+    grading: gradingFromRecord(record),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     images: {
@@ -131,6 +172,7 @@ export class CollectionStore {
           overallConfidence: validated.overallConfidence,
           decision: validated.decision,
           ebayReference: validated.ebayReference,
+          grading: validated.grading,
           createdAt: timestamp,
           updatedAt: timestamp,
           images: {
@@ -169,6 +211,7 @@ export class CollectionStore {
         ...records[index],
         title: titleFromFields(validated.fields),
         fields: validated.fields,
+        grading: validated.grading ?? gradingFromRecord(records[index]),
         updatedAt: this.now().toISOString(),
       };
       await this.writeRecords(records);

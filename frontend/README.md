@@ -21,6 +21,7 @@ CardPilot is a mobile-friendly sports trading card identifier. A collector start
 - Editable confirmation screen for every returned field
 - Local correction logging that retains original values and never treats one edit as global truth
 - Private local collection storage with saved photos, search, filters, editing, and removal
+- Raw-by-default collection condition profiles with optional grading details
 - Automatic collection save and navigation when the collector confirms a card
 - On-demand eBay Buy It Now snapshots with raw and graded cards separated
 - Optimized upload payloads, parallel eBay matching, and visible scan progress
@@ -29,8 +30,8 @@ CardPilot is a mobile-friendly sports trading card identifier. A collector start
 CardPilot now has a small source-linked catalog adapter for the active Nolan Ryan regression, but it is not yet a complete trading-card catalog. The provider boundary and versioned result are designed for future valuation and verification engines.
 
 CardPilot now includes local collection tracking and descriptive active-listing
-snapshots. Sold-sales valuation,
-condition grading, listing automation, authentication, accounts, and cloud sync
+snapshots. Sold-sales valuation, detailed raw-condition assessment, listing
+automation, authentication, accounts, and cloud sync
 remain future milestones. See [the identification architecture](docs/identification-architecture.md)
 and [sold-sales provider options](docs/sold-sales-provider-options.md).
 

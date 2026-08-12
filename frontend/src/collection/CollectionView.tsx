@@ -5,6 +5,7 @@ import {
   type ActiveMarketSnapshot,
   type FieldKey,
   type FieldValue,
+  type GradingProfile,
   type SavedCollectionCard,
 } from "../identification/types";
 
@@ -40,6 +41,20 @@ function confidenceLabel(confidence: "low" | "medium" | "high") {
   return "Limited snapshot";
 }
 
+function groupMatchesSavedCondition(
+  card: SavedCollectionCard,
+  group: ActiveMarketSnapshot["groups"][number],
+) {
+  if (!card.grading.isGraded) return group.classification === "raw";
+  const savedGrade = `${card.grading.company ?? ""} ${card.grading.grade ?? ""}`
+    .trim()
+    .toLowerCase();
+  return (
+    group.classification === "graded" &&
+    group.label.trim().toLowerCase() === savedGrade
+  );
+}
+
 function ActiveMarketPanel({
   card,
   snapshot,
@@ -53,6 +68,13 @@ function ActiveMarketPanel({
   error: string | null;
   onRetry: () => void;
 }) {
+  const orderedGroups = snapshot
+    ? [...snapshot.groups].sort(
+        (left, right) =>
+          Number(groupMatchesSavedCondition(card, right)) -
+          Number(groupMatchesSavedCondition(card, left)),
+      )
+    : [];
   return (
     <section
       className="valuation-panel"
@@ -108,9 +130,9 @@ function ActiveMarketPanel({
             </div>
           )}
 
-          {snapshot.groups.length > 0 ? (
+          {orderedGroups.length > 0 ? (
             <div className="market-groups">
-              {snapshot.groups.map((group) => (
+              {orderedGroups.map((group) => (
                 <article className="market-group" key={`${group.id}-${group.currency}`}>
                   <div className="market-group-heading">
                     <div>
@@ -119,6 +141,11 @@ function ActiveMarketPanel({
                         {group.classification === "raw" ? "ungraded comparisons" : "graded comparisons"}
                       </span>
                       <h4>{group.label}</h4>
+                      {groupMatchesSavedCondition(card, group) && (
+                        <span className="market-condition-match">
+                          Matches saved condition
+                        </span>
+                      )}
                     </div>
                     <span className={`market-confidence market-confidence-${group.confidence}`}>
                       {confidenceLabel(group.confidence)}
@@ -237,6 +264,7 @@ export function CollectionView({
   const [filter, setFilter] = useState<CollectionFilter>("all");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<FieldKey, FieldValue> | null>(null);
+  const [gradingDraft, setGradingDraft] = useState<GradingProfile | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [marketCardId, setMarketCardId] = useState<string | null>(null);
@@ -276,6 +304,7 @@ export function CollectionView({
     setMarketError(null);
     setEditingId(card.collectionId);
     setDraft(createDraft(card));
+    setGradingDraft({ ...card.grading });
     setActionError(null);
   };
 
@@ -328,7 +357,16 @@ export function CollectionView({
   };
 
   const saveEdit = async (card: SavedCollectionCard) => {
-    if (!draft || busyId) return;
+    if (!draft || !gradingDraft || busyId) return;
+    if (
+      gradingDraft.isGraded &&
+      (!gradingDraft.company?.trim() || !gradingDraft.grade?.trim())
+    ) {
+      setActionError(
+        "Choose the grading company and enter the grade before saving.",
+      );
+      return;
+    }
     setBusyId(card.collectionId);
     setActionError(null);
     try {
@@ -337,7 +375,7 @@ export function CollectionView({
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: draft }),
+          body: JSON.stringify({ fields: draft, grading: gradingDraft }),
         },
       );
       const payload = (await response.json().catch(() => null)) as
@@ -353,6 +391,7 @@ export function CollectionView({
       );
       setEditingId(null);
       setDraft(null);
+      setGradingDraft(null);
     } catch (caughtError) {
       setActionError(
         caughtError instanceof Error
@@ -523,11 +562,107 @@ export function CollectionView({
                         </label>
                       ))}
                     </div>
+                    {gradingDraft && (
+                      <section className="grading-editor" aria-labelledby={`grading-${card.collectionId}`}>
+                        <div className="grading-editor-heading">
+                          <div>
+                            <span>Condition profile</span>
+                            <h3 id={`grading-${card.collectionId}`}>
+                              {gradingDraft.isGraded ? "Graded card" : "Raw / ungraded"}
+                            </h3>
+                            <p>
+                              Most cards stay raw. Turn this on only when the card is in a grading-company slab.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className={`grading-toggle${gradingDraft.isGraded ? " grading-toggle-on" : ""}`}
+                            aria-pressed={gradingDraft.isGraded}
+                            onClick={() =>
+                              setGradingDraft(
+                                gradingDraft.isGraded
+                                  ? {
+                                      isGraded: false,
+                                      company: null,
+                                      grade: null,
+                                      certificationNumber: null,
+                                    }
+                                  : {
+                                      isGraded: true,
+                                      company: null,
+                                      grade: null,
+                                      certificationNumber: null,
+                                    },
+                              )
+                            }
+                          >
+                            <span aria-hidden="true" />
+                            {gradingDraft.isGraded ? "Graded on" : "This card is graded"}
+                          </button>
+                        </div>
+                        {gradingDraft.isGraded && (
+                          <div className="grading-fields">
+                            <label>
+                              <span>Grading company</span>
+                              <select
+                                value={gradingDraft.company ?? ""}
+                                onChange={(event) =>
+                                  setGradingDraft({
+                                    ...gradingDraft,
+                                    company: event.target.value || null,
+                                  })
+                                }
+                              >
+                                <option value="">Choose company</option>
+                                <option value="PSA">PSA</option>
+                                <option value="BGS">BGS / Beckett</option>
+                                <option value="SGC">SGC</option>
+                                <option value="CGC">CGC</option>
+                                <option value="CSG">CSG</option>
+                                <option value="TAG">TAG</option>
+                                <option value="HGA">HGA</option>
+                                <option value="Other">Other</option>
+                              </select>
+                            </label>
+                            <label>
+                              <span>Grade</span>
+                              <input
+                                value={gradingDraft.grade ?? ""}
+                                placeholder="Example: 10"
+                                inputMode="decimal"
+                                maxLength={20}
+                                onChange={(event) =>
+                                  setGradingDraft({
+                                    ...gradingDraft,
+                                    grade: event.target.value.trimStart() || null,
+                                  })
+                                }
+                              />
+                            </label>
+                            <label>
+                              <span>Certification number (optional)</span>
+                              <input
+                                value={gradingDraft.certificationNumber ?? ""}
+                                placeholder="Slab certification number"
+                                maxLength={80}
+                                onChange={(event) =>
+                                  setGradingDraft({
+                                    ...gradingDraft,
+                                    certificationNumber:
+                                      event.target.value.trimStart() || null,
+                                  })
+                                }
+                              />
+                            </label>
+                          </div>
+                        )}
+                      </section>
+                    )}
                     <div className="collection-card-actions">
                       <button type="button" disabled={busyId !== null} onClick={() => void saveEdit(card)}>
                         {busyId === card.collectionId ? "Saving..." : "Save changes"}
                       </button>
-                      <button type="button" onClick={() => { setEditingId(null); setDraft(null); }}>Cancel</button>
+                      <button type="button" onClick={() => { setEditingId(null); setDraft(null); setGradingDraft(null); }}>Cancel</button>
                     </div>
                   </div>
                 ) : (
@@ -541,6 +676,14 @@ export function CollectionView({
                       <div><dt>Parallel</dt><dd>{formatFieldValue(card.fields.parallel)}</dd></div>
                       <div><dt>Numbered card</dt><dd>{card.fields.serialNumber ? "Yes" : "No"}</dd></div>
                       <div><dt>Serial</dt><dd>{formatFieldValue(card.fields.serialNumber)}</dd></div>
+                      <div>
+                        <dt>Condition</dt>
+                        <dd>
+                          {card.grading.isGraded
+                            ? `${card.grading.company} ${card.grading.grade}`
+                            : "Raw / ungraded"}
+                        </dd>
+                      </div>
                     </dl>
                     <div className="collection-card-flags">
                       {card.fields.rookieStatus === true && <span>Rookie</span>}
