@@ -24,6 +24,58 @@ export type FieldKey = (typeof fieldDefinitions)[number]["key"];
 export type FieldValue = string | boolean | null;
 export type DecisionAction = "auto_accept" | "confirm" | "review";
 
+export const valuationFeatureOptions = [
+  { value: "ordinary", label: "Ordinary non-auto / non-relic" },
+  { value: "player_worn_relic", label: "Player-worn relic / jersey swatch" },
+  { value: "game_used_relic", label: "Game-used single-color relic" },
+  { value: "multi_color_patch", label: "Multi-color patch" },
+  { value: "premium_game_used_patch", label: "Premium game-used patch" },
+  { value: "sticker_autograph", label: "Sticker autograph" },
+  { value: "on_card_autograph", label: "On-card autograph" },
+  { value: "rookie_autograph", label: "Rookie autograph" },
+  { value: "patch_autograph", label: "Patch + autograph" },
+  { value: "rookie_patch_autograph", label: "Rookie Patch Auto (RPA)" },
+  {
+    value: "logo_shield_tag_autograph",
+    label: "Logo / shield / tag + autograph",
+  },
+  { value: "relic_unspecified", label: "Relic / patch type not confirmed" },
+  { value: "autograph_unspecified", label: "Autograph type not confirmed" },
+  {
+    value: "autograph_relic_unspecified",
+    label: "Autograph + memorabilia type not confirmed",
+  },
+] as const;
+
+export type ValuationFeatureType =
+  (typeof valuationFeatureOptions)[number]["value"];
+
+export type ValuationProfile = {
+  featureType: ValuationFeatureType;
+  source: "derived" | "user_confirmed";
+};
+
+export function deriveValuationProfile(
+  fields: Record<FieldKey, FieldValue>,
+): ValuationProfile {
+  if (fields.autograph === true && fields.memorabilia === true) {
+    return {
+      featureType: "autograph_relic_unspecified",
+      source: "derived",
+    };
+  }
+  if (fields.autograph === true && fields.rookieStatus === true) {
+    return { featureType: "rookie_autograph", source: "derived" };
+  }
+  if (fields.autograph === true) {
+    return { featureType: "autograph_unspecified", source: "derived" };
+  }
+  if (fields.memorabilia === true) {
+    return { featureType: "relic_unspecified", source: "derived" };
+  }
+  return { featureType: "ordinary", source: "derived" };
+}
+
 export type IdentificationField = {
   value: FieldValue;
   confidence: number;
@@ -209,6 +261,8 @@ export type ActiveMarketSnapshot = {
   broaderMatchedCount: number;
   excludedCount: number;
   groups: ActiveMarketGroup[];
+  valuationProfile: ValuationProfile;
+  variantEstimates: VariantAdjustedEstimate[];
   disclaimer: string;
 };
 
@@ -270,12 +324,153 @@ export type SoldCompsSnapshot = {
     classification: "raw" | "graded";
     label: string;
   };
+  valuationProfile: ValuationProfile;
   candidateCount: number;
   confirmedPriceCount: number;
   exactMatchedCount: number;
   broaderMatchedCount: number;
   excludedCount: number;
   groups: SoldCompsGroup[];
+  variantEstimates: VariantAdjustedEstimate[];
+  disclaimer: string;
+};
+
+export type VariantAdjustedEstimate = {
+  id: string;
+  kind: "variant_adjusted_estimate";
+  observationType: "completed_sale" | "active_asking";
+  platform: string;
+  currency: string;
+  sourceProfile: {
+    serialLabel: string;
+    printRun: number | null;
+    featureType: ValuationFeatureType;
+    featureLabel: string;
+  };
+  targetProfile: {
+    serialLabel: string;
+    printRun: number | null;
+    featureType: ValuationFeatureType;
+    featureLabel: string;
+    featureSource: "derived" | "user_confirmed";
+  };
+  lineageEvidence: {
+    player: string;
+    familyMatchType:
+      | "set_or_insert"
+      | "card_number"
+      | "confirmed_visual_design";
+    familyLabel: string;
+  };
+  sourceCount: number;
+  sourceMedianAmountCents: number;
+  estimatedAmountCents: number;
+  estimatedRange: {
+    lowAmountCents: number;
+    highAmountCents: number;
+  };
+  combinedFactor: {
+    low: number;
+    midpoint: number;
+    high: number;
+  };
+  direction: "up" | "down" | "similar";
+  confidence: "low" | "medium";
+  appliedAdjustments: Array<{
+    dimension: "serial" | "feature";
+    sourceLabel: string;
+    targetLabel: string;
+    lowFactor: number;
+    midpointFactor: number;
+    highFactor: number;
+  }>;
+  outlierCount: number;
+  methodologyVersion: "1.1";
+  sourceObservations: Array<{
+    id: string;
+    title: string;
+    amountCents: number;
+    currency: string;
+    platform: string;
+    imageUrl: string | null;
+    url: string | null;
+    date: string | null;
+  }>;
+};
+
+export type ValuationMethod =
+  | "blended_exact_market"
+  | "blended_broader_market"
+  | "blended_variant_market"
+  | "exact_sold"
+  | "broader_sold"
+  | "variant_sold"
+  | "exact_active"
+  | "broader_active"
+  | "variant_active"
+  | "manual";
+
+export type ConfirmedValuation = {
+  amountCents: number;
+  currency: string;
+  confidence: "low" | "medium" | "high";
+  method: ValuationMethod;
+  userAdjusted: boolean;
+  valuedAt: string;
+};
+
+export type ValuationRecommendationSnapshot = {
+  schemaVersion: "1.0";
+  kind: "card_valuation_recommendation";
+  generatedAt: string;
+  recommendation: {
+    amountCents: number;
+    currency: string;
+    typicalRange: {
+      lowAmountCents: number;
+      highAmountCents: number;
+    };
+    confidence: "low" | "medium" | "high";
+    method: Exclude<ValuationMethod, "manual">;
+    methodLabel: string;
+    sampleCount: number;
+    rationale: string;
+    warnings: Array<{
+      code: "single_sale_active_disagreement";
+      activeAmountCents: number;
+      activeCurrency: string;
+      activeListingCount: number;
+      direction: "higher" | "lower";
+    }>;
+    blend: {
+      activeWeight: number;
+      completedSalesWeight: number;
+      activeAmountCents: number;
+      completedSalesAmountCents: number;
+      activeCount: number;
+      completedSalesCount: number;
+    } | null;
+  } | null;
+  evidence: {
+    sold: {
+      status: "available" | "not_configured" | "rate_limited" | "unavailable";
+      exactCount: number;
+      broaderCount: number;
+      variantEstimateCount: number;
+    };
+    active: {
+      status: "available" | "not_configured" | "rate_limited" | "unavailable";
+      exactCount: number;
+      broaderCount: number;
+      variantEstimateCount: number;
+    };
+  };
+  activeAskingReference: {
+    amountCents: number;
+    currency: string;
+    label: string;
+    listingCount: number;
+  } | null;
   disclaimer: string;
 };
 
@@ -294,6 +489,8 @@ export type SavedCollectionCard = {
   overallConfidence: number;
   decision: DecisionAction;
   grading: GradingProfile;
+  valuationProfile: ValuationProfile;
+  confirmedValuation: ConfirmedValuation | null;
   ebayReference: {
     itemId: string;
     title: string;

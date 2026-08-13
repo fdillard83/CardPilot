@@ -140,6 +140,111 @@ test("broader sold comparisons stay separate and reject known conflicts", () => 
   assert.equal(snapshot.groups[1].confidence, "low");
 });
 
+test("sold exclusions remove exact and broader comparisons from summaries", () => {
+  const results = [
+    result([
+      sale("exact", 40),
+      sale("broader", 44, {
+        title: "Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85",
+      }),
+    ]),
+  ];
+
+  const withoutExact = buildSoldCompsSnapshot({
+    fields,
+    grading: raw,
+    query: exactTitle,
+    results,
+    excludedObservationIds: ["exact"],
+  });
+  const withoutBroader = buildSoldCompsSnapshot({
+    fields,
+    grading: raw,
+    query: exactTitle,
+    results,
+    excludedObservationIds: ["broader"],
+  });
+
+  assert.equal(withoutExact.exactMatchedCount, 0);
+  assert.equal(withoutExact.broaderMatchedCount, 1);
+  assert.equal(withoutExact.groups[0].sales[0].id, "broader");
+  assert.equal(withoutBroader.exactMatchedCount, 1);
+  assert.equal(withoutBroader.broaderMatchedCount, 0);
+  assert.equal(withoutBroader.groups[0].sales[0].id, "exact");
+});
+
+test("sold snapshots expose a downward estimate from a numbered autograph to base", () => {
+  const baseFields = {
+    ...fields,
+    parallel: null,
+    serialNumber: null,
+    autograph: false,
+  };
+  const snapshot = buildSoldCompsSnapshot({
+    fields: baseFields,
+    grading: raw,
+    valuationProfile: {
+      featureType: "ordinary",
+      source: "user_confirmed",
+    },
+    query: "Nolan Ryan",
+    results: [
+      result([
+        sale("numbered-auto", 120, {
+          title:
+            "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 On-Card Auto /50",
+          printRun: 50,
+        }),
+      ]),
+    ],
+  });
+
+  assert.equal(snapshot.exactMatchedCount, 0);
+  assert.equal(snapshot.variantEstimates.length, 1);
+  assert.equal(snapshot.variantEstimates[0].direction, "down");
+  assert.equal(snapshot.variantEstimates[0].estimatedAmountCents, 224);
+});
+
+test("sold-comps exclusions recalculate from cached provider results", async () => {
+  const calls = [];
+  const baseFields = {
+    ...fields,
+    parallel: null,
+    serialNumber: null,
+    autograph: false,
+  };
+  const service = new SoldCompsService({
+    cardApiClient: {
+      async searchSales(options) {
+        calls.push(options);
+        return result([
+          sale("numbered-auto", 120, {
+            title:
+              "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 On-Card Auto /50",
+            printRun: 50,
+          }),
+        ]);
+      },
+    },
+  });
+  const valuationProfile = {
+    featureType: "ordinary",
+    source: "user_confirmed",
+  };
+
+  const initial = await service.snapshot(baseFields, raw, valuationProfile);
+  const withoutAnchor = await service.snapshot(
+    baseFields,
+    raw,
+    valuationProfile,
+    { excludedObservationIds: ["numbered-auto"] },
+  );
+
+  assert.equal(initial.variantEstimates.length, 1);
+  assert.equal(withoutAnchor.variantEstimates.length, 0);
+  assert.equal(calls.length, 2);
+});
+
 test("sold-comps service retries a broad discovery query and caches in memory", async () => {
   const calls = [];
   let now = Date.parse("2026-08-12T20:00:00.000Z");
@@ -159,7 +264,7 @@ test("sold-comps service retries a broad discovery query and caches in memory", 
   assert.equal(calls.length, 2);
   assert.equal(calls[0].graded, false);
   assert.match(calls[0].query, /\/85/);
-  assert.equal(calls[1].query, "Nolan Ryan 2026");
+  assert.match(calls[1].query, /^Nolan Ryan 2026 Topps/);
 
   now += 11 * 60 * 1000;
   await service.snapshot(fields, raw);

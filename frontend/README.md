@@ -6,6 +6,7 @@ CardPilot is a mobile-friendly sports trading card identifier. A collector start
 
 - Camera or photo-library upload
 - Automatic identification as soon as a front photo is selected
+- Automatic card-border cropping and perspective correction with a safe original-photo fallback
 - Staged identification pipeline: intake, evidence extraction, candidates, verification, confidence, and decision
 - One-call front-only workflow with focused corner crops for faster small-text reading
 - Character-by-character verification for anniversary marks, years, card numbers, and serial numbers
@@ -25,6 +26,9 @@ CardPilot is a mobile-friendly sports trading card identifier. A collector start
 - Automatic collection save and navigation when the collector confirms a card
 - On-demand eBay Buy It Now snapshots with raw and graded cards separated
 - Experimental on-demand completed-sales comparisons from The Card API
+- Bidirectional serial- and feature-adjusted fallback estimates when exact pricing is scarce
+- Review-first CardPilot valuation recommendations with collector confirmation or adjustment
+- Confirmed per-card values, portfolio totals, stale-pricing filters, and sequential collection refresh
 - Optimized upload payloads, parallel eBay matching, and visible scan progress
 - A repeatable, opt-in accuracy evaluation library for verified sample cards
 
@@ -161,6 +165,55 @@ are cached in server memory for ten minutes and are not written to collection
 records, which keeps the current free-tier evaluation session-only. A zero-result
 search means no qualifying record was found in the provider's available window;
 it does not mean the card has no value.
+
+When fewer than three exact matches are available, CardPilot can also show a
+separate **Variant-adjusted estimate**. It finds other versions from the same
+card lineage and scales their completed sale or active asking price upward or
+downward using configured serial-number and card-feature premium ranges. `/85`
+and other unlisted print runs are interpolated between adjacent tiers. Composite
+profiles such as RPA are applied once, so rookie, patch, and autograph premiums
+are not double-counted. Sold and active-asking estimates are calculated
+separately before they are eligible for the recommendation blend.
+
+Collectors can confirm the card's primary feature profile from **Edit details**.
+Automatic profiles are intentionally conservative when the autograph or relic
+type is unknown. Every adjusted estimate identifies its source tier, target
+tier, same-player and card-family evidence, applied factors, source records,
+plain-language calculation, modeled range, and limited confidence. Generic
+autograph certification wording is not accepted as an insert name.
+See [the variant-adjustment methodology](docs/variant-adjusted-valuation.md).
+
+## Confirmed valuation workflow
+
+`GET /api/collection/:collectionId/valuation` checks the cached sold-comps and
+active-market services and returns a decision-support recommendation. When
+comparable active listings and completed sales exist at the same evidence tier,
+CardPilot blends them with **60% weight on current active asking prices and 40%
+weight on completed sales**. This gives the current market more influence while
+keeping the estimate grounded in prices buyers actually paid. The same blend is
+available for compatible exact, broader, and variant-adjusted evidence; tiers
+and incompatible variant profiles are never mixed.
+
+Direct exact evidence is preferred over broader evidence, and broader evidence
+is preferred over modeled variant estimates. If only one source is available at
+the best available tier, CardPilot still recommends from that source instead of
+mixing in a lower-quality tier. Active-only, broader, and variant-adjusted
+recommendations remain low confidence because asking prices are not confirmed
+sales and modeled estimates add assumptions. The interface shows both source
+amounts, sample counts, and their weights whenever a blend is used.
+
+Collectors can accept or edit the recommendation. `PUT /api/collection/:collectionId/valuation`
+saves only the confirmed amount,
+currency, confidence, method, adjustment flag, and confirmation date. Raw
+provider sales and listings remain in server memory and are never written to
+the collection record. `DELETE /api/collection/:collectionId/valuation` clears
+the confirmed value.
+
+The collection shows confirmed portfolio value, cards needing a value, and
+values older than 30 days or made stale by later card-detail edits. **Refresh all
+values** searches sequentially and pauses when a provider reports a request
+limit. Recommendations are reviewed and selected before the collection is
+updated.
 
 ## Checks
 

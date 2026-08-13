@@ -2,6 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import "./App.css";
 import { CollectionView } from "./collection/CollectionView";
+import {
+  createCardDetailImages,
+  prepareCardPhoto,
+} from "./imaging/card-photo";
 import { ConfirmationEditor } from "./identification/ConfirmationEditor";
 import {
   fieldDefinitions,
@@ -18,7 +22,6 @@ import {
 
 type ImageSide = "front" | "back";
 type Resolution = "auto" | "confirmed" | "override" | null;
-type FrontDetailImage = { label: string; image: string };
 
 const MAX_FILE_SIZE = 12 * 1024 * 1024;
 const SUPPORTED_IMAGE_TYPES = new Set([
@@ -72,103 +75,6 @@ function usePreviewUrl(file: File | null) {
   }, [url]);
 
   return url;
-}
-
-function fileToDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") resolve(reader.result);
-      else reject(new Error("The selected image could not be read."));
-    };
-    reader.onerror = () =>
-      reject(new Error("The selected image could not be read."));
-    reader.readAsDataURL(file);
-  });
-}
-
-async function fileToOptimizedDataUrl(file: File, maxDimension = 2400) {
-  if (typeof createImageBitmap !== "function" || file.type === "image/gif") {
-    return fileToDataUrl(file);
-  }
-
-  let bitmap: ImageBitmap | null = null;
-  try {
-    bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
-    if (scale === 1 && file.size < 2.5 * 1024 * 1024) {
-      return fileToDataUrl(file);
-    }
-
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    const context = canvas.getContext("2d");
-    if (!context) return fileToDataUrl(file);
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = "high";
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.92);
-  } catch {
-    return fileToDataUrl(file);
-  } finally {
-    bitmap?.close();
-  }
-}
-
-async function createFrontDetailImages(file: File): Promise<FrontDetailImage[]> {
-  if (typeof createImageBitmap !== "function") return [];
-
-  let bitmap: ImageBitmap | null = null;
-  try {
-    bitmap = await createImageBitmap(file);
-    const cropWidth = Math.max(1, Math.round(bitmap.width * 0.55));
-    const cropHeight = Math.max(1, Math.round(bitmap.height * 0.55));
-    const zones = [
-      { label: "top-left", x: 0, y: 0 },
-      { label: "top-right", x: bitmap.width - cropWidth, y: 0 },
-      { label: "bottom-left", x: 0, y: bitmap.height - cropHeight },
-      {
-        label: "bottom-right",
-        x: bitmap.width - cropWidth,
-        y: bitmap.height - cropHeight,
-      },
-    ];
-
-    return zones.flatMap((zone) => {
-      const scale = Math.min(2, 960 / Math.max(cropWidth, cropHeight));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(cropWidth * scale));
-      canvas.height = Math.max(1, Math.round(cropHeight * scale));
-      const context = canvas.getContext("2d");
-      if (!context) return [];
-
-      context.imageSmoothingEnabled = true;
-      context.imageSmoothingQuality = "high";
-      context.drawImage(
-        bitmap as ImageBitmap,
-        zone.x,
-        zone.y,
-        cropWidth,
-        cropHeight,
-        0,
-        0,
-        canvas.width,
-        canvas.height,
-      );
-
-      return [
-        {
-          label: zone.label,
-          image: canvas.toDataURL("image/jpeg", 0.88),
-        },
-      ];
-    });
-  } catch {
-    return [];
-  } finally {
-    bitmap?.close();
-  }
 }
 
 function validateImage(file: File) {
@@ -425,6 +331,12 @@ function App() {
   const identificationRequestIdRef = useRef(0);
   const [frontFile, setFrontFile] = useState<File | null>(null);
   const [backFile, setBackFile] = useState<File | null>(null);
+  const [preparedFrontPreview, setPreparedFrontPreview] = useState<string | null>(
+    null,
+  );
+  const [preparedBackPreview, setPreparedBackPreview] = useState<string | null>(
+    null,
+  );
   const [identification, setIdentification] =
     useState<CardIdentification | null>(null);
   const [isIdentifying, setIsIdentifying] = useState(false);
@@ -463,8 +375,10 @@ function App() {
   const [identificationProgress, setIdentificationProgress] = useState("");
   const [identificationElapsedSeconds, setIdentificationElapsedSeconds] = useState(0);
 
-  const frontPreview = usePreviewUrl(frontFile);
-  const backPreview = usePreviewUrl(backFile);
+  const originalFrontPreview = usePreviewUrl(frontFile);
+  const originalBackPreview = usePreviewUrl(backFile);
+  const frontPreview = preparedFrontPreview ?? originalFrontPreview;
+  const backPreview = preparedBackPreview ?? originalBackPreview;
 
   useEffect(() => {
     let isCurrent = true;
@@ -560,10 +474,13 @@ function App() {
     setSavedCollectionId(null);
 
     if (side === "front") {
+      setPreparedFrontPreview(null);
+      setPreparedBackPreview(null);
       setFrontFile(file);
       setBackFile(null);
       void identifyCard(file, null);
     } else {
+      setPreparedBackPreview(null);
       setBackFile(file);
       if (frontFile) void identifyCard(frontFile, file);
     }
@@ -650,14 +567,19 @@ function App() {
     setSavedCollectionId(null);
 
     try {
-      const [frontImage, backImage, frontDetailImages] = await Promise.all([
-        fileToOptimizedDataUrl(selectedFrontFile),
+      const [preparedFront, preparedBack] = await Promise.all([
+        prepareCardPhoto(selectedFrontFile),
         selectedBackFile
-          ? fileToOptimizedDataUrl(selectedBackFile)
+          ? prepareCardPhoto(selectedBackFile)
           : Promise.resolve(null),
-        createFrontDetailImages(selectedFrontFile),
       ]);
       if (requestId !== identificationRequestIdRef.current) return;
+      const frontImage = preparedFront.image;
+      const backImage = preparedBack?.image ?? null;
+      const frontDetailImages = await createCardDetailImages(frontImage);
+      if (requestId !== identificationRequestIdRef.current) return;
+      setPreparedFrontPreview(frontImage);
+      setPreparedBackPreview(backImage);
       preparedImagesRef.current = { frontImage, backImage };
       void loadEbayCandidates(frontImage);
       const response = await fetch("/api/identify-card", {
@@ -706,6 +628,8 @@ function App() {
     identificationRequestIdRef.current += 1;
     setFrontFile(null);
     setBackFile(null);
+    setPreparedFrontPreview(null);
+    setPreparedBackPreview(null);
     setIdentification(null);
     originalIdentificationRef.current = null;
     preparedImagesRef.current = null;
@@ -742,6 +666,7 @@ function App() {
   const removeBackPhoto = () => {
     if (!frontFile || isIdentifying) return;
     setBackFile(null);
+    setPreparedBackPreview(null);
     void identifyCard(frontFile, null);
   };
 
@@ -806,7 +731,9 @@ function App() {
     if (!frontFile || isSearchingEbay) return;
 
     try {
-      const frontImage = await fileToOptimizedDataUrl(frontFile);
+      const frontImage =
+        preparedImagesRef.current?.frontImage ??
+        (await prepareCardPhoto(frontFile)).image;
       await loadEbayCandidates(frontImage);
     } catch (caughtError) {
       setEbayError(
@@ -902,7 +829,20 @@ function App() {
           cardIdentification.fields[key].value,
         ]),
       ) as Record<FieldKey, FieldValue>;
-      let requestBody: object = { fields };
+      const confirmedEbayCandidate = ebaySearch?.candidates.find(
+        (candidate) => candidate.id === ebayCandidateId,
+      );
+      const ebayReference = confirmedEbayCandidate
+        ? {
+            itemId: confirmedEbayCandidate.itemId,
+            title: confirmedEbayCandidate.title,
+            itemWebUrl: confirmedEbayCandidate.itemWebUrl,
+          }
+        : null;
+      let requestBody: object = {
+        fields,
+        ...(ebayCandidateId ? { ebayReference } : {}),
+      };
       let requestUrl = "/api/collection";
       let method = "POST";
 
@@ -910,17 +850,18 @@ function App() {
         requestUrl = `/api/collection/${encodeURIComponent(savedCollectionId)}`;
         method = "PUT";
       } else {
-        const preparedImages =
-          preparedImagesRef.current ?? {
-            frontImage: await fileToOptimizedDataUrl(frontFile),
-            backImage: backFile
-              ? await fileToOptimizedDataUrl(backFile)
-              : null,
-        };
+        let preparedImages = preparedImagesRef.current;
+        if (!preparedImages) {
+          const [preparedFront, preparedBack] = await Promise.all([
+            prepareCardPhoto(frontFile),
+            backFile ? prepareCardPhoto(backFile) : Promise.resolve(null),
+          ]);
+          preparedImages = {
+            frontImage: preparedFront.image,
+            backImage: preparedBack?.image ?? null,
+          };
+        }
         preparedImagesRef.current = preparedImages;
-        const confirmedEbayCandidate = ebaySearch?.candidates.find(
-          (candidate) => candidate.id === ebayCandidateId,
-        );
         requestBody = {
           identificationId: cardIdentification.identificationId,
           fields,
@@ -928,13 +869,7 @@ function App() {
           decision: cardIdentification.decision.action,
           frontImage: preparedImages.frontImage,
           backImage: preparedImages.backImage,
-          ebayReference: confirmedEbayCandidate
-            ? {
-                itemId: confirmedEbayCandidate.itemId,
-                title: confirmedEbayCandidate.title,
-                itemWebUrl: confirmedEbayCandidate.itemWebUrl,
-              }
-            : null,
+          ebayReference,
         };
       }
 

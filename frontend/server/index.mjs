@@ -18,6 +18,7 @@ import {
 import { createCorrectionLogger } from "./correction-log.mjs";
 import { CollectionStore } from "./collection-store.mjs";
 import { ActiveMarketService } from "./valuation/active-market.mjs";
+import { ValuationRecommendationService } from "./valuation/recommendation.mjs";
 import {
   TheCardApiClient,
   TheCardApiError,
@@ -55,6 +56,10 @@ const soldComps = theCardApiKey
       cardApiClient: new TheCardApiClient({ apiKey: theCardApiKey }),
     })
   : null;
+const valuationRecommendations = new ValuationRecommendationService({
+  soldComps,
+  activeMarket,
+});
 const correctionLogger = createCorrectionLogger({
   filePath: path.resolve(currentDirectory, "../.data/corrections.jsonl"),
 });
@@ -65,6 +70,22 @@ const collectionStore = new CollectionStore({
 
 app.disable("x-powered-by");
 app.use(express.json({ limit: "30mb" }));
+
+function excludedObservationIds(request, queryName = "exclude") {
+  const raw = request.query[queryName];
+  if (raw === undefined) return [];
+  const values = Array.isArray(raw) ? raw : [raw];
+  if (
+    values.length > 50 ||
+    values.some(
+      (value) =>
+        typeof value !== "string" || value.length < 1 || value.length > 500,
+    )
+  ) {
+    throw new TypeError("The removed pricing anchors are invalid.");
+  }
+  return [...new Set(values)];
+}
 
 app.get("/api/health", (_request, response) => {
   response.json({
@@ -150,6 +171,85 @@ app.delete("/api/collection/:collectionId", async (request, response) => {
 });
 
 app.get(
+  "/api/collection/:collectionId/valuation",
+  async (request, response) => {
+    try {
+      const card = await collectionStore.get(request.params.collectionId);
+      if (!card) {
+        response.status(404).json({ error: "That saved card was not found." });
+        return;
+      }
+      response.json(
+        await valuationRecommendations.snapshot(card, {
+          soldExcludedObservationIds: excludedObservationIds(
+            request,
+            "excludeSold",
+          ),
+          activeExcludedObservationIds: excludedObservationIds(
+            request,
+            "excludeActive",
+          ),
+        }),
+      );
+    } catch (error) {
+      console.error("Card valuation recommendation failed", error);
+      response.status(500).json({
+        error: "CardPilot could not prepare this valuation. Please try again.",
+      });
+    }
+  },
+);
+
+app.put(
+  "/api/collection/:collectionId/valuation",
+  async (request, response) => {
+    try {
+      const card = await collectionStore.updateConfirmedValuation(
+        request.params.collectionId,
+        request.body,
+      );
+      if (!card) {
+        response.status(404).json({ error: "That saved card was not found." });
+        return;
+      }
+      response.json({ card });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        response.status(400).json({
+          error: "Enter a valid confirmed value and confidence level.",
+        });
+        return;
+      }
+      console.error("Confirmed card valuation save failed", error);
+      response.status(500).json({
+        error: "CardPilot could not save this value. Please try again.",
+      });
+    }
+  },
+);
+
+app.delete(
+  "/api/collection/:collectionId/valuation",
+  async (request, response) => {
+    try {
+      const card = await collectionStore.clearConfirmedValuation(
+        request.params.collectionId,
+      );
+      if (!card) {
+        response.status(404).json({ error: "That saved card was not found." });
+        return;
+      }
+      response.json({ card });
+    } catch (error) {
+      console.error("Confirmed card valuation removal failed", error);
+      response.status(500).json({
+        error: "CardPilot could not clear this value. Please try again.",
+      });
+    }
+  },
+);
+
+app.get(
   "/api/collection/:collectionId/images/:side",
   async (request, response) => {
     if (!new Set(["front", "back"]).has(request.params.side)) {
@@ -198,6 +298,9 @@ app.get(
       response.json(
         await activeMarket.snapshot(card.fields, {
           confirmedReferenceItemId: card.ebayReference?.itemId ?? null,
+          grading: card.grading,
+          valuationProfile: card.valuationProfile,
+          excludedObservationIds: excludedObservationIds(request),
         }),
       );
     } catch (error) {
@@ -254,7 +357,14 @@ app.get(
         });
         return;
       }
-      response.json(await soldComps.snapshot(card.fields, card.grading));
+      response.json(
+        await soldComps.snapshot(
+          card.fields,
+          card.grading,
+          card.valuationProfile,
+          { excludedObservationIds: excludedObservationIds(request) },
+        ),
+      );
     } catch (error) {
       if (error instanceof TypeError) {
         response.status(422).json({ error: error.message });

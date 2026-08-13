@@ -6,6 +6,11 @@ import {
   CandidateValuesSchema,
   DecisionActionSchema,
 } from "./identification/contracts.mjs";
+import {
+  deriveValuationProfile,
+  valuationFeatureTypes,
+} from "./valuation/variant-adjustment.mjs";
+import { valuationMethods } from "./valuation/recommendation.mjs";
 
 const imageDataUrl = z
   .string()
@@ -52,6 +57,27 @@ export const GradingProfileSchema = z
     }
   });
 
+export const ValuationProfileSchema = z
+  .object({
+    featureType: z.enum(valuationFeatureTypes),
+    source: z.enum(["derived", "user_confirmed"]),
+  })
+  .strict();
+
+export const ConfirmedValuationInputSchema = z
+  .object({
+    amountCents: z.number().int().min(0).max(100_000_000_000),
+    currency: z.string().trim().regex(/^[A-Z]{3}$/),
+    confidence: z.enum(["low", "medium", "high"]),
+    method: z.enum(valuationMethods),
+    userAdjusted: z.boolean().default(false),
+  })
+  .strict();
+
+const ConfirmedValuationSchema = ConfirmedValuationInputSchema.extend({
+  valuedAt: z.string().datetime(),
+}).strict();
+
 export const CollectionCreateSchema = z
   .object({
     identificationId: z.string().min(1).max(200),
@@ -62,6 +88,7 @@ export const CollectionCreateSchema = z
     backImage: imageDataUrl.nullable().default(null),
     ebayReference: EbayReferenceSchema.nullable().default(null),
     grading: GradingProfileSchema.default(rawGradingProfile),
+    valuationProfile: ValuationProfileSchema.optional(),
   })
   .strict();
 
@@ -69,12 +96,24 @@ export const CollectionUpdateSchema = z
   .object({
     fields: CandidateValuesSchema,
     grading: GradingProfileSchema.optional(),
+    valuationProfile: ValuationProfileSchema.optional(),
+    ebayReference: EbayReferenceSchema.nullable().optional(),
   })
   .strict();
 
 function gradingFromRecord(record) {
   const parsed = GradingProfileSchema.safeParse(record.grading);
   return parsed.success ? parsed.data : { ...rawGradingProfile };
+}
+
+function valuationProfileFromRecord(record) {
+  const parsed = ValuationProfileSchema.safeParse(record.valuationProfile);
+  return parsed.success ? parsed.data : deriveValuationProfile(record.fields);
+}
+
+function confirmedValuationFromRecord(record) {
+  const parsed = ConfirmedValuationSchema.safeParse(record.confirmedValuation);
+  return parsed.success ? parsed.data : null;
 }
 
 function titleFromFields(fields) {
@@ -110,6 +149,8 @@ function publicRecord(record) {
     decision: record.decision,
     ebayReference: record.ebayReference,
     grading: gradingFromRecord(record),
+    valuationProfile: valuationProfileFromRecord(record),
+    confirmedValuation: confirmedValuationFromRecord(record),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     images: {
@@ -173,6 +214,9 @@ export class CollectionStore {
           decision: validated.decision,
           ebayReference: validated.ebayReference,
           grading: validated.grading,
+          valuationProfile:
+            validated.valuationProfile ?? deriveValuationProfile(validated.fields),
+          confirmedValuation: null,
           createdAt: timestamp,
           updatedAt: timestamp,
           images: {
@@ -207,11 +251,21 @@ export class CollectionStore {
       );
       if (index < 0) return null;
 
+      const currentValuationProfile = valuationProfileFromRecord(records[index]);
       records[index] = {
         ...records[index],
         title: titleFromFields(validated.fields),
         fields: validated.fields,
         grading: validated.grading ?? gradingFromRecord(records[index]),
+        valuationProfile:
+          validated.valuationProfile ??
+          (currentValuationProfile.source === "derived"
+            ? deriveValuationProfile(validated.fields)
+            : currentValuationProfile),
+        ebayReference:
+          validated.ebayReference === undefined
+            ? records[index].ebayReference
+            : validated.ebayReference,
         updatedAt: this.now().toISOString(),
       };
       await this.writeRecords(records);
@@ -236,6 +290,42 @@ export class CollectionStore {
           ),
       );
       return true;
+    });
+  }
+
+  async updateConfirmedValuation(collectionId, input) {
+    const validated = ConfirmedValuationInputSchema.parse(input);
+    return this.enqueue(async () => {
+      const records = await this.readRecords();
+      const index = records.findIndex(
+        (record) => record.collectionId === collectionId,
+      );
+      if (index < 0) return null;
+      const timestamp = this.now().toISOString();
+      records[index] = {
+        ...records[index],
+        confirmedValuation: { ...validated, valuedAt: timestamp },
+        updatedAt: timestamp,
+      };
+      await this.writeRecords(records);
+      return publicRecord(records[index]);
+    });
+  }
+
+  async clearConfirmedValuation(collectionId) {
+    return this.enqueue(async () => {
+      const records = await this.readRecords();
+      const index = records.findIndex(
+        (record) => record.collectionId === collectionId,
+      );
+      if (index < 0) return null;
+      records[index] = {
+        ...records[index],
+        confirmedValuation: null,
+        updatedAt: this.now().toISOString(),
+      };
+      await this.writeRecords(records);
+      return publicRecord(records[index]);
     });
   }
 

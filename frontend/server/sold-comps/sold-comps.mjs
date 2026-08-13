@@ -2,23 +2,17 @@ import {
   buildActiveMarketQuery,
   evaluateCardTitleMatch,
 } from "../valuation/active-market.mjs";
+import {
+  buildVariantAdjustedEstimates,
+  buildVariantDiscoveryQuery,
+  deriveValuationProfile,
+} from "../valuation/variant-adjustment.mjs";
 
 const soldCompsDisclaimer =
   "Completed-sale records are supplied by The Card API and are informational comparisons, not an appraisal or guaranteed value. Exact and broader title matches remain separate, and marketplace fee or buyer-premium treatment can differ by platform.";
 
 function cleanText(value) {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function buildDiscoveryQuery(fields) {
-  const parts = [fields.player, fields.year]
-    .map(cleanText)
-    .filter(Boolean);
-  return [...new Set(parts.map((part) => part.toLowerCase()))]
-    .map((part) => parts.find((candidate) => candidate.toLowerCase() === part))
-    .filter(Boolean)
-    .join(" ")
-    .slice(0, 500);
 }
 
 function cents(value) {
@@ -102,9 +96,11 @@ function mergeCoverage(results) {
 export function buildSoldCompsSnapshot({
   fields,
   grading,
+  valuationProfile = deriveValuationProfile(fields),
   query,
   queriesUsed = [query],
   results,
+  excludedObservationIds = [],
   searchedAt = new Date().toISOString(),
 }) {
   const uniqueSales = new Map();
@@ -112,8 +108,10 @@ export function buildSoldCompsSnapshot({
     uniqueSales.set(saleId(sale, index), sale);
   });
   const candidates = [...uniqueSales.values()];
+  const excludedObservationIdSet = new Set(excludedObservationIds);
   const eligible = candidates.filter(
-    (sale) =>
+    (sale, index) =>
+      !excludedObservationIdSet.has(saleId(sale, index)) &&
       sale.priceConfirmed === true &&
       cents(sale.price) !== null &&
       Boolean(cleanText(sale.currency)),
@@ -198,6 +196,32 @@ export function buildSoldCompsSnapshot({
       return right.saleCount - left.saleCount;
     });
 
+  const variantEstimates =
+    exactSales.length < 3
+      ? buildVariantAdjustedEstimates({
+          fields,
+          valuationProfile,
+          observationType: "completed_sale",
+          observations: eligible.map((sale, index) => ({
+            id: saleId(sale, index),
+            title: sale.title,
+            amountCents: cents(sale.price),
+            currency: sale.currency,
+            platform: sale.platform,
+            imageUrl: sale.imageUrl,
+            url: sale.listingUrl,
+            date: sale.soldAt ?? sale.saleDate,
+            printRun: sale.printRun,
+            features: sale.features,
+          })),
+          excludedObservationIds: [
+            ...exactSales.map((sale) => sale.id),
+            ...broaderSales.map((sale) => sale.id),
+            ...excludedObservationIds,
+          ],
+        })
+      : [];
+
   return {
     schemaVersion: "1.0",
     kind: "sold_comparables",
@@ -215,12 +239,14 @@ export function buildSoldCompsSnapshot({
           label: `${grading.company} ${grading.grade}`,
         }
       : { classification: "raw", label: "Raw / ungraded" },
+    valuationProfile,
     candidateCount: candidates.length,
     confirmedPriceCount: eligible.length,
     exactMatchedCount: exactSales.length,
     broaderMatchedCount: broaderSales.length,
     excludedCount: candidates.length - exactSales.length - broaderSales.length,
     groups,
+    variantEstimates,
     disclaimer: soldCompsDisclaimer,
   };
 }
@@ -238,7 +264,12 @@ export class SoldCompsService {
     this.cache = new Map();
   }
 
-  async snapshot(fields, grading) {
+  async snapshot(
+    fields,
+    grading,
+    valuationProfile = deriveValuationProfile(fields),
+    { excludedObservationIds = [] } = {},
+  ) {
     const query = buildActiveMarketQuery(fields);
     if (!query) {
       throw new TypeError(
@@ -248,9 +279,28 @@ export class SoldCompsService {
     const profile = grading?.isGraded
       ? `${grading.company ?? ""}:${grading.grade ?? ""}`
       : "raw";
-    const cacheKey = `${query.toLowerCase()}|${profile.toLowerCase()}`;
+    const cacheKey = `${query.toLowerCase()}|${profile.toLowerCase()}|${valuationProfile.featureType}:${valuationProfile.source}`;
     const cached = this.cache.get(cacheKey);
-    if (cached && cached.expiresAt > this.now()) return cached.snapshot;
+    const normalizedGrading = grading?.isGraded
+      ? grading
+      : {
+          isGraded: false,
+          company: null,
+          grade: null,
+          certificationNumber: null,
+        };
+    const snapshotFrom = ({ results, queriesUsed, searchedAt }) =>
+      buildSoldCompsSnapshot({
+        fields,
+        grading: normalizedGrading,
+        valuationProfile,
+        query,
+        queriesUsed,
+        results,
+        excludedObservationIds,
+        searchedAt,
+      });
+    if (cached && cached.expiresAt > this.now()) return snapshotFrom(cached);
 
     const searchOptions = grading?.isGraded
       ? {
@@ -266,8 +316,22 @@ export class SoldCompsService {
     });
     const results = [primary];
     const queriesUsed = [query];
-    const discoveryQuery = buildDiscoveryQuery(fields);
-    if (primary.sales.length < 3 && discoveryQuery && discoveryQuery !== query) {
+    const searchedAt = new Date(this.now()).toISOString();
+    const snapshot = buildSoldCompsSnapshot({
+      fields,
+      grading: normalizedGrading,
+      valuationProfile,
+      query,
+      queriesUsed,
+      results,
+      searchedAt,
+    });
+    const discoveryQuery = buildVariantDiscoveryQuery(fields);
+    if (
+      snapshot.exactMatchedCount < 3 &&
+      discoveryQuery &&
+      discoveryQuery !== query
+    ) {
       results.push(
         await this.cardApiClient.searchSales({
           query: discoveryQuery,
@@ -277,27 +341,13 @@ export class SoldCompsService {
       );
       queriesUsed.push(discoveryQuery);
     }
-
-    const snapshot = buildSoldCompsSnapshot({
-      fields,
-      grading: grading?.isGraded
-        ? grading
-        : {
-            isGraded: false,
-            company: null,
-            grade: null,
-            certificationNumber: null,
-          },
-      query,
-      queriesUsed,
-      results,
-      searchedAt: new Date(this.now()).toISOString(),
-    });
     this.cache.set(cacheKey, {
-      snapshot,
+      results,
+      queriesUsed,
+      searchedAt,
       expiresAt: this.now() + this.cacheDurationMs,
     });
-    return snapshot;
+    return snapshotFrom({ results, queriesUsed, searchedAt });
   }
 }
 

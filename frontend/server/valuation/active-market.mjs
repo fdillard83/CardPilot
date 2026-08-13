@@ -47,6 +47,7 @@ const parallelWords = new Set([
 const genericParallelWords = new Set(["foil", "prizm", "refractor"]);
 const productVariantWords = new Set([
   "bowman",
+  "chrome",
   "cosmic",
   "donruss",
   "finest",
@@ -58,6 +59,7 @@ const productVariantWords = new Set([
   "sapphire",
   "select",
   "sterling",
+  "tribute",
   "update",
 ]);
 
@@ -493,13 +495,23 @@ function groupStatistics(listings) {
 
 export function buildActiveMarketSnapshot({
   fields,
+  grading = {
+    isGraded: false,
+    company: null,
+    grade: null,
+    certificationNumber: null,
+  },
+  valuationProfile = deriveValuationProfile(fields),
   marketplaceId,
   candidates,
   confirmedReferenceItemId = null,
+  excludedObservationIds = [],
   searchedAt = new Date().toISOString(),
 }) {
   const query = buildActiveMarketQuery(fields);
+  const excludedObservationIdSet = new Set(excludedObservationIds);
   const eligibleCandidates = candidates.filter((candidate) => {
+    if (excludedObservationIdSet.has(candidate.itemId)) return false;
     if (!candidate.buyingOptions.includes("FIXED_PRICE")) return false;
     const itemPriceCents = parseCents(candidate.price);
     const currency = candidate.price?.currency;
@@ -602,6 +614,52 @@ export function buildActiveMarketSnapshot({
       return right.listingCount - left.listingCount;
     });
 
+  const matchedItemIds = new Set(
+    matchedListings.map((listing) => listing.itemId),
+  );
+  const expectedGrade = grading.isGraded
+    ? `${grading.company ?? ""} ${grading.grade ?? ""}`.trim().toLowerCase()
+    : null;
+  const variantEstimates =
+    exactListings.length < 3
+      ? buildVariantAdjustedEstimates({
+          fields,
+          valuationProfile,
+          observationType: "active_asking",
+          observations: eligibleCandidates.flatMap((candidate) => {
+            const grade = detectedGrade(candidate.title, candidate.condition);
+            const sameCondition = grading.isGraded
+              ? grade.classification === "graded" &&
+                grade.label.toLowerCase() === expectedGrade
+              : grade.classification === "raw";
+            if (!sameCondition) return [];
+            const itemPriceCents = parseCents(candidate.price);
+            const shippingCostCents =
+              candidate.shippingCost?.currency === candidate.price.currency
+                ? parseCents(candidate.shippingCost)
+                : null;
+            return [
+              {
+                id: candidate.itemId,
+                title: candidate.title,
+                amountCents: itemPriceCents + (shippingCostCents ?? 0),
+                currency: candidate.price.currency,
+                platform: "eBay",
+                imageUrl: candidate.imageUrl,
+                url: candidate.itemWebUrl,
+                date: null,
+                printRun: null,
+                features: [],
+              },
+            ];
+          }),
+          excludedObservationIds: [
+            ...matchedItemIds,
+            ...excludedObservationIds,
+          ],
+        })
+      : [];
+
   return {
     schemaVersion: "1.0",
     kind: "active_asking_snapshot",
@@ -619,6 +677,8 @@ export function buildActiveMarketSnapshot({
     broaderMatchedCount: broaderListings.length,
     excludedCount: candidates.length - matchedListings.length,
     groups,
+    valuationProfile,
+    variantEstimates,
     disclaimer: activeMarketDisclaimer,
   };
 }
@@ -632,31 +692,91 @@ export class ActiveMarketService {
     this.cache = new Map();
   }
 
-  async snapshot(fields, { confirmedReferenceItemId = null } = {}) {
+  async snapshot(
+    fields,
+    {
+      confirmedReferenceItemId = null,
+      grading = {
+        isGraded: false,
+        company: null,
+        grade: null,
+        certificationNumber: null,
+      },
+      valuationProfile = deriveValuationProfile(fields),
+      excludedObservationIds = [],
+    } = {},
+  ) {
     const query = buildActiveMarketQuery(fields);
     if (!query) {
       throw new TypeError(
         "Add a player, year, set, or card number before checking the active market.",
       );
     }
-    const cacheKey = `${query.toLowerCase()}|reference:${confirmedReferenceItemId ?? "none"}`;
+    const gradeProfile = grading.isGraded
+      ? `${grading.company ?? ""}:${grading.grade ?? ""}`
+      : "raw";
+    const cacheKey = `${query.toLowerCase()}|reference:${confirmedReferenceItemId ?? "none"}|${gradeProfile}|${valuationProfile.featureType}:${valuationProfile.source}`;
     const cached = this.cache.get(cacheKey);
-    if (cached && cached.expiresAt > this.now()) return cached.snapshot;
+    const snapshotFrom = ({ marketplaceId, candidates, searchedAt }) =>
+      buildActiveMarketSnapshot({
+        fields,
+        grading,
+        valuationProfile,
+        marketplaceId,
+        candidates,
+        confirmedReferenceItemId,
+        excludedObservationIds,
+        searchedAt,
+      });
+    if (cached && cached.expiresAt > this.now()) return snapshotFrom(cached);
 
     const result = await this.ebayClient.searchByKeywords({ query, limit: 50 });
+    let candidates = result.candidates;
+    const searchedAt = new Date(this.now()).toISOString();
     const snapshot = buildActiveMarketSnapshot({
       fields,
+      grading,
+      valuationProfile,
       marketplaceId: result.marketplaceId,
-      candidates: result.candidates,
+      candidates,
       confirmedReferenceItemId,
-      searchedAt: new Date(this.now()).toISOString(),
+      searchedAt,
     });
+    const discoveryQuery = buildVariantDiscoveryQuery(fields);
+    if (
+      snapshot.exactMatchedCount < 3 &&
+      discoveryQuery &&
+      discoveryQuery !== query
+    ) {
+      const discovery = await this.ebayClient.searchByKeywords({
+        query: discoveryQuery,
+        limit: 50,
+      });
+      const unique = new Map(
+        [...candidates, ...discovery.candidates].map((candidate) => [
+          candidate.itemId,
+          candidate,
+        ]),
+      );
+      candidates = [...unique.values()];
+    }
     this.cache.set(cacheKey, {
-      snapshot,
+      marketplaceId: result.marketplaceId,
+      candidates,
+      searchedAt,
       expiresAt: this.now() + this.cacheDurationMs,
     });
-    return snapshot;
+    return snapshotFrom({
+      marketplaceId: result.marketplaceId,
+      candidates,
+      searchedAt,
+    });
   }
 }
 
 export { activeMarketDisclaimer };
+import {
+  buildVariantAdjustedEstimates,
+  buildVariantDiscoveryQuery,
+  deriveValuationProfile,
+} from "./variant-adjustment.mjs";

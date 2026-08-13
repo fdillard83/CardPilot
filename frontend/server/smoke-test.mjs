@@ -95,6 +95,15 @@ try {
     );
   }
 
+  const missingValuationResponse = await fetch(
+    `${baseUrl}/api/collection/not-a-card/valuation`,
+  );
+  if (missingValuationResponse.status !== 404) {
+    throw new Error(
+      `The valuation endpoint returned ${missingValuationResponse.status}; expected 404 for a missing card.`,
+    );
+  }
+
   const invalidCollectionResponse = await fetch(`${baseUrl}/api/collection`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

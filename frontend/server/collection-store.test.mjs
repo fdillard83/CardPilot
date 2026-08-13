@@ -56,6 +56,10 @@ test("collection records persist images and support update and removal", async (
       grade: null,
       certificationNumber: null,
     });
+    assert.deepEqual(created.valuationProfile, {
+      featureType: "ordinary",
+      source: "derived",
+    });
     assert.match(created.images.frontUrl, /\/images\/front$/);
     assert.match(created.images.backUrl, /\/images\/back$/);
     assert.equal((await store.list()).length, 1);
@@ -77,6 +81,15 @@ test("collection records persist images and support update and removal", async (
         grade: "10",
         certificationNumber: "12345678",
       },
+      valuationProfile: {
+        featureType: "on_card_autograph",
+        source: "user_confirmed",
+      },
+      ebayReference: {
+        itemId: "v1|456|0",
+        title: "Collector-confirmed visual match",
+        itemWebUrl: "https://www.ebay.com/itm/456",
+      },
     });
     assert.equal(updated.fields.player, "Nolan Ryan (confirmed)");
     assert.deepEqual(updated.grading, {
@@ -85,12 +98,53 @@ test("collection records persist images and support update and removal", async (
       grade: "10",
       certificationNumber: "12345678",
     });
+    assert.deepEqual(updated.valuationProfile, {
+      featureType: "on_card_autograph",
+      source: "user_confirmed",
+    });
+    assert.equal(updated.ebayReference.itemId, "v1|456|0");
     assert.notEqual(updated.updatedAt, created.updatedAt);
 
     const identityOnlyUpdate = await store.update(created.collectionId, {
       fields: { ...updated.fields, team: "California Angels" },
     });
     assert.deepEqual(identityOnlyUpdate.grading, updated.grading);
+    assert.deepEqual(
+      identityOnlyUpdate.valuationProfile,
+      updated.valuationProfile,
+    );
+    assert.deepEqual(identityOnlyUpdate.ebayReference, updated.ebayReference);
+
+    const valued = await store.updateConfirmedValuation(created.collectionId, {
+      amountCents: 4250,
+      currency: "USD",
+      confidence: "medium",
+      method: "exact_sold",
+      userAdjusted: false,
+    });
+    assert.deepEqual(valued.confirmedValuation, {
+      amountCents: 4250,
+      currency: "USD",
+      confidence: "medium",
+      method: "exact_sold",
+      userAdjusted: false,
+      valuedAt: "2026-08-12T12:00:03.000Z",
+    });
+
+    const storedRecord = JSON.parse(
+      await readFile(path.join(directory, "collection.json"), "utf8"),
+    )[0];
+    assert.deepEqual(Object.keys(storedRecord.confirmedValuation).sort(), [
+      "amountCents",
+      "confidence",
+      "currency",
+      "method",
+      "userAdjusted",
+      "valuedAt",
+    ]);
+
+    const cleared = await store.clearConfirmedValuation(created.collectionId);
+    assert.equal(cleared.confirmedValuation, null);
 
     assert.equal(await store.remove(created.collectionId), true);
     assert.deepEqual(await store.list(), []);

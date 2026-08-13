@@ -1,5 +1,7 @@
 const ANNIVERSARY_PATTERN = /\b(?:\d{1,3}(?:st|nd|rd|th)?\s+)?(?:years?|yrs?)\s+of\s+baseball\b|\banniversary\b/i;
 const SEASON_PATTERN = /^(18|19|20)\d{2}(?:\s*[-/]\s*(?:(?:18|19|20)?\d{2}))?$/;
+const GENERIC_AUTOGRAPH_SET_PATTERN =
+  /^(?:topps\s+)?(?:certified\s+)?autograph(?:ed)?(?:\s+card)?(?:\s+issue)?$/i;
 
 function normalizedText(value) {
   return typeof value === "string"
@@ -44,6 +46,13 @@ export function isPromotionalAnniversaryText(value, visibleMarks = []) {
   );
 }
 
+export function isGenericAutographCertificationText(value) {
+  return (
+    typeof value === "string" &&
+    GENERIC_AUTOGRAPH_SET_PATTERN.test(value.trim())
+  );
+}
+
 function addMissingEvidence(extraction, field, description, suggestedSource, gain) {
   if (
     extraction.missingEvidence.some(
@@ -83,6 +92,9 @@ function sanitizeCandidate(candidate, visibleMarks, currentYear) {
   if (isPromotionalAnniversaryText(values.setOrInsert, visibleMarks)) {
     values.setOrInsert = null;
   }
+  if (isGenericAutographCertificationText(values.setOrInsert)) {
+    values.setOrInsert = null;
+  }
 
   return {
     ...candidate,
@@ -112,6 +124,9 @@ export function normalizeCardSemantics(extraction, currentYear = new Date().getF
   const anniversarySet = isPromotionalAnniversaryText(
     normalized.fields.setOrInsert.value,
     visibleMarks,
+  );
+  const genericAutographSet = isGenericAutographCertificationText(
+    normalized.fields.setOrInsert.value,
   );
   const unsupportedProduct =
     normalized.fields.product.value !== null &&
@@ -153,13 +168,15 @@ export function normalizeCardSemantics(extraction, currentYear = new Date().getF
       0.12,
     );
   }
-  if (anniversarySet || unsupportedSet) {
+  if (anniversarySet || genericAutographSet || unsupportedSet) {
     clearSemanticField(normalized, "setOrInsert");
     addMissingEvidence(
       normalized,
       "setOrInsert",
       anniversarySet
         ? "The anniversary logo is not a set or insert name; a checklist match is needed."
+        : genericAutographSet
+          ? "Printed autograph certification wording is not a set or insert name; a checklist or confirmed visual match is needed."
         : "A set or insert title was not visibly printed; catalog verification is needed.",
       "catalog",
       0.14,
@@ -184,6 +201,7 @@ export function normalizeCardSemantics(extraction, currentYear = new Date().getF
     invalidYear ||
     anniversaryProduct ||
     anniversarySet ||
+    genericAutographSet ||
     unsupportedProduct ||
     unsupportedSet ||
     invalidCardNumber

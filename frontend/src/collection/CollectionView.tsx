@@ -1,16 +1,37 @@
 import { useMemo, useRef, useState } from "react";
 import {
+  deriveValuationProfile,
   fieldDefinitions,
   formatFieldValue,
+  valuationFeatureOptions,
   type ActiveMarketSnapshot,
   type FieldKey,
   type FieldValue,
   type GradingProfile,
   type SavedCollectionCard,
   type SoldCompsSnapshot,
+  type ValuationProfile,
+  type ValuationMethod,
+  type ValuationRecommendationSnapshot,
+  type VariantAdjustedEstimate,
 } from "../identification/types";
+import {
+  BulkValuationReview,
+  CardValuationPanel,
+  type BulkValuationResult,
+} from "./ValuationWorkflow";
+import {
+  valuationIsStale,
+  valuationMethodLabel,
+} from "./valuation-utils";
 
-type CollectionFilter = "all" | "numbered" | "autograph" | "rookie";
+type CollectionFilter =
+  | "all"
+  | "numbered"
+  | "autograph"
+  | "rookie"
+  | "unvalued"
+  | "stale";
 
 function searchableText(card: SavedCollectionCard) {
   return Object.values(card.fields)
@@ -22,6 +43,8 @@ function matchesFilter(card: SavedCollectionCard, filter: CollectionFilter) {
   if (filter === "numbered") return Boolean(card.fields.serialNumber);
   if (filter === "autograph") return card.fields.autograph === true;
   if (filter === "rookie") return card.fields.rookieStatus === true;
+  if (filter === "unvalued") return card.confirmedValuation === null;
+  if (filter === "stale") return valuationIsStale(card);
   return true;
 }
 
@@ -34,6 +57,64 @@ function formatPrice(amountCents: number, currency: string) {
     style: "currency",
     currency,
   }).format(amountCents / 100);
+}
+
+function pricingSnapshotUrl(path: string, excludedAnchorIds: string[]) {
+  if (excludedAnchorIds.length === 0) return path;
+  const params = new URLSearchParams();
+  excludedAnchorIds.forEach((id) => params.append("exclude", id));
+  return `${path}?${params.toString()}`;
+}
+
+function amountInputFromCents(amountCents: number) {
+  return (amountCents / 100).toFixed(2);
+}
+
+function amountCentsFromInput(value: string) {
+  if (!value.trim()) return null;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  return Math.round(amount * 100);
+}
+
+function waitForNextPricingRequest(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function fetchValuationRecommendation(
+  card: SavedCollectionCard,
+  {
+    soldExcludedObservationIds = [],
+    activeExcludedObservationIds = [],
+  }: {
+    soldExcludedObservationIds?: string[];
+    activeExcludedObservationIds?: string[];
+  } = {},
+) {
+  const params = new URLSearchParams();
+  soldExcludedObservationIds.forEach((id) => params.append("excludeSold", id));
+  activeExcludedObservationIds.forEach((id) =>
+    params.append("excludeActive", id),
+  );
+  const query = params.toString();
+  const response = await fetch(
+    `/api/collection/${encodeURIComponent(card.collectionId)}/valuation${query ? `?${query}` : ""}`,
+  );
+  const payload = (await response.json().catch(() => null)) as
+    | (ValuationRecommendationSnapshot & { error?: string })
+    | { error?: string }
+    | null;
+  if (
+    !response.ok ||
+    !payload ||
+    !("kind" in payload) ||
+    payload.kind !== "card_valuation_recommendation"
+  ) {
+    throw new Error(
+      payload?.error ?? "CardPilot could not prepare a valuation recommendation.",
+    );
+  }
+  return payload;
 }
 
 function confidenceLabel(confidence: "low" | "medium" | "high") {
@@ -60,6 +141,243 @@ function listingTypeLabel(value: string | null) {
   return labels[value.toLowerCase()] ?? value.replaceAll("_", " ");
 }
 
+function featureProfileLabel(profile: ValuationProfile) {
+  return (
+    valuationFeatureOptions.find(
+      (option) => option.value === profile.featureType,
+    )?.label ?? "Feature profile not confirmed"
+  );
+}
+
+function formatFactor(value: number) {
+  if (value >= 10) return `${Math.round(value)}×`;
+  if (value >= 1) return `${value.toFixed(1).replace(/\.0$/, "")}×`;
+  return `${value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}×`;
+}
+
+function PricingExclusionControls({
+  excludedCount,
+  onRestore,
+}: {
+  excludedCount: number;
+  onRestore: () => void;
+}) {
+  if (excludedCount === 0) return null;
+  return (
+    <div className="variant-anchor-controls" role="status">
+      <span>
+        {excludedCount} comparison{excludedCount === 1 ? " is" : "s are"}
+        excluded from these pricing results for the current session.
+      </span>
+      <button type="button" onClick={onRestore}>
+        Restore all
+      </button>
+    </div>
+  );
+}
+
+function UpdatedRecommendationNotice({
+  excludedCount,
+  snapshot,
+  isLoading,
+  error,
+  onReview,
+}: {
+  excludedCount: number;
+  snapshot: ValuationRecommendationSnapshot | null;
+  isLoading: boolean;
+  error: string | null;
+  onReview: () => void;
+}) {
+  if (excludedCount === 0) return null;
+  const recommendation = snapshot?.recommendation ?? null;
+  return (
+    <div className="updated-recommendation" aria-live="polite">
+      {isLoading ? (
+        <span><span className="spinner" /> Recalculating the CardPilot recommendation...</span>
+      ) : error ? (
+        <span>The comparison results were updated, but the recommendation could not be recalculated: {error}</span>
+      ) : recommendation ? (
+        <>
+          <div>
+            <span>Updated CardPilot recommendation</span>
+            <strong>
+              {formatPrice(recommendation.amountCents, recommendation.currency)}
+            </strong>
+            <small>
+              {recommendation.methodLabel} · {recommendation.confidence} confidence
+            </small>
+          </div>
+          <button type="button" onClick={onReview}>Review and confirm</button>
+        </>
+      ) : (
+        <span>No reliable estimate remains after the selected comparisons were excluded.</span>
+      )}
+    </div>
+  );
+}
+
+function VariantEstimateSection({
+  estimates,
+  context,
+  onExcludeAnchor,
+}: {
+  estimates: VariantAdjustedEstimate[];
+  context: "sold" | "active";
+  onExcludeAnchor: (observationId: string) => void;
+}) {
+  if (estimates.length === 0) return null;
+  return (
+    <section className="variant-estimates" aria-label="Variant-adjusted estimates">
+      <div className="variant-estimate-intro">
+        <div>
+          <span>CardPilot fallback model</span>
+          <h4>Variant-adjusted estimate</h4>
+        </div>
+        <span>Modeled, not an exact comp</span>
+      </div>
+      <p>
+        Exact pricing is scarce, so CardPilot adjusted comparable {context === "sold" ? "completed sales" : "active asking prices"} using the serial-tier and card-feature ranges you supplied.
+      </p>
+      <div className="variant-estimate-grid">
+        {estimates.map((estimate, index) => (
+          <article className="variant-estimate" key={estimate.id}>
+            <div className="variant-estimate-heading">
+              <div>
+                <span>{index === 0 ? "Best available anchor" : "Additional anchor"}</span>
+                <strong>
+                  {estimate.sourceProfile.serialLabel} · {estimate.sourceProfile.featureLabel}
+                </strong>
+              </div>
+              <span className={`market-confidence market-confidence-${estimate.confidence}`}>
+                {estimate.confidence === "medium" ? "Useful estimate" : "Limited estimate"}
+              </span>
+            </div>
+            <div className="variant-lineage-evidence">
+              <span>
+                Same player <strong>{estimate.lineageEvidence.player}</strong>
+              </span>
+              <span>
+                Matched card family <strong>{estimate.lineageEvidence.familyLabel}</strong>
+              </span>
+            </div>
+            <div className="variant-estimate-price">
+              <span>Estimated {estimate.targetProfile.serialLabel} value</span>
+              <strong>{formatPrice(estimate.estimatedAmountCents, estimate.currency)}</strong>
+              <small>
+                Modeled range {formatPrice(estimate.estimatedRange.lowAmountCents, estimate.currency)}–{formatPrice(estimate.estimatedRange.highAmountCents, estimate.currency)}
+              </small>
+            </div>
+            <div className="variant-thumbnail-row" aria-label="Source card photos">
+              {estimate.sourceObservations.slice(0, 4).map((observation) =>
+                observation.imageUrl ? (
+                  <img
+                    src={observation.imageUrl}
+                    alt=""
+                    key={observation.id}
+                  />
+                ) : (
+                  <span
+                    className="variant-thumbnail-placeholder"
+                    aria-hidden="true"
+                    key={observation.id}
+                  >
+                    No photo
+                  </span>
+                ),
+              )}
+            </div>
+            <div className="variant-estimate-source">
+              <span>
+                Based on {estimate.sourceCount} {estimate.platform} {context === "sold" ? "sale" : "listing"}{estimate.sourceCount === 1 ? "" : "s"}
+              </span>
+              <strong>
+                Source median {formatPrice(estimate.sourceMedianAmountCents, estimate.currency)}
+              </strong>
+            </div>
+            <div className="variant-calculation">
+              <span>How CardPilot calculated it</span>
+              <strong>
+                {formatPrice(estimate.sourceMedianAmountCents, estimate.currency)}
+                {" × "}
+                {estimate.combinedFactor.midpoint.toFixed(2)}
+                {" = "}
+                {formatPrice(estimate.estimatedAmountCents, estimate.currency)}
+              </strong>
+              <small>
+                {estimate.direction === "up"
+                  ? "Adjusted upward"
+                  : estimate.direction === "down"
+                    ? "Adjusted downward"
+                    : "Similar-value adjustment"}
+                {` from ${estimate.sourceProfile.serialLabel} to ${estimate.targetProfile.serialLabel}`}
+              </small>
+            </div>
+            <div className="variant-adjustments">
+              {estimate.appliedAdjustments.map((adjustment) => (
+                <div key={adjustment.dimension}>
+                  <span>{adjustment.dimension === "serial" ? "Serial adjustment" : "Feature adjustment"}</span>
+                  <strong>{adjustment.sourceLabel} → {adjustment.targetLabel}</strong>
+                  <small>
+                    Central {formatFactor(adjustment.midpointFactor)} · modeled range {formatFactor(adjustment.lowFactor)}–{formatFactor(adjustment.highFactor)}
+                  </small>
+                </div>
+              ))}
+            </div>
+            <div className="variant-sources">
+              <div className="variant-sources-heading">
+                <strong>Pricing anchors used</strong>
+                <span>Remove any source that does not match your card.</span>
+              </div>
+              <div>
+                {estimate.sourceObservations.map((observation) => {
+                  return (
+                    <div className="variant-source-item" key={observation.id}>
+                      {observation.imageUrl ? (
+                        <img src={observation.imageUrl} alt="" />
+                      ) : (
+                        <span className="variant-source-placeholder" aria-hidden="true">
+                          No photo
+                        </span>
+                      )}
+                      <span className="variant-source-copy">
+                        {observation.url ? (
+                          <a
+                            className="variant-source-title"
+                            href={observation.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <strong>{observation.title}</strong>
+                          </a>
+                        ) : (
+                          <strong>{observation.title}</strong>
+                        )}
+                        <em>{formatPrice(observation.amountCents, observation.currency)}</em>
+                      </span>
+                      <button
+                        type="button"
+                        className="variant-remove-anchor"
+                        onClick={() => onExcludeAnchor(observation.id)}
+                        aria-label={`Remove ${observation.title} as a pricing anchor`}
+                      >
+                        Remove anchor
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+      <p className="variant-estimate-warning">
+        Parallel design, player demand, condition, and marketplace behavior can outweigh these general multipliers. Verify the source cards before using an estimate to buy or sell.
+      </p>
+    </section>
+  );
+}
+
 function groupMatchesSavedCondition(
   card: SavedCollectionCard,
   group: ActiveMarketSnapshot["groups"][number],
@@ -80,12 +398,26 @@ function ActiveMarketPanel({
   isLoading,
   error,
   onRetry,
+  excludedAnchorCount,
+  onExcludeAnchor,
+  onRestoreAnchors,
+  updatedRecommendation,
+  isRecommendationUpdating,
+  recommendationError,
+  onReviewRecommendation,
 }: {
   card: SavedCollectionCard;
   snapshot: ActiveMarketSnapshot | null;
   isLoading: boolean;
   error: string | null;
   onRetry: () => void;
+  excludedAnchorCount: number;
+  onExcludeAnchor: (observationId: string) => void;
+  onRestoreAnchors: () => void;
+  updatedRecommendation: ValuationRecommendationSnapshot | null;
+  isRecommendationUpdating: boolean;
+  recommendationError: string | null;
+  onReviewRecommendation: () => void;
 }) {
   const orderedGroups = snapshot
     ? [...snapshot.groups].sort(
@@ -138,6 +470,19 @@ function ActiveMarketPanel({
             </div>
           </div>
 
+          <PricingExclusionControls
+            excludedCount={excludedAnchorCount}
+            onRestore={onRestoreAnchors}
+          />
+
+          <UpdatedRecommendationNotice
+            excludedCount={excludedAnchorCount}
+            snapshot={updatedRecommendation}
+            isLoading={isRecommendationUpdating}
+            error={recommendationError}
+            onReview={onReviewRecommendation}
+          />
+
           {snapshot.broaderMatchedCount > 0 && (
             <div className="market-fallback-note">
               <strong>Broader comparison mode was used.</strong>
@@ -148,6 +493,12 @@ function ActiveMarketPanel({
               </span>
             </div>
           )}
+
+          <VariantEstimateSection
+            estimates={snapshot.variantEstimates}
+            context="active"
+            onExcludeAnchor={onExcludeAnchor}
+          />
 
           {orderedGroups.length > 0 ? (
             <div className="market-groups">
@@ -226,19 +577,28 @@ function ActiveMarketPanel({
                           </span>
                         </>
                       );
-                      return listing.itemWebUrl ? (
-                        <a
-                          className="market-listing"
-                          href={listing.itemWebUrl}
-                          key={listing.itemId}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {listingContents}
-                        </a>
-                      ) : (
-                        <div className="market-listing" key={listing.itemId}>
-                          {listingContents}
+                      return (
+                        <div className="market-listing-shell" key={listing.itemId}>
+                          {listing.itemWebUrl ? (
+                            <a
+                              className="market-listing"
+                              href={listing.itemWebUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {listingContents}
+                            </a>
+                          ) : (
+                            <div className="market-listing">{listingContents}</div>
+                          )}
+                          <button
+                            type="button"
+                            className="market-remove-anchor"
+                            onClick={() => onExcludeAnchor(listing.itemId)}
+                            aria-label={`Exclude ${listing.title} from pricing results`}
+                          >
+                            Exclude from pricing
+                          </button>
                         </div>
                       );
                     })}
@@ -248,7 +608,9 @@ function ActiveMarketPanel({
             </div>
           ) : (
             <div className="valuation-loading">
-              No close fixed-price matches were found. More complete card details can improve the search.
+              {snapshot.variantEstimates.length > 0
+                ? "No exact active matches were found. The modeled estimate above uses other versions of the same card family."
+                : "No close fixed-price matches were found. More complete card details can improve the search."}
             </div>
           )}
 
@@ -271,12 +633,26 @@ function SoldCompsPanel({
   isLoading,
   error,
   onRetry,
+  excludedAnchorCount,
+  onExcludeAnchor,
+  onRestoreAnchors,
+  updatedRecommendation,
+  isRecommendationUpdating,
+  recommendationError,
+  onReviewRecommendation,
 }: {
   card: SavedCollectionCard;
   snapshot: SoldCompsSnapshot | null;
   isLoading: boolean;
   error: string | null;
   onRetry: () => void;
+  excludedAnchorCount: number;
+  onExcludeAnchor: (observationId: string) => void;
+  onRestoreAnchors: () => void;
+  updatedRecommendation: ValuationRecommendationSnapshot | null;
+  isRecommendationUpdating: boolean;
+  recommendationError: string | null;
+  onReviewRecommendation: () => void;
 }) {
   const coverageLabel = snapshot?.coverage.from || snapshot?.coverage.to
     ? `${snapshot.coverage.from ?? "earliest available"} to ${snapshot.coverage.to ?? "latest available"}`
@@ -325,6 +701,19 @@ function SoldCompsPanel({
             </div>
           </div>
 
+          <PricingExclusionControls
+            excludedCount={excludedAnchorCount}
+            onRestore={onRestoreAnchors}
+          />
+
+          <UpdatedRecommendationNotice
+            excludedCount={excludedAnchorCount}
+            snapshot={updatedRecommendation}
+            isLoading={isRecommendationUpdating}
+            error={recommendationError}
+            onReview={onReviewRecommendation}
+          />
+
           {snapshot.broaderMatchedCount > 0 && (
             <div className="market-fallback-note">
               <strong>Broader sold comparisons are shown separately.</strong>
@@ -335,6 +724,12 @@ function SoldCompsPanel({
               </span>
             </div>
           )}
+
+          <VariantEstimateSection
+            estimates={snapshot.variantEstimates}
+            context="sold"
+            onExcludeAnchor={onExcludeAnchor}
+          />
 
           {snapshot.groups.length > 0 ? (
             <div className="market-groups">
@@ -394,19 +789,30 @@ function SoldCompsPanel({
                           </span>
                         </>
                       );
-                      return sale.listingUrl ? (
-                        <a
-                          className="market-listing sold-listing"
-                          href={sale.listingUrl}
-                          key={sale.id}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {saleContents}
-                        </a>
-                      ) : (
-                        <div className="market-listing sold-listing" key={sale.id}>
-                          {saleContents}
+                      return (
+                        <div className="market-listing-shell" key={sale.id}>
+                          {sale.listingUrl ? (
+                            <a
+                              className="market-listing sold-listing"
+                              href={sale.listingUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {saleContents}
+                            </a>
+                          ) : (
+                            <div className="market-listing sold-listing">
+                              {saleContents}
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            className="market-remove-anchor"
+                            onClick={() => onExcludeAnchor(sale.id)}
+                            aria-label={`Exclude ${sale.title} from pricing results`}
+                          >
+                            Exclude from pricing
+                          </button>
                         </div>
                       );
                     })}
@@ -416,8 +822,9 @@ function SoldCompsPanel({
             </div>
           ) : (
             <div className="valuation-loading sold-empty">
-              No qualifying completed sales were found in the provider's current
-              lookback window. That does not mean the card has no value.
+              {snapshot.variantEstimates.length > 0
+                ? "No exact completed sales were found. The modeled estimate above uses other versions of the same card family."
+                : "No qualifying completed sales were found in the provider's current lookback window. That does not mean the card has no value."}
             </div>
           )}
 
@@ -449,6 +856,8 @@ export function CollectionView({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<FieldKey, FieldValue> | null>(null);
   const [gradingDraft, setGradingDraft] = useState<GradingProfile | null>(null);
+  const [valuationDraft, setValuationDraft] =
+    useState<ValuationProfile | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [marketCardId, setMarketCardId] = useState<string | null>(null);
@@ -456,12 +865,43 @@ export function CollectionView({
     useState<ActiveMarketSnapshot | null>(null);
   const [marketBusy, setMarketBusy] = useState(false);
   const [marketError, setMarketError] = useState<string | null>(null);
+  const [marketExcludedAnchorIds, setMarketExcludedAnchorIds] = useState<
+    string[]
+  >([]);
   const marketRequestIdRef = useRef(0);
   const [soldCardId, setSoldCardId] = useState<string | null>(null);
   const [soldSnapshot, setSoldSnapshot] = useState<SoldCompsSnapshot | null>(null);
   const [soldBusy, setSoldBusy] = useState(false);
   const [soldError, setSoldError] = useState<string | null>(null);
+  const [soldExcludedAnchorIds, setSoldExcludedAnchorIds] = useState<string[]>(
+    [],
+  );
   const soldRequestIdRef = useRef(0);
+  const [pricingSessionCardId, setPricingSessionCardId] = useState<
+    string | null
+  >(null);
+  const [valuationCardId, setValuationCardId] = useState<string | null>(null);
+  const [valuationSnapshot, setValuationSnapshot] =
+    useState<ValuationRecommendationSnapshot | null>(null);
+  const [valuationBusy, setValuationBusy] = useState(false);
+  const [valuationSaving, setValuationSaving] = useState(false);
+  const [valuationError, setValuationError] = useState<string | null>(null);
+  const [valuationAmountInput, setValuationAmountInput] = useState("");
+  const [valuationCurrency, setValuationCurrency] = useState("USD");
+  const [valuationConfidence, setValuationConfidence] = useState<
+    "low" | "medium" | "high"
+  >("low");
+  const valuationRequestIdRef = useRef(0);
+  const [bulkValuationResults, setBulkValuationResults] = useState<
+    BulkValuationResult[]
+  >([]);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<string[]>([]);
+  const [bulkCompletedCount, setBulkCompletedCount] = useState(0);
+  const [bulkRefreshing, setBulkRefreshing] = useState(false);
+  const [bulkApplying, setBulkApplying] = useState(false);
+  const [bulkValuationError, setBulkValuationError] = useState<string | null>(
+    null,
+  );
 
   const sports = useMemo(
     () =>
@@ -475,6 +915,29 @@ export function CollectionView({
     [cards],
   );
 
+  const collectionValuation = useMemo(() => {
+    const valuedCards = cards.filter((card) => card.confirmedValuation);
+    const currencies = new Set(
+      valuedCards.map((card) => card.confirmedValuation?.currency),
+    );
+    const currency = currencies.size === 1 ? [...currencies][0] : null;
+    const totalAmountCents = valuedCards.reduce(
+      (total, card) => total + (card.confirmedValuation?.amountCents ?? 0),
+      0,
+    );
+    return {
+      valuedCount: valuedCards.length,
+      unvaluedCount: cards.length - valuedCards.length,
+      staleCount: cards.filter((card) => valuationIsStale(card)).length,
+      totalLabel:
+        valuedCards.length === 0
+          ? formatPrice(0, "USD")
+          : currency
+            ? formatPrice(totalAmountCents, currency)
+            : "Mixed currencies",
+    };
+  }, [cards]);
+
   const filteredCards = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return cards.filter(
@@ -485,25 +948,63 @@ export function CollectionView({
     );
   }, [cards, filter, query, sport]);
 
+  const closeValuationPanel = () => {
+    valuationRequestIdRef.current += 1;
+    setValuationCardId(null);
+    setValuationSnapshot(null);
+    setValuationBusy(false);
+    setValuationSaving(false);
+    setValuationError(null);
+    setValuationAmountInput("");
+    setValuationCurrency("USD");
+    setValuationConfidence("low");
+  };
+
+  const hideValuationPanel = () => {
+    valuationRequestIdRef.current += 1;
+    setValuationCardId(null);
+    setValuationBusy(false);
+    setValuationSaving(false);
+  };
+
   const beginEdit = (card: SavedCollectionCard) => {
+    if (
+      marketBusy ||
+      soldBusy ||
+      valuationBusy ||
+      valuationSaving ||
+      bulkRefreshing ||
+      bulkApplying
+    ) {
+      return;
+    }
     marketRequestIdRef.current += 1;
     setMarketCardId(null);
     setMarketSnapshot(null);
     setMarketBusy(false);
     setMarketError(null);
+    setMarketExcludedAnchorIds([]);
     soldRequestIdRef.current += 1;
     setSoldCardId(null);
     setSoldSnapshot(null);
     setSoldBusy(false);
     setSoldError(null);
+    setSoldExcludedAnchorIds([]);
+    setPricingSessionCardId(null);
+    closeValuationPanel();
     setEditingId(card.collectionId);
     setDraft(createDraft(card));
     setGradingDraft({ ...card.grading });
+    setValuationDraft({ ...card.valuationProfile });
     setActionError(null);
   };
 
-  const loadActiveMarket = async (card: SavedCollectionCard) => {
-    if (marketBusy || soldBusy) return;
+  const loadActiveMarket = async (
+    card: SavedCollectionCard,
+    excludedAnchorIds = marketExcludedAnchorIds,
+  ) => {
+    if (marketBusy || soldBusy || valuationBusy || valuationSaving) return;
+    hideValuationPanel();
     soldRequestIdRef.current += 1;
     setSoldCardId(null);
     setSoldSnapshot(null);
@@ -516,7 +1017,10 @@ export function CollectionView({
     setMarketBusy(true);
     try {
       const response = await fetch(
-        `/api/collection/${encodeURIComponent(card.collectionId)}/active-market`,
+        pricingSnapshotUrl(
+          `/api/collection/${encodeURIComponent(card.collectionId)}/active-market`,
+          excludedAnchorIds,
+        ),
       );
       const payload = (await response.json().catch(() => null)) as
         | (ActiveMarketSnapshot & { error?: string })
@@ -544,19 +1048,64 @@ export function CollectionView({
   };
 
   const toggleActiveMarket = (card: SavedCollectionCard) => {
-    if (marketBusy || soldBusy) return;
+    if (marketBusy || soldBusy || valuationBusy || valuationSaving) return;
     if (marketCardId === card.collectionId) {
       marketRequestIdRef.current += 1;
       setMarketCardId(null);
       setMarketSnapshot(null);
       setMarketError(null);
     } else {
-      void loadActiveMarket(card);
+      const samePricingSession = pricingSessionCardId === card.collectionId;
+      if (!samePricingSession) {
+        setPricingSessionCardId(card.collectionId);
+        setMarketExcludedAnchorIds([]);
+        setSoldExcludedAnchorIds([]);
+        setValuationSnapshot(null);
+        setValuationError(null);
+      }
+      void loadActiveMarket(
+        card,
+        samePricingSession ? marketExcludedAnchorIds : [],
+      );
     }
   };
 
-  const loadSoldComps = async (card: SavedCollectionCard) => {
-    if (soldBusy || marketBusy) return;
+  const excludeActiveMarketAnchor = (
+    card: SavedCollectionCard,
+    observationId: string,
+  ) => {
+    if (
+      marketBusy ||
+      valuationBusy ||
+      marketExcludedAnchorIds.includes(observationId)
+    ) return;
+    const nextExcludedAnchorIds = [
+      ...marketExcludedAnchorIds,
+      observationId,
+    ];
+    setMarketExcludedAnchorIds(nextExcludedAnchorIds);
+    void loadActiveMarket(card, nextExcludedAnchorIds);
+    void refreshValuationSnapshot(
+      card,
+      soldExcludedAnchorIds,
+      nextExcludedAnchorIds,
+    );
+  };
+
+  const restoreActiveMarketAnchors = (card: SavedCollectionCard) => {
+    if (marketBusy || valuationBusy) return;
+    setMarketExcludedAnchorIds([]);
+    setSoldExcludedAnchorIds([]);
+    void loadActiveMarket(card, []);
+    void refreshValuationSnapshot(card, [], []);
+  };
+
+  const loadSoldComps = async (
+    card: SavedCollectionCard,
+    excludedAnchorIds = soldExcludedAnchorIds,
+  ) => {
+    if (soldBusy || marketBusy || valuationBusy || valuationSaving) return;
+    hideValuationPanel();
     marketRequestIdRef.current += 1;
     setMarketCardId(null);
     setMarketSnapshot(null);
@@ -569,7 +1118,10 @@ export function CollectionView({
     setSoldBusy(true);
     try {
       const response = await fetch(
-        `/api/collection/${encodeURIComponent(card.collectionId)}/sold-comps`,
+        pricingSnapshotUrl(
+          `/api/collection/${encodeURIComponent(card.collectionId)}/sold-comps`,
+          excludedAnchorIds,
+        ),
       );
       const payload = (await response.json().catch(() => null)) as
         | (SoldCompsSnapshot & { error?: string })
@@ -595,19 +1147,419 @@ export function CollectionView({
   };
 
   const toggleSoldComps = (card: SavedCollectionCard) => {
-    if (soldBusy || marketBusy) return;
+    if (soldBusy || marketBusy || valuationBusy || valuationSaving) return;
     if (soldCardId === card.collectionId) {
       soldRequestIdRef.current += 1;
       setSoldCardId(null);
       setSoldSnapshot(null);
       setSoldError(null);
     } else {
-      void loadSoldComps(card);
+      const samePricingSession = pricingSessionCardId === card.collectionId;
+      if (!samePricingSession) {
+        setPricingSessionCardId(card.collectionId);
+        setMarketExcludedAnchorIds([]);
+        setSoldExcludedAnchorIds([]);
+        setValuationSnapshot(null);
+        setValuationError(null);
+      }
+      void loadSoldComps(
+        card,
+        samePricingSession ? soldExcludedAnchorIds : [],
+      );
+    }
+  };
+
+  const excludeSoldCompAnchor = (
+    card: SavedCollectionCard,
+    observationId: string,
+  ) => {
+    if (
+      soldBusy ||
+      valuationBusy ||
+      soldExcludedAnchorIds.includes(observationId)
+    ) return;
+    const nextExcludedAnchorIds = [...soldExcludedAnchorIds, observationId];
+    setSoldExcludedAnchorIds(nextExcludedAnchorIds);
+    void loadSoldComps(card, nextExcludedAnchorIds);
+    void refreshValuationSnapshot(
+      card,
+      nextExcludedAnchorIds,
+      marketExcludedAnchorIds,
+    );
+  };
+
+  const restoreSoldCompAnchors = (card: SavedCollectionCard) => {
+    if (soldBusy || valuationBusy) return;
+    setMarketExcludedAnchorIds([]);
+    setSoldExcludedAnchorIds([]);
+    void loadSoldComps(card, []);
+    void refreshValuationSnapshot(card, [], []);
+  };
+
+  const refreshValuationSnapshot = async (
+    card: SavedCollectionCard,
+    soldExcludedObservationIds: string[],
+    activeExcludedObservationIds: string[],
+    openPanel = false,
+  ) => {
+    const requestId = ++valuationRequestIdRef.current;
+    if (openPanel) setValuationCardId(card.collectionId);
+    setValuationSnapshot(null);
+    setValuationError(null);
+    if (openPanel) {
+      setValuationAmountInput(
+        card.confirmedValuation
+          ? amountInputFromCents(card.confirmedValuation.amountCents)
+          : "",
+      );
+      setValuationCurrency(card.confirmedValuation?.currency ?? "USD");
+      setValuationConfidence(card.confirmedValuation?.confidence ?? "low");
+    }
+    setValuationBusy(true);
+    try {
+      const snapshot = await fetchValuationRecommendation(card, {
+        soldExcludedObservationIds,
+        activeExcludedObservationIds,
+      });
+      if (requestId !== valuationRequestIdRef.current) return;
+      setValuationSnapshot(snapshot);
+      if (snapshot.recommendation) {
+        setValuationAmountInput(
+          amountInputFromCents(snapshot.recommendation.amountCents),
+        );
+        setValuationCurrency(snapshot.recommendation.currency);
+        setValuationConfidence(snapshot.recommendation.confidence);
+      }
+    } catch (caughtError) {
+      if (requestId !== valuationRequestIdRef.current) return;
+      setValuationError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not prepare a valuation recommendation.",
+      );
+    } finally {
+      if (requestId === valuationRequestIdRef.current) setValuationBusy(false);
+    }
+  };
+
+  const loadValuationRecommendation = async (card: SavedCollectionCard) => {
+    if (
+      marketBusy ||
+      soldBusy ||
+      valuationBusy ||
+      valuationSaving ||
+      bulkRefreshing ||
+      bulkApplying
+    ) {
+      return;
+    }
+    marketRequestIdRef.current += 1;
+    setMarketCardId(null);
+    setMarketSnapshot(null);
+    setMarketBusy(false);
+    setMarketError(null);
+    soldRequestIdRef.current += 1;
+    setSoldCardId(null);
+    setSoldSnapshot(null);
+    setSoldBusy(false);
+    setSoldError(null);
+    const samePricingSession = pricingSessionCardId === card.collectionId;
+    const activeExcludedObservationIds = samePricingSession
+      ? marketExcludedAnchorIds
+      : [];
+    const soldExcludedObservationIds = samePricingSession
+      ? soldExcludedAnchorIds
+      : [];
+    if (!samePricingSession) {
+      setPricingSessionCardId(card.collectionId);
+      setMarketExcludedAnchorIds([]);
+      setSoldExcludedAnchorIds([]);
+    }
+    await refreshValuationSnapshot(
+      card,
+      soldExcludedObservationIds,
+      activeExcludedObservationIds,
+      true,
+    );
+  };
+
+  const reviewUpdatedRecommendation = (card: SavedCollectionCard) => {
+    if (valuationBusy || !valuationSnapshot) return;
+    marketRequestIdRef.current += 1;
+    setMarketCardId(null);
+    setMarketSnapshot(null);
+    setMarketBusy(false);
+    setMarketError(null);
+    soldRequestIdRef.current += 1;
+    setSoldCardId(null);
+    setSoldSnapshot(null);
+    setSoldBusy(false);
+    setSoldError(null);
+    setValuationCardId(card.collectionId);
+  };
+
+  const restoreAllPricingComparisons = (card: SavedCollectionCard) => {
+    if (valuationBusy || valuationSaving) return;
+    setMarketExcludedAnchorIds([]);
+    setSoldExcludedAnchorIds([]);
+    void refreshValuationSnapshot(card, [], [], true);
+  };
+
+  const toggleValuationRecommendation = (card: SavedCollectionCard) => {
+    if (valuationCardId === card.collectionId) {
+      closeValuationPanel();
+      return;
+    }
+    void loadValuationRecommendation(card);
+  };
+
+  const saveConfirmedValuation = async (card: SavedCollectionCard) => {
+    const amountCents = amountCentsFromInput(valuationAmountInput);
+    if (amountCents === null || valuationSaving) {
+      setValuationError("Enter a valid card value of zero or more.");
+      return;
+    }
+    const recommendation = valuationSnapshot?.recommendation ?? null;
+    const method: ValuationMethod = recommendation?.method ?? "manual";
+    const userAdjusted = Boolean(
+      recommendation &&
+        (amountCents !== recommendation.amountCents ||
+          valuationCurrency !== recommendation.currency ||
+          valuationConfidence !== recommendation.confidence),
+    );
+    setValuationSaving(true);
+    setValuationError(null);
+    try {
+      const response = await fetch(
+        `/api/collection/${encodeURIComponent(card.collectionId)}/valuation`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amountCents,
+            currency: valuationCurrency,
+            confidence: valuationConfidence,
+            method,
+            userAdjusted,
+          }),
+        },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { card?: SavedCollectionCard; error?: string }
+        | null;
+      if (!response.ok || !payload?.card) {
+        throw new Error(payload?.error ?? "CardPilot could not save this value.");
+      }
+      onCardsChange(
+        cards.map((item) =>
+          item.collectionId === payload.card?.collectionId ? payload.card : item,
+        ),
+      );
+      closeValuationPanel();
+    } catch (caughtError) {
+      setValuationError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not save this value.",
+      );
+    } finally {
+      setValuationSaving(false);
+    }
+  };
+
+  const clearConfirmedValuation = async (card: SavedCollectionCard) => {
+    if (
+      valuationSaving ||
+      !window.confirm(`Clear the saved value for ${card.title}?`)
+    ) {
+      return;
+    }
+    setValuationSaving(true);
+    setValuationError(null);
+    try {
+      const response = await fetch(
+        `/api/collection/${encodeURIComponent(card.collectionId)}/valuation`,
+        { method: "DELETE" },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { card?: SavedCollectionCard; error?: string }
+        | null;
+      if (!response.ok || !payload?.card) {
+        throw new Error(payload?.error ?? "CardPilot could not clear this value.");
+      }
+      onCardsChange(
+        cards.map((item) =>
+          item.collectionId === payload.card?.collectionId ? payload.card : item,
+        ),
+      );
+      closeValuationPanel();
+    } catch (caughtError) {
+      setValuationError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not clear this value.",
+      );
+    } finally {
+      setValuationSaving(false);
+    }
+  };
+
+  const dismissBulkValuation = () => {
+    if (bulkRefreshing || bulkApplying) return;
+    setBulkValuationResults([]);
+    setBulkSelectedIds([]);
+    setBulkCompletedCount(0);
+    setBulkValuationError(null);
+  };
+
+  const refreshAllValuations = async () => {
+    if (
+      cards.length === 0 ||
+      bulkRefreshing ||
+      bulkApplying ||
+      marketBusy ||
+      soldBusy ||
+      valuationBusy ||
+      valuationSaving
+    ) {
+      return;
+    }
+    if (
+      !window.confirm(
+        `Check current pricing for ${cards.length} card${cards.length === 1 ? "" : "s"}? CardPilot will search one card at a time to limit provider usage.`,
+      )
+    ) {
+      return;
+    }
+    marketRequestIdRef.current += 1;
+    setMarketCardId(null);
+    setMarketSnapshot(null);
+    setMarketError(null);
+    setMarketExcludedAnchorIds([]);
+    soldRequestIdRef.current += 1;
+    setSoldCardId(null);
+    setSoldSnapshot(null);
+    setSoldError(null);
+    setSoldExcludedAnchorIds([]);
+    setPricingSessionCardId(null);
+    closeValuationPanel();
+    setBulkValuationResults([]);
+    setBulkSelectedIds([]);
+    setBulkCompletedCount(0);
+    setBulkValuationError(null);
+    setBulkRefreshing(true);
+    const results: BulkValuationResult[] = [];
+    try {
+      for (let index = 0; index < cards.length; index += 1) {
+        const card = cards[index];
+        try {
+          const snapshot = await fetchValuationRecommendation(card);
+          results.push({ card, snapshot, error: null });
+          setBulkValuationResults([...results]);
+          setBulkCompletedCount(results.length);
+          if (
+            snapshot.evidence.sold.status === "rate_limited" ||
+            snapshot.evidence.active.status === "rate_limited"
+          ) {
+            setBulkValuationError(
+              "A pricing provider reached its request limit. CardPilot stopped before checking more cards; the recommendations already prepared remain available for review.",
+            );
+            break;
+          }
+        } catch (caughtError) {
+          results.push({
+            card,
+            snapshot: null,
+            error:
+              caughtError instanceof Error
+                ? caughtError.message
+                : "Pricing could not be checked.",
+          });
+          setBulkValuationResults([...results]);
+          setBulkCompletedCount(results.length);
+        }
+        if (index < cards.length - 1) {
+          await waitForNextPricingRequest(250);
+        }
+      }
+      setBulkSelectedIds(
+        results
+          .filter((result) => result.snapshot?.recommendation)
+          .map((result) => result.card.collectionId),
+      );
+    } finally {
+      setBulkRefreshing(false);
+    }
+  };
+
+  const toggleBulkValuation = (collectionId: string) => {
+    setBulkSelectedIds((current) =>
+      current.includes(collectionId)
+        ? current.filter((id) => id !== collectionId)
+        : [...current, collectionId],
+    );
+  };
+
+  const applyBulkValuations = async () => {
+    if (bulkApplying || bulkSelectedIds.length === 0) return;
+    setBulkApplying(true);
+    setBulkValuationError(null);
+    const updatedCards = new Map<string, SavedCollectionCard>();
+    const failedIds = new Set<string>();
+    try {
+      for (const result of bulkValuationResults) {
+        const recommendation = result.snapshot?.recommendation;
+        if (!recommendation || !bulkSelectedIds.includes(result.card.collectionId)) {
+          continue;
+        }
+        try {
+          const response = await fetch(
+            `/api/collection/${encodeURIComponent(result.card.collectionId)}/valuation`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                amountCents: recommendation.amountCents,
+                currency: recommendation.currency,
+                confidence: recommendation.confidence,
+                method: recommendation.method,
+                userAdjusted: false,
+              }),
+            },
+          );
+          const payload = (await response.json().catch(() => null)) as
+            | { card?: SavedCollectionCard; error?: string }
+            | null;
+          if (!response.ok || !payload?.card) {
+            throw new Error(payload?.error ?? "The value could not be saved.");
+          }
+          updatedCards.set(payload.card.collectionId, payload.card);
+        } catch {
+          failedIds.add(result.card.collectionId);
+        }
+      }
+      if (updatedCards.size > 0) {
+        onCardsChange(
+          cards.map((card) => updatedCards.get(card.collectionId) ?? card),
+        );
+      }
+      if (failedIds.size > 0) {
+        setBulkSelectedIds([...failedIds]);
+        setBulkValuationError(
+          `${failedIds.size} selected value${failedIds.size === 1 ? " was" : "s were"} not saved. Try applying the remaining selection again.`,
+        );
+      } else {
+        setBulkValuationResults([]);
+        setBulkSelectedIds([]);
+        setBulkCompletedCount(0);
+      }
+    } finally {
+      setBulkApplying(false);
     }
   };
 
   const saveEdit = async (card: SavedCollectionCard) => {
-    if (!draft || !gradingDraft || busyId) return;
+    if (!draft || !gradingDraft || !valuationDraft || busyId) return;
     if (
       gradingDraft.isGraded &&
       (!gradingDraft.company?.trim() || !gradingDraft.grade?.trim())
@@ -625,7 +1577,14 @@ export function CollectionView({
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fields: draft, grading: gradingDraft }),
+          body: JSON.stringify({
+            fields: draft,
+            grading: gradingDraft,
+            valuationProfile:
+              valuationDraft.source === "derived"
+                ? deriveValuationProfile(draft)
+                : valuationDraft,
+          }),
         },
       );
       const payload = (await response.json().catch(() => null)) as
@@ -642,6 +1601,7 @@ export function CollectionView({
       setEditingId(null);
       setDraft(null);
       setGradingDraft(null);
+      setValuationDraft(null);
     } catch (caughtError) {
       setActionError(
         caughtError instanceof Error
@@ -699,17 +1659,61 @@ export function CollectionView({
             rookie, and autograph cards easy to find.
           </p>
         </div>
-        <button className="secondary-button" type="button" onClick={onScanCard}>
-          Scan another card
-        </button>
+        <div className="collection-heading-actions">
+          <button
+            className="outline-button"
+            type="button"
+            disabled={
+              cards.length === 0 ||
+              bulkRefreshing ||
+              bulkApplying ||
+              marketBusy ||
+              soldBusy ||
+              valuationBusy ||
+              valuationSaving
+            }
+            onClick={() => void refreshAllValuations()}
+          >
+            {bulkRefreshing
+              ? `Checking ${bulkCompletedCount} of ${cards.length}`
+              : "Refresh all values"}
+          </button>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={bulkRefreshing || bulkApplying}
+            onClick={onScanCard}
+          >
+            Scan another card
+          </button>
+        </div>
       </div>
 
       <div className="collection-summary" aria-label="Collection summary">
+        <div className="collection-summary-value">
+          <strong>{collectionValuation.totalLabel}</strong>
+          <span>Confirmed collection value</span>
+        </div>
         <div><strong>{cards.length}</strong><span>Total cards</span></div>
-        <div><strong>{cards.filter((card) => card.fields.serialNumber).length}</strong><span>Numbered</span></div>
-        <div><strong>{cards.filter((card) => card.fields.autograph === true).length}</strong><span>Autographs</span></div>
-        <div><strong>{cards.filter((card) => card.fields.rookieStatus === true).length}</strong><span>Rookies</span></div>
+        <div><strong>{collectionValuation.valuedCount}</strong><span>Valued</span></div>
+        <div><strong>{collectionValuation.unvaluedCount}</strong><span>Need a value</span></div>
+        <div><strong>{collectionValuation.staleCount}</strong><span>Pricing out of date</span></div>
       </div>
+
+      {(bulkRefreshing || bulkValuationResults.length > 0) && (
+        <BulkValuationReview
+          results={bulkValuationResults}
+          selectedIds={bulkSelectedIds}
+          completedCount={bulkCompletedCount}
+          totalCount={cards.length}
+          isRefreshing={bulkRefreshing}
+          isApplying={bulkApplying}
+          error={bulkValuationError}
+          onToggle={toggleBulkValuation}
+          onApply={() => void applyBulkValuations()}
+          onDismiss={dismissBulkValuation}
+        />
+      )}
 
       <div className="collection-toolbar">
         <label>
@@ -738,6 +1742,8 @@ export function CollectionView({
             <option value="numbered">Numbered cards</option>
             <option value="autograph">Autographs</option>
             <option value="rookie">Rookies</option>
+            <option value="unvalued">Needs a value</option>
+            <option value="stale">Pricing out of date</option>
           </select>
         </label>
       </div>
@@ -768,9 +1774,10 @@ export function CollectionView({
             const isEditing = editingId === card.collectionId && draft;
             const isMarketOpen = marketCardId === card.collectionId;
             const isSoldOpen = soldCardId === card.collectionId;
+            const isValuationOpen = valuationCardId === card.collectionId;
             return (
               <article
-                className={`collection-card${isMarketOpen || isSoldOpen ? " collection-card-expanded" : ""}`}
+                className={`collection-card${isMarketOpen || isSoldOpen || isValuationOpen ? " collection-card-expanded" : ""}`}
                 key={card.collectionId}
               >
                 <div className="collection-card-image">
@@ -909,11 +1916,61 @@ export function CollectionView({
                         )}
                       </section>
                     )}
+                    {valuationDraft && (
+                      <section
+                        className="valuation-profile-editor"
+                        aria-labelledby={`valuation-profile-${card.collectionId}`}
+                      >
+                        <div>
+                          <span>Variant-adjustment profile</span>
+                          <h3 id={`valuation-profile-${card.collectionId}`}>
+                            Card feature premium
+                          </h3>
+                          <p>
+                            Choose one primary profile only. Composite choices such as RPA already include the rookie, patch, and autograph premiums and are never multiplied again.
+                          </p>
+                        </div>
+                        <label>
+                          <span>Feature profile</span>
+                          <select
+                            value={
+                              valuationDraft.source === "derived"
+                                ? "automatic"
+                                : valuationDraft.featureType
+                            }
+                            onChange={(event) => {
+                              if (event.target.value === "automatic") {
+                                setValuationDraft(deriveValuationProfile(draft));
+                                return;
+                              }
+                              setValuationDraft({
+                                featureType: event.target.value as ValuationProfile["featureType"],
+                                source: "user_confirmed",
+                              });
+                            }}
+                          >
+                            <option value="automatic">
+                              Automatic — {featureProfileLabel(deriveValuationProfile(draft))}
+                            </option>
+                            {valuationFeatureOptions.map((option) => (
+                              <option value={option.value} key={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <small>
+                            {valuationDraft.source === "derived"
+                              ? "CardPilot is using the confirmed autograph, memorabilia, and rookie details. Choose a specific type when you know it."
+                              : "User confirmed. This profile will be used for upward or downward feature adjustments."}
+                          </small>
+                        </label>
+                      </section>
+                    )}
                     <div className="collection-card-actions">
                       <button type="button" disabled={busyId !== null} onClick={() => void saveEdit(card)}>
                         {busyId === card.collectionId ? "Saving..." : "Save changes"}
                       </button>
-                      <button type="button" onClick={() => { setEditingId(null); setDraft(null); setGradingDraft(null); }}>Cancel</button>
+                      <button type="button" onClick={() => { setEditingId(null); setDraft(null); setGradingDraft(null); setValuationDraft(null); }}>Cancel</button>
                     </div>
                   </div>
                 ) : (
@@ -922,6 +1979,42 @@ export function CollectionView({
                       <span>{card.fields.sport ?? "Sports card"}</span>
                       <h2>{card.title}</h2>
                     </div>
+                    {card.confirmedValuation ? (
+                      <div className="collection-card-value">
+                        <div>
+                          <span>Confirmed value</span>
+                          <strong>
+                            {formatPrice(
+                              card.confirmedValuation.amountCents,
+                              card.confirmedValuation.currency,
+                            )}
+                          </strong>
+                        </div>
+                        <div>
+                          <span
+                            className={`market-confidence market-confidence-${card.confirmedValuation.confidence}`}
+                          >
+                            {card.confirmedValuation.confidence} confidence
+                          </span>
+                          {valuationIsStale(card) && (
+                            <span className="stale-value-badge">Refresh recommended</span>
+                          )}
+                        </div>
+                        <small>
+                          {valuationMethodLabel(card.confirmedValuation.method)}
+                          {card.confirmedValuation.userAdjusted ? " · Adjusted by collector" : ""}
+                          {` · Confirmed ${new Date(card.confirmedValuation.valuedAt).toLocaleDateString()}`}
+                        </small>
+                      </div>
+                    ) : (
+                      <div className="collection-card-value collection-card-value-empty">
+                        <div>
+                          <span>Confirmed value</span>
+                          <strong>Not valued yet</strong>
+                        </div>
+                        <small>Check current pricing and confirm a value.</small>
+                      </div>
+                    )}
                     <dl>
                       <div><dt>Card number</dt><dd>{formatFieldValue(card.fields.cardNumber)}</dd></div>
                       <div><dt>Parallel</dt><dd>{formatFieldValue(card.fields.parallel)}</dd></div>
@@ -935,6 +2028,10 @@ export function CollectionView({
                             : "Raw / ungraded"}
                         </dd>
                       </div>
+                      <div>
+                        <dt>Feature profile</dt>
+                        <dd>{featureProfileLabel(card.valuationProfile)}</dd>
+                      </div>
                     </dl>
                     <div className="collection-card-flags">
                       {card.fields.rookieStatus === true && <span>Rookie</span>}
@@ -943,22 +2040,77 @@ export function CollectionView({
                     </div>
                     <small>Updated {new Date(card.updatedAt).toLocaleDateString()}</small>
                     <div className="collection-card-actions">
-                      <button type="button" onClick={() => beginEdit(card)}>Edit details</button>
                       <button
                         type="button"
-                        disabled={marketBusy || soldBusy}
+                        disabled={
+                          marketBusy ||
+                          soldBusy ||
+                          valuationBusy ||
+                          valuationSaving ||
+                          bulkRefreshing ||
+                          bulkApplying
+                        }
+                        onClick={() => beginEdit(card)}
+                      >
+                        Edit details
+                      </button>
+                      <button
+                        type="button"
+                        disabled={
+                          marketBusy ||
+                          soldBusy ||
+                          valuationBusy ||
+                          valuationSaving ||
+                          bulkRefreshing ||
+                          bulkApplying
+                        }
+                        onClick={() => toggleValuationRecommendation(card)}
+                      >
+                        {isValuationOpen
+                          ? "Close value"
+                          : card.confirmedValuation
+                            ? "Refresh estimate"
+                            : "Estimate value"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={
+                          marketBusy ||
+                          soldBusy ||
+                          valuationBusy ||
+                          valuationSaving ||
+                          bulkRefreshing ||
+                          bulkApplying
+                        }
                         onClick={() => toggleActiveMarket(card)}
                       >
                         {isMarketOpen ? "Close market" : "Check active market"}
                       </button>
                       <button
                         type="button"
-                        disabled={soldBusy || marketBusy}
+                        disabled={
+                          soldBusy ||
+                          marketBusy ||
+                          valuationBusy ||
+                          valuationSaving ||
+                          bulkRefreshing ||
+                          bulkApplying
+                        }
                         onClick={() => toggleSoldComps(card)}
                       >
                         {isSoldOpen ? "Close sold comps" : "Check sold comps"}
                       </button>
-                      <button type="button" disabled={busyId !== null} onClick={() => void removeCard(card)}>
+                      <button
+                        type="button"
+                        disabled={
+                          busyId !== null ||
+                          valuationBusy ||
+                          valuationSaving ||
+                          bulkRefreshing ||
+                          bulkApplying
+                        }
+                        onClick={() => void removeCard(card)}
+                      >
                         {busyId === card.collectionId ? "Removing..." : "Remove"}
                       </button>
                     </div>
@@ -971,6 +2123,19 @@ export function CollectionView({
                     isLoading={marketBusy}
                     error={marketError}
                     onRetry={() => void loadActiveMarket(card)}
+                    excludedAnchorCount={
+                      marketExcludedAnchorIds.length + soldExcludedAnchorIds.length
+                    }
+                    onExcludeAnchor={(observationId) =>
+                      excludeActiveMarketAnchor(card, observationId)
+                    }
+                    onRestoreAnchors={() => restoreActiveMarketAnchors(card)}
+                    updatedRecommendation={valuationSnapshot}
+                    isRecommendationUpdating={valuationBusy}
+                    recommendationError={valuationError}
+                    onReviewRecommendation={() =>
+                      reviewUpdatedRecommendation(card)
+                    }
                   />
                 )}
                 {isSoldOpen && !isEditing && (
@@ -980,6 +2145,43 @@ export function CollectionView({
                     isLoading={soldBusy}
                     error={soldError}
                     onRetry={() => void loadSoldComps(card)}
+                    excludedAnchorCount={
+                      marketExcludedAnchorIds.length + soldExcludedAnchorIds.length
+                    }
+                    onExcludeAnchor={(observationId) =>
+                      excludeSoldCompAnchor(card, observationId)
+                    }
+                    onRestoreAnchors={() => restoreSoldCompAnchors(card)}
+                    updatedRecommendation={valuationSnapshot}
+                    isRecommendationUpdating={valuationBusy}
+                    recommendationError={valuationError}
+                    onReviewRecommendation={() =>
+                      reviewUpdatedRecommendation(card)
+                    }
+                  />
+                )}
+                {isValuationOpen && !isEditing && (
+                  <CardValuationPanel
+                    card={card}
+                    snapshot={valuationSnapshot}
+                    isLoading={valuationBusy}
+                    isSaving={valuationSaving}
+                    error={valuationError}
+                    amountInput={valuationAmountInput}
+                    currency={valuationCurrency}
+                    confidence={valuationConfidence}
+                    onAmountChange={setValuationAmountInput}
+                    onConfidenceChange={setValuationConfidence}
+                    onSave={() => void saveConfirmedValuation(card)}
+                    onClear={() => void clearConfirmedValuation(card)}
+                    onRetry={() => void loadValuationRecommendation(card)}
+                    onClose={closeValuationPanel}
+                    excludedComparisonCount={
+                      marketExcludedAnchorIds.length + soldExcludedAnchorIds.length
+                    }
+                    onRestoreComparisons={() =>
+                      restoreAllPricingComparisons(card)
+                    }
                   />
                 )}
               </article>

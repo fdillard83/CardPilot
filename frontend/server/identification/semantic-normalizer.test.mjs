@@ -66,6 +66,27 @@ test("anniversary branding cannot become the product or set", () => {
   assert.equal(normalized.visibleMarks[0].text, "75 Years of Baseball");
 });
 
+test("generic autograph certification wording cannot become an insert name", () => {
+  const input = extraction({
+    setOrInsert: field("Topps Certified Autograph Issue", 0.98),
+  });
+  input.visibleMarks.push({
+    text: "TOPPS CERTIFIED AUTOGRAPH ISSUE",
+    kind: "insert_title",
+    imageSide: "front",
+    location: "top",
+    confidence: 0.98,
+  });
+  const normalized = normalizeCardSemantics(input, 2026);
+
+  assert.equal(normalized.fields.setOrInsert.value, null);
+  assert.match(
+    normalized.missingEvidence.find((item) => item.field === "setOrInsert")
+      .description,
+    /certification wording/i,
+  );
+});
+
 test("a plausible four-digit year remains valid", () => {
   assert.equal(isPlausibleIssueYear("2026", 2026), true);
   assert.equal(isPlausibleIssueYear("2025-26", 2026), true);

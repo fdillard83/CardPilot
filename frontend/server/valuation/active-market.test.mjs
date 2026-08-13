@@ -4,6 +4,7 @@ import {
   ActiveMarketService,
   buildActiveMarketQuery,
   buildActiveMarketSnapshot,
+  evaluateCardTitleMatch,
 } from "./active-market.mjs";
 
 const fields = {
@@ -189,6 +190,157 @@ test("broader comparisons activate only when exact results are scarce", () => {
   assert.equal(snapshot.groups[1].listings[0].matchTier, "broader");
 });
 
+test("broader matching rejects conflicting products when saved product details are sparse", () => {
+  const sparseFields = {
+    ...fields,
+    product: null,
+    setOrInsert: null,
+    cardNumber: null,
+    parallel: "Green Crackle Foil",
+    serialNumber: "/99",
+  };
+
+  assert.equal(
+    evaluateCardTitleMatch(
+      "2026 Topps Chrome Nolan Ryan Chrome Rivals Insert #RVH-11 /99 Rangers",
+      sparseFields,
+      { broader: true },
+    ),
+    null,
+  );
+  assert.equal(
+    evaluateCardTitleMatch(
+      "2026 Topps Tribute Nolan Ryan Green Parallel /99 Angels",
+      sparseFields,
+      { broader: true },
+    ),
+    null,
+  );
+  assert.ok(
+    evaluateCardTitleMatch(
+      "2026 Topps Series 2 Nolan Ryan Green Crackle Foil /99 California Angels",
+      sparseFields,
+      { broader: true },
+    ),
+  );
+});
+
+test("active exclusions remove exact and broader comparisons from summaries", () => {
+  const candidates = [
+    candidate({
+      id: "exact",
+      title:
+        "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85",
+      price: 40,
+    }),
+    candidate({
+      id: "broader",
+      title:
+        "Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85",
+      price: 44,
+    }),
+  ];
+
+  const withoutExact = buildActiveMarketSnapshot({
+    fields,
+    marketplaceId: "EBAY_US",
+    candidates,
+    excludedObservationIds: ["v1|exact|0"],
+  });
+  const withoutBroader = buildActiveMarketSnapshot({
+    fields,
+    marketplaceId: "EBAY_US",
+    candidates,
+    excludedObservationIds: ["v1|broader|0"],
+  });
+
+  assert.equal(withoutExact.exactMatchedCount, 0);
+  assert.equal(withoutExact.broaderMatchedCount, 1);
+  assert.equal(withoutExact.groups[0].listings[0].itemId, "v1|broader|0");
+  assert.equal(withoutBroader.exactMatchedCount, 1);
+  assert.equal(withoutBroader.broaderMatchedCount, 0);
+  assert.equal(withoutBroader.groups[0].listings[0].itemId, "v1|exact|0");
+});
+
+test("active snapshots keep variant-adjusted asking estimates separate", () => {
+  const snapshot = buildActiveMarketSnapshot({
+    fields: {
+      ...fields,
+      parallel: null,
+      serialNumber: null,
+      autograph: false,
+    },
+    grading: {
+      isGraded: false,
+      company: null,
+      grade: null,
+      certificationNumber: null,
+    },
+    valuationProfile: {
+      featureType: "ordinary",
+      source: "user_confirmed",
+    },
+    marketplaceId: "EBAY_US",
+    candidates: [
+      candidate({
+        id: "variant",
+        title:
+          "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 On-Card Auto /50",
+        price: 120,
+      }),
+    ],
+  });
+
+  assert.equal(snapshot.matchedCount, 0);
+  assert.equal(snapshot.variantEstimates.length, 1);
+  assert.equal(snapshot.variantEstimates[0].observationType, "active_asking");
+  assert.equal(snapshot.variantEstimates[0].estimatedAmountCents, 224);
+});
+
+test("active-market exclusions recalculate from cached provider results", async () => {
+  let requests = 0;
+  const baseFields = {
+    ...fields,
+    parallel: null,
+    serialNumber: null,
+    autograph: false,
+  };
+  const service = new ActiveMarketService({
+    ebayClient: {
+      async searchByKeywords() {
+        requests += 1;
+        return {
+          marketplaceId: "EBAY_US",
+          candidates: [
+            candidate({
+              id: "variant",
+              title:
+                "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 On-Card Auto /50",
+              price: 120,
+            }),
+          ],
+        };
+      },
+    },
+  });
+  const options = {
+    valuationProfile: {
+      featureType: "ordinary",
+      source: "user_confirmed",
+    },
+  };
+
+  const initial = await service.snapshot(baseFields, options);
+  const withoutAnchor = await service.snapshot(baseFields, {
+    ...options,
+    excludedObservationIds: ["v1|variant|0"],
+  });
+
+  assert.equal(initial.variantEstimates.length, 1);
+  assert.equal(withoutAnchor.variantEstimates.length, 0);
+  assert.equal(requests, 2);
+});
+
 test("active-market service caches short-lived eBay snapshots", async () => {
   let requests = 0;
   let now = Date.parse("2026-08-12T20:00:00.000Z");
@@ -206,11 +358,11 @@ test("active-market service caches short-lived eBay snapshots", async () => {
   const first = await service.snapshot(fields);
   const second = await service.snapshot(fields);
   assert.deepEqual(second, first);
-  assert.equal(requests, 1);
+  assert.equal(requests, 2);
 
   now += 11 * 60 * 1000;
   await service.snapshot(fields);
-  assert.equal(requests, 2);
+  assert.equal(requests, 4);
 });
 
 test("active-market cache keeps different confirmed references separate", async () => {
@@ -226,5 +378,5 @@ test("active-market cache keeps different confirmed references separate", async 
 
   await service.snapshot(fields, { confirmedReferenceItemId: "v1|1|0" });
   await service.snapshot(fields, { confirmedReferenceItemId: "v1|2|0" });
-  assert.equal(requests, 2);
+  assert.equal(requests, 4);
 });
