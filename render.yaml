@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: cardpilot
+    runtime: node
+    plan: free
+    region: virginia
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: COLLECTION_STORAGE_MODE
+        value: supabase
+      - key: SECURE_COOKIES
+        value: "true"
+      - key: LOCAL_COLLECTION_IMPORT_ENABLED
+        value: "false"
+      - key: EBAY_MARKETPLACE_ID
+        value: EBAY_US
+      - key: SUPABASE_CARD_IMAGES_BUCKET
+        value: card-images
+      - key: OPENAI_MODEL
+        value: gpt-5.6-sol
+      - key: OPENAI_FAST_MODEL
+        value: gpt-5.4-mini
+      - key: APP_ORIGIN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: EBAY_CLIENT_ID
+        sync: false
+      - key: EBAY_CLIENT_SECRET
+        sync: false
+      - key: THE_CARD_API_KEY
+        sync: false
+      - key: POKEMON_TCG_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
