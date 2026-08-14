@@ -208,14 +208,59 @@ test("selected listing details expose seller aspects as optional suggestions", a
 
   assert.match(String(requestUrl), /v1%7C123%7C0$/);
   assert.deepEqual(item.suggestions, {
+    character: null,
+    setOrInsert: null,
     year: "2026",
     cardNumber: "91B2-36",
     parallel: "Green Crackle Foil",
     serialNumber: "/99",
+    language: null,
+    rarity: null,
+    finish: null,
+    promo: null,
   });
   assert.deepEqual(item.aspects[3], {
     name: "Player/Athlete",
     values: ["Nolan Ryan"],
+  });
+});
+
+test("selected Pokémon listings expose category-specific suggestions", async () => {
+  const client = new EbayImageSearchClient({
+    oauthClient: {
+      async getAccessToken() {
+        return "application-token";
+      },
+      invalidate() {},
+    },
+    fetchImpl: async () =>
+      jsonResponse({
+        itemId: "v1|pokemon|0",
+        title: "2026 Pokemon Charmander MEP 038 Promo Holo",
+        localizedAspects: [
+          { localizedName: "Character", localizedValues: ["Charmander"] },
+          { localizedName: "Set", localizedValues: ["Mega Evolution Promos"] },
+          { localizedName: "Card Number", localizedValues: ["038"] },
+          { localizedName: "Language", localizedValues: ["English"] },
+          { localizedName: "Rarity", localizedValues: ["Promo"] },
+          { localizedName: "Finish", localizedValues: ["Holo"] },
+          { localizedName: "Features", localizedValues: ["Promo"] },
+        ],
+      }),
+  });
+
+  const item = await client.getItemDetails("v1|pokemon|0");
+  assert.deepEqual(item.suggestions, {
+    character: "Charmander",
+    setOrInsert: "Mega Evolution Promos",
+    year: "2026",
+    cardNumber: "038",
+    parallel: null,
+    serialNumber: null,
+    language: "English",
+    rarity: "Promo",
+    finish: "Holo",
+    promo: true,
   });
 });
 

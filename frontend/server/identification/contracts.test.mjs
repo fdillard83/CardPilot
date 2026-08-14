@@ -7,6 +7,7 @@ import {
 } from "./contracts.mjs";
 
 const booleanFields = new Set([
+  "promo",
   "rookieStatus",
   "autograph",
   "memorabilia",

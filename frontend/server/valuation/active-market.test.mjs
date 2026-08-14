@@ -4,6 +4,7 @@ import {
   ActiveMarketService,
   buildActiveMarketQuery,
   buildActiveMarketSnapshot,
+  buildPokemonDiscoveryQueries,
   evaluateCardTitleMatch,
 } from "./active-market.mjs";
 
@@ -60,6 +61,121 @@ test("active-market queries keep the print run but not the physical copy number"
   assert.match(query, /Green Foil/);
   assert.match(query, /\/85/);
   assert.doesNotMatch(query, /63\/85/);
+});
+
+test("Pokémon active-market matching uses character and collector details", () => {
+  const pokemonFields = {
+    category: "Pokémon",
+    player: null,
+    character: "Charmander",
+    sport: null,
+    team: null,
+    year: "2026",
+    manufacturer: "The Pokémon Company",
+    product: "Pokémon TCG",
+    brand: "Pokémon",
+    setOrInsert: "Mega Evolution Promos",
+    cardNumber: "038",
+    language: "English",
+    rarity: "Promo",
+    raritySymbol: null,
+    finish: "Holo",
+    promo: true,
+    rookieStatus: null,
+    parallel: null,
+    serialNumber: null,
+    autograph: null,
+    memorabilia: null,
+    imageVariation: null,
+  };
+  const query = buildActiveMarketQuery(pokemonFields);
+  assert.match(query, /Pokemon 2026 Charmander/);
+  assert.match(query, /#038/);
+  assert.match(query, /Holo/);
+  assert.match(query, /Promo/);
+
+  const snapshot = buildActiveMarketSnapshot({
+    fields: pokemonFields,
+    marketplaceId: "EBAY_US",
+    candidates: [
+      candidate({
+        id: "pokemon",
+        title:
+          "2026 Pokemon Charmander Mega Evolution Promos #038 Promo Holo English",
+        price: 14,
+      }),
+    ],
+  });
+
+  assert.equal(snapshot.exactMatchedCount, 1);
+  assert.deepEqual(snapshot.groups[0].listings[0].matchedSignals, [
+    "character",
+    "year",
+    "card_number",
+    "finish",
+    "rarity",
+    "promo",
+    "language",
+    "set",
+  ]);
+  assert.equal(snapshot.variantEstimates.length, 0);
+});
+
+test("Pokémon market searches retry without generic manufacturer and product words", async () => {
+  const pokemonFields = {
+    category: "Pokémon",
+    player: null,
+    character: "Charmander",
+    sport: null,
+    team: null,
+    year: null,
+    manufacturer: "Nintendo",
+    product: "Pokémon",
+    brand: "Pokémon",
+    setOrInsert: null,
+    cardNumber: "038",
+    language: null,
+    rarity: null,
+    raritySymbol: "Star",
+    finish: null,
+    promo: true,
+    rookieStatus: null,
+    parallel: null,
+    serialNumber: null,
+    autograph: false,
+    memorabilia: false,
+    imageVariation: null,
+  };
+  assert.deepEqual(buildPokemonDiscoveryQueries(pokemonFields), [
+    "Pokemon Charmander 038 Promo",
+    "Pokemon Charmander 038",
+  ]);
+
+  const calls = [];
+  const service = new ActiveMarketService({
+    ebayClient: {
+      async searchByKeywords({ query }) {
+        calls.push(query);
+        return {
+          marketplaceId: "EBAY_US",
+          candidates:
+            query === "Pokemon Charmander 038 Promo"
+              ? [
+                  candidate({ id: "101", title: "Pokemon Charmander 038 Mega Evolution Promo", price: 8 }),
+                  candidate({ id: "102", title: "Pokemon Charmander 038 Mega Evolution Promo", price: 10 }),
+                  candidate({ id: "103", title: "Pokemon Charmander 038 Mega Evolution Promo", price: 12 }),
+                ]
+              : [],
+        };
+      },
+    },
+  });
+
+  const snapshot = await service.snapshot(pokemonFields);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1], "Pokemon Charmander 038 Promo");
+  assert.equal(snapshot.exactMatchedCount, 3);
+  assert.equal(snapshot.groups[0].medianAmountCents, 1000);
 });
 
 test("active snapshots reject mismatches, separate grades, and trim outliers", () => {

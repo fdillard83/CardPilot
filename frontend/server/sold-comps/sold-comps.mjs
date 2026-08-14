@@ -1,5 +1,6 @@
 import {
   buildActiveMarketQuery,
+  buildPokemonDiscoveryQueries,
   evaluateCardTitleMatch,
 } from "../valuation/active-market.mjs";
 import {
@@ -7,6 +8,7 @@ import {
   buildVariantDiscoveryQuery,
   deriveValuationProfile,
 } from "../valuation/variant-adjustment.mjs";
+import { isPokemonCard } from "../card-category.mjs";
 
 const soldCompsDisclaimer =
   "Completed-sale records are supplied by The Card API and are informational comparisons, not an appraisal or guaranteed value. Exact and broader title matches remain separate, and marketplace fee or buyer-premium treatment can differ by platform.";
@@ -197,7 +199,7 @@ export function buildSoldCompsSnapshot({
     });
 
   const variantEstimates =
-    exactSales.length < 3
+    exactSales.length < 3 && !isPokemonCard(fields)
       ? buildVariantAdjustedEstimates({
           fields,
           valuationProfile,
@@ -273,7 +275,7 @@ export class SoldCompsService {
     const query = buildActiveMarketQuery(fields);
     if (!query) {
       throw new TypeError(
-        "Add a player, year, set, or card number before checking sold comparisons.",
+        "Add a player or Pokémon name, year, set, or card number before checking sold comparisons.",
       );
     }
     const profile = grading?.isGraded
@@ -317,7 +319,7 @@ export class SoldCompsService {
     const results = [primary];
     const queriesUsed = [query];
     const searchedAt = new Date(this.now()).toISOString();
-    const snapshot = buildSoldCompsSnapshot({
+    let snapshot = buildSoldCompsSnapshot({
       fields,
       grading: normalizedGrading,
       valuationProfile,
@@ -326,12 +328,16 @@ export class SoldCompsService {
       results,
       searchedAt,
     });
-    const discoveryQuery = buildVariantDiscoveryQuery(fields);
-    if (
-      snapshot.exactMatchedCount < 3 &&
-      discoveryQuery &&
-      discoveryQuery !== query
-    ) {
+    const discoveryQueries = isPokemonCard(fields)
+      ? buildPokemonDiscoveryQueries(fields)
+      : [buildVariantDiscoveryQuery(fields)].filter(Boolean);
+    for (const discoveryQuery of discoveryQueries) {
+      if (
+        snapshot.exactMatchedCount + snapshot.broaderMatchedCount >= 3 ||
+        discoveryQuery === query
+      ) {
+        break;
+      }
       results.push(
         await this.cardApiClient.searchSales({
           query: discoveryQuery,
@@ -340,6 +346,15 @@ export class SoldCompsService {
         }),
       );
       queriesUsed.push(discoveryQuery);
+      snapshot = buildSoldCompsSnapshot({
+        fields,
+        grading: normalizedGrading,
+        valuationProfile,
+        query,
+        queriesUsed,
+        results,
+        searchedAt,
+      });
     }
     this.cache.set(cacheKey, {
       results,

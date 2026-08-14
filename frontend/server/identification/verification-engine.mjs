@@ -1,5 +1,7 @@
 const fieldWeights = {
+  category: 0.8,
   player: 2,
+  character: 2,
   sport: 0.5,
   team: 0.5,
   year: 1.6,
@@ -8,6 +10,11 @@ const fieldWeights = {
   brand: 0.7,
   setOrInsert: 1.5,
   cardNumber: 2,
+  language: 0.5,
+  rarity: 1.2,
+  raritySymbol: 1.2,
+  finish: 1.2,
+  promo: 0.8,
   rookieStatus: 0.5,
   parallel: 1.3,
   serialNumber: 1.3,
@@ -18,6 +25,7 @@ const fieldWeights = {
 
 function normalize(value) {
   if (typeof value === "boolean" || value === null) return value;
+  if (typeof value !== "string") return null;
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 

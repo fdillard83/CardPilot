@@ -271,6 +271,56 @@ test("sold-comps service retries a broad discovery query and caches in memory", 
   assert.equal(calls.length, 4);
 });
 
+test("sold-comps service retries a focused Pokémon discovery query", async () => {
+  const pokemonFields = {
+    category: "Pokémon",
+    player: null,
+    character: "Charmander",
+    sport: null,
+    team: null,
+    year: null,
+    manufacturer: "Nintendo",
+    product: "Pokémon",
+    brand: "Pokémon",
+    setOrInsert: null,
+    cardNumber: "038",
+    language: null,
+    rarity: null,
+    raritySymbol: "Star",
+    finish: null,
+    promo: true,
+    rookieStatus: null,
+    parallel: null,
+    serialNumber: null,
+    autograph: false,
+    memorabilia: false,
+    imageVariation: null,
+  };
+  const calls = [];
+  const service = new SoldCompsService({
+    cardApiClient: {
+      async searchSales(options) {
+        calls.push(options.query);
+        return result(
+          options.query === "Pokemon Charmander 038 Promo"
+            ? [
+                sale("pokemon-1", 7, { title: "Pokemon Charmander 038 Mega Evolution Promo", category: "pokemon" }),
+                sale("pokemon-2", 9, { title: "Pokemon Charmander 038 Mega Evolution Promo", category: "pokemon" }),
+                sale("pokemon-3", 11, { title: "Pokemon Charmander 038 Mega Evolution Promo", category: "pokemon" }),
+              ]
+            : [],
+        );
+      },
+    },
+  });
+
+  const snapshot = await service.snapshot(pokemonFields, raw);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1], "Pokemon Charmander 038 Promo");
+  assert.equal(snapshot.exactMatchedCount, 3);
+  assert.equal(snapshot.groups[0].medianSalePriceCents, 900);
+});
+
 test("graded sold searches pass the saved company and grade", async () => {
   let options;
   const service = new SoldCompsService({

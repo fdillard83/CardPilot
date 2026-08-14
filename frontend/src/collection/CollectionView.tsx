@@ -1,7 +1,9 @@
 import { useMemo, useRef, useState } from "react";
 import {
+  cardCategoryLabel,
+  cardKindFromFields,
   deriveValuationProfile,
-  fieldDefinitions,
+  fieldDefinitionsFor,
   formatFieldValue,
   valuationFeatureOptions,
   type ActiveMarketSnapshot,
@@ -457,8 +459,8 @@ function ActiveMarketPanel({
         <>
           <div className="market-summary">
             <div>
-              <span>Search used</span>
-              <strong>{snapshot.query}</strong>
+              <span>{snapshot.queriesUsed.length > 1 ? "Searches used" : "Search used"}</span>
+              <strong>{snapshot.queriesUsed.join(" · ")}</strong>
             </div>
             <div className="valuation-meta">
               <span>{snapshot.exactMatchedCount} exact matches</span>
@@ -686,8 +688,8 @@ function SoldCompsPanel({
         <>
           <div className="market-summary sold-summary">
             <div>
-              <span>Search used</span>
-              <strong>{snapshot.query}</strong>
+              <span>{snapshot.queriesUsed.length > 1 ? "Searches used" : "Search used"}</span>
+              <strong>{snapshot.queriesUsed.join(" · ")}</strong>
             </div>
             <div className="valuation-meta">
               <span>{snapshot.conditionProfile.label}</span>
@@ -851,7 +853,7 @@ export function CollectionView({
   onScanCard: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [sport, setSport] = useState("all");
+  const [category, setCategory] = useState("all");
   const [filter, setFilter] = useState<CollectionFilter>("all");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<FieldKey, FieldValue> | null>(null);
@@ -903,14 +905,10 @@ export function CollectionView({
     null,
   );
 
-  const sports = useMemo(
+  const categories = useMemo(
     () =>
       Array.from(
-        new Set(
-          cards
-            .map((card) => card.fields.sport)
-            .filter((value): value is string => typeof value === "string"),
-        ),
+        new Set(cards.map((card) => cardCategoryLabel(card.fields))),
       ).sort(),
     [cards],
   );
@@ -943,10 +941,10 @@ export function CollectionView({
     return cards.filter(
       (card) =>
         (!normalizedQuery || searchableText(card).includes(normalizedQuery)) &&
-        (sport === "all" || card.fields.sport === sport) &&
+        (category === "all" || cardCategoryLabel(card.fields) === category) &&
         matchesFilter(card, filter),
     );
-  }, [cards, filter, query, sport]);
+  }, [cards, category, filter, query]);
 
   const closeValuationPanel = () => {
     valuationRequestIdRef.current += 1;
@@ -1655,8 +1653,8 @@ export function CollectionView({
           <span className="step-label">My Collection</span>
           <h1 id="collection-title">Your cards, ready when you are.</h1>
           <p>
-            Search confirmed details, review card photos, and keep numbered,
-            rookie, and autograph cards easy to find.
+            Search confirmed details, review card photos, and manage sports and
+            Pokémon cards in one collection.
           </p>
         </div>
         <div className="collection-heading-actions">
@@ -1721,15 +1719,15 @@ export function CollectionView({
           <input
             type="search"
             value={query}
-            placeholder="Player, year, set, card number..."
+            placeholder="Player, Pokémon, year, set, card number..."
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
         <label>
-          <span>Sport</span>
-          <select value={sport} onChange={(event) => setSport(event.target.value)}>
-            <option value="all">All sports</option>
-            {sports.map((value) => <option key={value}>{value}</option>)}
+          <span>Category / sport</span>
+          <select value={category} onChange={(event) => setCategory(event.target.value)}>
+            <option value="all">All categories</option>
+            {categories.map((value) => <option key={value}>{value}</option>)}
           </select>
         </label>
         <label>
@@ -1788,10 +1786,45 @@ export function CollectionView({
                   <div className="collection-editor">
                     <h2>Edit saved card</h2>
                     <div className="collection-editor-grid">
-                      {fieldDefinitions.map((definition) => (
+                      {fieldDefinitionsFor(draft).map((definition) => (
                         <label key={definition.key}>
                           <span>{definition.label}</span>
-                          {definition.kind === "boolean" ? (
+                          {definition.key === "category" ? (
+                            <select
+                              value={String(draft.category ?? "")}
+                              onChange={(event) =>
+                                setDraft({
+                                  ...draft,
+                                  category: event.target.value || null,
+                                  ...(event.target.value === "Pokémon"
+                                    ? {
+                                        player: null,
+                                        sport: null,
+                                        team: null,
+                                        rookieStatus: null,
+                                        serialNumber: null,
+                                        autograph: null,
+                                        memorabilia: null,
+                                        imageVariation: null,
+                                      }
+                                    : event.target.value === "Sports"
+                                      ? {
+                                          character: null,
+                                          language: null,
+                                          rarity: null,
+                                          raritySymbol: null,
+                                          finish: null,
+                                          promo: null,
+                                        }
+                                      : {}),
+                                })
+                              }
+                            >
+                              <option value="">Unknown</option>
+                              <option value="Sports">Sports</option>
+                              <option value="Pokémon">Pokémon</option>
+                            </select>
+                          ) : definition.kind === "boolean" ? (
                             <select
                               value={draft[definition.key] === null ? "unknown" : String(draft[definition.key])}
                               onChange={(event) =>
@@ -1916,7 +1949,7 @@ export function CollectionView({
                         )}
                       </section>
                     )}
-                    {valuationDraft && (
+                    {valuationDraft && cardKindFromFields(draft) !== "pokemon" && (
                       <section
                         className="valuation-profile-editor"
                         aria-labelledby={`valuation-profile-${card.collectionId}`}
@@ -1976,7 +2009,7 @@ export function CollectionView({
                 ) : (
                   <div className="collection-card-body">
                     <div>
-                      <span>{card.fields.sport ?? "Sports card"}</span>
+                      <span>{cardCategoryLabel(card.fields)}</span>
                       <h2>{card.title}</h2>
                     </div>
                     {card.confirmedValuation ? (
@@ -2016,10 +2049,24 @@ export function CollectionView({
                       </div>
                     )}
                     <dl>
-                      <div><dt>Card number</dt><dd>{formatFieldValue(card.fields.cardNumber)}</dd></div>
-                      <div><dt>Parallel</dt><dd>{formatFieldValue(card.fields.parallel)}</dd></div>
-                      <div><dt>Numbered card</dt><dd>{card.fields.serialNumber ? "Yes" : "No"}</dd></div>
-                      <div><dt>Serial</dt><dd>{formatFieldValue(card.fields.serialNumber)}</dd></div>
+                      {cardKindFromFields(card.fields) === "pokemon" ? (
+                        <>
+                          <div><dt>Pokémon</dt><dd>{formatFieldValue(card.fields.character)}</dd></div>
+                          <div><dt>Set</dt><dd>{formatFieldValue(card.fields.setOrInsert)}</dd></div>
+                          <div><dt>Collector number</dt><dd>{formatFieldValue(card.fields.cardNumber)}</dd></div>
+                          <div><dt>Rarity</dt><dd>{formatFieldValue(card.fields.rarity)}</dd></div>
+                          <div><dt>Rarity symbol</dt><dd>{formatFieldValue(card.fields.raritySymbol)}</dd></div>
+                          <div><dt>Finish</dt><dd>{formatFieldValue(card.fields.finish)}</dd></div>
+                          <div><dt>Variant</dt><dd>{formatFieldValue(card.fields.parallel)}</dd></div>
+                        </>
+                      ) : (
+                        <>
+                          <div><dt>Card number</dt><dd>{formatFieldValue(card.fields.cardNumber)}</dd></div>
+                          <div><dt>Parallel</dt><dd>{formatFieldValue(card.fields.parallel)}</dd></div>
+                          <div><dt>Numbered card</dt><dd>{card.fields.serialNumber ? "Yes" : "No"}</dd></div>
+                          <div><dt>Serial</dt><dd>{formatFieldValue(card.fields.serialNumber)}</dd></div>
+                        </>
+                      )}
                       <div>
                         <dt>Condition</dt>
                         <dd>
@@ -2028,12 +2075,16 @@ export function CollectionView({
                             : "Raw / ungraded"}
                         </dd>
                       </div>
-                      <div>
-                        <dt>Feature profile</dt>
-                        <dd>{featureProfileLabel(card.valuationProfile)}</dd>
-                      </div>
+                      {cardKindFromFields(card.fields) !== "pokemon" && (
+                        <div>
+                          <dt>Feature profile</dt>
+                          <dd>{featureProfileLabel(card.valuationProfile)}</dd>
+                        </div>
+                      )}
                     </dl>
                     <div className="collection-card-flags">
+                      {card.fields.promo === true && <span>Promo</span>}
+                      {card.fields.language && <span>{card.fields.language}</span>}
                       {card.fields.rookieStatus === true && <span>Rookie</span>}
                       {card.fields.autograph === true && <span>Autograph</span>}
                       {card.fields.memorabilia === true && <span>Memorabilia</span>}

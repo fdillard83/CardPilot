@@ -7,6 +7,7 @@ const confidenceParts = [
 ];
 
 function fieldScore(field) {
+  if (!field) return 0;
   if (field.value === null) return 0;
   if (field.inferenceSource === "candidate") return Math.min(field.confidence, 0.55);
   if (field.inferenceSource === "catalog") return Math.min(field.confidence, 0.68);
@@ -19,16 +20,42 @@ export function calculateOverallConfidence({
   missingEvidence,
   candidateMatches,
 }) {
-  if (status === "not_sports_card") return 0;
+  if (status === "not_sports_card" || status === "not_trading_card") return 0;
+
+  const pokemon =
+    /pok(?:é|e)mon/i.test(fields.category?.value ?? "") ||
+    fields.character?.value !== null && fields.character?.value !== undefined;
 
   const producer =
     fieldScore(fields.manufacturer) > fieldScore(fields.brand)
       ? fields.manufacturer
       : fields.brand;
-  const parts = [
-    ...confidenceParts,
-    { field: "producer", weight: 0.9, result: producer },
-  ];
+  const parts = pokemon
+    ? [
+        { field: "character", weight: 1.8 },
+        { field: "setOrInsert", weight: 1.4 },
+        { field: "cardNumber", weight: 1.8 },
+        { field: "rarity", weight: 0.9 },
+        { field: "finish", weight: 0.8 },
+        { field: "year", weight: 0.7 },
+        { field: "producer", weight: 0.5, result: producer },
+      ]
+    : [
+        ...confidenceParts,
+        { field: "producer", weight: 0.9, result: producer },
+      ];
+
+  if (
+    pokemon &&
+    (Boolean(fields.raritySymbol?.value) ||
+      missingEvidence.some((item) => item.field === "raritySymbol"))
+  ) {
+    parts.push({
+      field: "raritySymbol",
+      weight: 0.7,
+      result: fields.raritySymbol,
+    });
+  }
 
   if (
     fields.parallel.value !== null ||
@@ -47,8 +74,18 @@ export function calculateOverallConfidence({
 
   let overall = totalWeight > 0 ? weightedConfidence / totalWeight : 0;
   const bestCandidate = candidateMatches[0];
+  const coreFields = pokemon
+    ? [
+        "character",
+        "setOrInsert",
+        "cardNumber",
+        "rarity",
+        "raritySymbol",
+        "finish",
+      ]
+    : ["player", "year", "product", "setOrInsert", "cardNumber"];
   const coreConflicts = bestCandidate?.conflictingFields.filter((field) =>
-    ["player", "year", "product", "setOrInsert", "cardNumber"].includes(field),
+    coreFields.includes(field),
   );
 
   if (coreConflicts?.length) overall = Math.min(overall, 0.79);
@@ -60,21 +97,33 @@ export function calculateOverallConfidence({
   if (highestMissingGain >= 0.15) overall = Math.min(overall, 0.89);
   else if (highestMissingGain >= 0.08) overall = Math.min(overall, 0.94);
 
-  const visibleCoreCount = [
-    fields.player,
-    fields.year,
-    producer,
-    fields.product,
-    fields.setOrInsert,
-    fields.cardNumber,
-  ].filter(
+  const visibleCoreCount = (pokemon
+    ? [
+        fields.character,
+        fields.setOrInsert,
+        fields.cardNumber,
+        fields.rarity,
+        fields.raritySymbol,
+        fields.finish,
+        producer,
+      ]
+    : [
+        fields.player,
+        fields.year,
+        producer,
+        fields.product,
+        fields.setOrInsert,
+        fields.cardNumber,
+      ]).filter(
     (field) =>
-      field.value !== null &&
+      field?.value !== null &&
+      field?.value !== undefined &&
       field.inferenceSource !== "candidate" &&
       field.inferenceSource !== "catalog",
   ).length;
 
-  if (fields.player.value === null) overall = Math.min(overall, 0.7);
+  const identity = pokemon ? fields.character : fields.player;
+  if (!identity || identity.value === null) overall = Math.min(overall, 0.7);
   if (visibleCoreCount < 3) overall = Math.min(overall, 0.79);
   else if (visibleCoreCount < 5) overall = Math.min(overall, 0.94);
 

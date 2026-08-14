@@ -34,12 +34,12 @@ export function evaluateTrust(
   const reasons = [];
   const blockers = [];
 
-  if (status === "not_sports_card") {
+  if (status === "not_sports_card" || status === "not_trading_card") {
     return {
       action: "review",
       reviewRequired: true,
       reviewRequirement: "full_review",
-      reasons: ["The image was not confirmed as a sports card."],
+      reasons: ["The image was not confirmed as a supported trading card."],
       blockers: ["No card identity can be accepted."],
     };
   }
@@ -53,6 +53,10 @@ export function evaluateTrust(
     "autograph",
     "memorabilia",
     "imageVariation",
+    "rarity",
+    "raritySymbol",
+    "finish",
+    "promo",
   ]);
   for (const missing of missingEvidence) {
     if (
@@ -139,11 +143,18 @@ export function getBackPhotoGuidance(
   }
 
   const materialBackPhotoFields = new Set([
+    "category",
+    "character",
     "year",
     "manufacturer",
     "product",
     "setOrInsert",
     "cardNumber",
+    "language",
+    "rarity",
+    "raritySymbol",
+    "finish",
+    "promo",
     "parallel",
     "serialNumber",
     "autograph",

@@ -11,6 +11,10 @@ import {
   valuationFeatureTypes,
 } from "./valuation/variant-adjustment.mjs";
 import { valuationMethods } from "./valuation/recommendation.mjs";
+import {
+  cardIdentity,
+  isPokemonCard,
+} from "./card-category.mjs";
 
 const imageDataUrl = z
   .string()
@@ -108,7 +112,13 @@ function gradingFromRecord(record) {
 
 function valuationProfileFromRecord(record) {
   const parsed = ValuationProfileSchema.safeParse(record.valuationProfile);
-  return parsed.success ? parsed.data : deriveValuationProfile(record.fields);
+  return parsed.success
+    ? parsed.data
+    : deriveValuationProfile(fieldsFromRecord(record));
+}
+
+function fieldsFromRecord(record) {
+  return CandidateValuesSchema.parse(record.fields);
 }
 
 function confirmedValuationFromRecord(record) {
@@ -117,8 +127,21 @@ function confirmedValuationFromRecord(record) {
 }
 
 function titleFromFields(fields) {
+  const identity = cardIdentity(fields);
+  if (isPokemonCard(fields)) {
+    return (
+      [
+        fields.year,
+        identity,
+        fields.setOrInsert ?? fields.product,
+        fields.cardNumber ? `#${fields.cardNumber}` : null,
+      ]
+        .filter(Boolean)
+        .join(" ") || "Saved Pokémon card"
+    );
+  }
   return (
-    [fields.year, fields.player, fields.setOrInsert ?? fields.product]
+    [fields.year, identity, fields.setOrInsert ?? fields.product]
       .filter(Boolean)
       .join(" ") || "Saved sports card"
   );
@@ -140,11 +163,12 @@ function decodeImage(dataUrl) {
 }
 
 function publicRecord(record) {
+  const fields = fieldsFromRecord(record);
   return {
     collectionId: record.collectionId,
     identificationId: record.identificationId,
     title: record.title,
-    fields: record.fields,
+    fields,
     overallConfidence: record.overallConfidence,
     decision: record.decision,
     ebayReference: record.ebayReference,

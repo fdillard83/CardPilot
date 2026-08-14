@@ -2,6 +2,20 @@ const confidenceRank = Object.freeze({ low: 1, medium: 2, high: 3 });
 const activeMarketWeight = 0.6;
 const completedSalesWeight = 0.4;
 
+export function roundRecommendedValueCents(amountCents) {
+  if (!Number.isInteger(amountCents) || amountCents < 0) {
+    throw new TypeError("Recommended value must be a non-negative cent amount.");
+  }
+  if (amountCents === 0) return 0;
+
+  const wholeDollars = Math.floor(amountCents / 100);
+  const cents = amountCents % 100;
+  if (cents <= 25) return wholeDollars * 100 + 25;
+  if (cents <= 50) return wholeDollars * 100 + 50;
+  if (cents <= 95) return wholeDollars * 100 + 95;
+  return (wholeDollars + 1) * 100 + 25;
+}
+
 export const valuationMethods = Object.freeze([
   "blended_exact_market",
   "blended_broader_market",
@@ -317,6 +331,23 @@ function activeReference(snapshot, grading) {
     : null;
 }
 
+function applyRecommendedPricePoint(recommendation) {
+  if (!recommendation) return null;
+
+  const originalAmountCents = recommendation.amountCents;
+  const roundedAmountCents = roundRecommendedValueCents(originalAmountCents);
+  return {
+    ...recommendation,
+    amountCents: roundedAmountCents,
+    pricePointAdjustment: {
+      originalAmountCents,
+      roundedAmountCents,
+      applied: roundedAmountCents !== originalAmountCents,
+      rule: "next_25_50_95",
+    },
+  };
+}
+
 export function buildValuationRecommendation({
   soldSnapshot = null,
   activeSnapshot = null,
@@ -401,6 +432,8 @@ export function buildValuationRecommendation({
     );
   }
 
+  recommendation = applyRecommendedPricePoint(recommendation);
+
   return {
     schemaVersion: "1.0",
     kind: "card_valuation_recommendation",
@@ -422,7 +455,7 @@ export function buildValuationRecommendation({
     },
     activeAskingReference: activeReference(activeSnapshot, grading),
     disclaimer:
-      "CardPilot estimates are decision support, not appraisals or guaranteed sale prices. Condition, eye appeal, player demand, fees, and market timing can materially change value.",
+      "CardPilot estimates are decision support, not appraisals or guaranteed sale prices. Condition, eye appeal, collector demand, fees, and market timing can materially change value.",
   };
 }
 

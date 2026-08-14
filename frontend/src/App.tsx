@@ -8,7 +8,10 @@ import {
 } from "./imaging/card-photo";
 import { ConfirmationEditor } from "./identification/ConfirmationEditor";
 import {
+  cardKindFromFields,
   fieldDefinitions,
+  fieldDefinitionsFor,
+  fieldLabelFor,
   formatFieldValue,
   type CardIdentification,
   type Correction,
@@ -30,6 +33,19 @@ const SUPPORTED_IMAGE_TYPES = new Set([
   "image/webp",
   "image/gif",
 ]);
+
+function isUnsupportedIdentification(identification: CardIdentification) {
+  return (
+    identification.status === "not_sports_card" ||
+    identification.status === "not_trading_card"
+  );
+}
+
+function identificationValues(identification: CardIdentification) {
+  return Object.fromEntries(
+    fieldDefinitions.map(({ key }) => [key, identification.fields[key].value]),
+  ) as Record<FieldKey, FieldValue>;
+}
 
 function CameraIcon() {
   return (
@@ -127,6 +143,7 @@ function EbayMatchCard({
   onSelect,
   onConfirm,
   onReview,
+  isPokemon,
 }: {
   candidate: EbayImageSearchCandidate;
   isSelected: boolean;
@@ -140,6 +157,7 @@ function EbayMatchCard({
   onSelect: () => void;
   onConfirm: () => void;
   onReview: () => void;
+  isPokemon: boolean;
 }) {
   const suggestionCount = Object.keys(suggestions).length;
 
@@ -178,23 +196,40 @@ function EbayMatchCard({
               <>
                 <small>CardPilot can use these listing details:</small>
                 <div className="ebay-suggestions">
+                  {suggestions.character && (
+                    <span>Pokémon: {suggestions.character}</span>
+                  )}
+                  {suggestions.setOrInsert && (
+                    <span>Set: {suggestions.setOrInsert}</span>
+                  )}
                   {suggestions.cardNumber && (
-                    <span>Card number: {suggestions.cardNumber}</span>
+                    <span>
+                      {isPokemon ? "Collector number" : "Card number"}: {suggestions.cardNumber}
+                    </span>
                   )}
                   {suggestions.year && <span>Year: {suggestions.year}</span>}
                   {suggestions.parallel && (
-                    <span>Parallel: {suggestions.parallel}</span>
+                    <span>{isPokemon ? "Variant" : "Parallel"}: {suggestions.parallel}</span>
                   )}
                   {suggestions.serialNumber && (
                     <span>Print run: {suggestions.serialNumber}</span>
                   )}
+                  {suggestions.language && (
+                    <span>Language: {suggestions.language}</span>
+                  )}
+                  {suggestions.rarity && (
+                    <span>Rarity: {suggestions.rarity}</span>
+                  )}
+                  {suggestions.finish && (
+                    <span>Finish: {suggestions.finish}</span>
+                  )}
+                  {suggestions.promo === true && <span>Promo card: Yes</span>}
                 </div>
               </>
             ) : (
               <small>
-                This listing does not include extra year, card-number,
-                parallel, or print-run details. You can still confirm the visual
-                match.
+                This listing does not include extra identity or variant details.
+                You can still confirm the visual match.
               </small>
             )}
 
@@ -274,8 +309,8 @@ function FieldCard({
   return (
     <div className="detail-item">
       <div className="detail-label-row">
-        <dt>{definition.label}</dt>
-        <button type="button" onClick={onEdit} aria-label={`Edit ${definition.label}`}>
+        <dt>{fieldLabelFor(fieldKey, identificationValues(identification))}</dt>
+        <button type="button" onClick={onEdit} aria-label={`Edit ${fieldLabelFor(fieldKey, identificationValues(identification))}`}>
           Edit
         </button>
       </div>
@@ -605,7 +640,7 @@ function App() {
       originalIdentificationRef.current = payload.identification;
       setIdentification(payload.identification);
       setResolution(null);
-      if (payload.identification.status === "not_sports_card") {
+      if (isUnsupportedIdentification(payload.identification)) {
         ebayRequestIdRef.current += 1;
         setEbaySearch(null);
         setIsSearchingEbay(false);
@@ -810,8 +845,8 @@ function App() {
     cardIdentification: CardIdentification,
     ebayCandidateId: string | null = confirmedEbayCandidateId,
   ) => {
-    if (cardIdentification.status === "not_sports_card") {
-      throw new Error("Confirm a sports card identification before adding it.");
+    if (isUnsupportedIdentification(cardIdentification)) {
+      throw new Error("Confirm a supported trading card before adding it.");
     }
     if (!frontFile) {
       throw new Error("Choose a card photo before adding it to your collection.");
@@ -908,7 +943,7 @@ function App() {
   };
 
   const confirmCardAndCollect = async () => {
-    if (!identification || identification.status === "not_sports_card") return;
+    if (!identification || isUnsupportedIdentification(identification)) return;
     setResolution("confirmed");
     try {
       await saveIdentificationToCollection(identification);
@@ -960,18 +995,31 @@ function App() {
         : "low"
     : "low";
 
+  const currentFieldValues = identification
+    ? identificationValues(identification)
+    : null;
+  const currentCardKind = currentFieldValues
+    ? cardKindFromFields(currentFieldValues)
+    : "unknown";
+  const isPokemon = currentCardKind === "pokemon";
+  const visibleFieldDefinitions = currentFieldValues
+    ? fieldDefinitionsFor(currentFieldValues)
+    : [];
+
   const resultTitle = identification
-    ? identification.status === "not_sports_card"
-      ? "Sports card not confirmed"
+    ? isUnsupportedIdentification(identification)
+      ? "Trading card not confirmed"
       : [
           identification.fields.year.value,
           identification.fields.product.value ??
             identification.fields.brand.value ??
             identification.fields.manufacturer.value,
-          identification.fields.player.value,
+          isPokemon
+            ? identification.fields.character.value
+            : identification.fields.player.value,
         ]
           .filter(Boolean)
-          .join(" ") || "Sports card identified"
+          .join(" ") || "Trading card identified"
     : "";
 
   const decisionLabel = identification
@@ -991,17 +1039,33 @@ function App() {
     : "";
 
   const unresolvedDetailLabels = identification
-    ? [
-        identification.fields.cardNumber.value === null ? "card number" : null,
-        identification.fields.parallel.value === null ? "parallel" : null,
-        isPrintRunOnly(identification.fields.serialNumber.value)
-          ? "exact serial number"
-          : null,
-      ].filter((value): value is string => Boolean(value))
+    ? (isPokemon
+        ? [
+            identification.fields.cardNumber.value === null
+              ? "collector number"
+              : null,
+            identification.fields.setOrInsert.value === null ? "set" : null,
+          ]
+        : [
+            identification.fields.cardNumber.value === null
+              ? "card number"
+              : null,
+            identification.fields.parallel.value === null ? "parallel" : null,
+            isPrintRunOnly(identification.fields.serialNumber.value)
+              ? "exact serial number"
+              : null,
+          ]
+      ).filter((value): value is string => Boolean(value))
     : [];
   const ebaySuggestedValues: Partial<Record<FieldKey, FieldValue>> = {};
   if (selectedEbayDetails?.suggestions.year) {
     ebaySuggestedValues.year = selectedEbayDetails.suggestions.year;
+  }
+  if (selectedEbayDetails?.suggestions.character) {
+    ebaySuggestedValues.character = selectedEbayDetails.suggestions.character;
+  }
+  if (selectedEbayDetails?.suggestions.setOrInsert) {
+    ebaySuggestedValues.setOrInsert = selectedEbayDetails.suggestions.setOrInsert;
   }
   if (selectedEbayDetails?.suggestions.cardNumber) {
     ebaySuggestedValues.cardNumber =
@@ -1017,9 +1081,21 @@ function App() {
     ebaySuggestedValues.serialNumber =
       selectedEbayDetails.suggestions.serialNumber;
   }
+  if (selectedEbayDetails?.suggestions.language) {
+    ebaySuggestedValues.language = selectedEbayDetails.suggestions.language;
+  }
+  if (selectedEbayDetails?.suggestions.rarity) {
+    ebaySuggestedValues.rarity = selectedEbayDetails.suggestions.rarity;
+  }
+  if (selectedEbayDetails?.suggestions.finish) {
+    ebaySuggestedValues.finish = selectedEbayDetails.suggestions.finish;
+  }
+  if (selectedEbayDetails?.suggestions.promo === true) {
+    ebaySuggestedValues.promo = true;
+  }
   const confirmedEbayUpdatedFieldLabels = confirmedEbayUpdatedFields.map(
     (key) =>
-      fieldDefinitions.find((definition) => definition.key === key)?.label ?? key,
+      fieldLabelFor(key, currentFieldValues ?? {}),
   );
 
   const openEditor = (
@@ -1120,7 +1196,7 @@ function App() {
           <div className="hero-copy">
             <div className="eyebrow">
               <span className="eyebrow-icon"><SparkIcon /></span>
-              Evidence-first sports card ID
+              Evidence-first sports and Pokémon card ID
             </div>
             <h1>Know what's in the sleeve.</h1>
             <p className="hero-lede">
@@ -1156,13 +1232,13 @@ function App() {
               ) : (
                 <div className="photo-stage">
                   <div className="primary-photo">
-                    <img src={frontPreview} alt="Selected front of sports card" />
+                    <img src={frontPreview} alt="Selected front of trading card" />
                     <span className="photo-label">Front</span>
                     <button className="change-photo" type="button" disabled={isIdentifying} onClick={() => openPicker("front")}>Change</button>
                   </div>
                   {backPreview ? (
                     <div className="back-photo">
-                      <img src={backPreview} alt="Selected back of sports card" />
+                      <img src={backPreview} alt="Selected back of trading card" />
                       <span>Optional back added</span>
                       <button type="button" disabled={isIdentifying} onClick={removeBackPhoto}>Remove</button>
                     </div>
@@ -1252,8 +1328,8 @@ function App() {
             ) : (
               <div className="result-grid">
                 <dl className="details-grid">
-                  {fieldDefinitions.flatMap(({ key }) => [
-                    ...(key === "serialNumber"
+                  {visibleFieldDefinitions.flatMap(({ key }) => [
+                    ...(key === "serialNumber" && !isPokemon
                       ? [
                           <NumberedCardField
                             key="numberedCard"
@@ -1363,7 +1439,7 @@ function App() {
               </div>
             )}
 
-            {!isEditing && identification.status !== "not_sports_card" && (
+            {!isEditing && !isUnsupportedIdentification(identification) && (
               <section
                 className="ebay-results"
                 aria-labelledby="ebay-results-title"
@@ -1436,6 +1512,7 @@ function App() {
                           onSelect={() => void selectEbayCandidate(candidate)}
                           onConfirm={() => void confirmSelectedEbayMatch()}
                           onReview={() => openEditor()}
+                          isPokemon={isPokemon}
                         />
                       ))}
                     </div>
@@ -1465,7 +1542,7 @@ function App() {
                 {identification.backPhoto.suggested && !backFile && (
                   <button className="secondary-button" type="button" onClick={() => openPicker("back")}>Take back photo</button>
                 )}
-                {identification.status !== "not_sports_card" && (
+                {!isUnsupportedIdentification(identification) && (
                   <button
                     className="secondary-button"
                     type="button"

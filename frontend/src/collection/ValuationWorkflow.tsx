@@ -124,6 +124,15 @@ export function CardValuationPanel({
                     recommendation.currency,
                   )}
                 </small>
+                {recommendation.pricePointAdjustment.applied && (
+                  <small>
+                    Rounded up from {formatPrice(
+                      recommendation.pricePointAdjustment.originalAmountCents,
+                      recommendation.currency,
+                    )} to the next CardPilot price point ending in .25, .50,
+                    or .95.
+                  </small>
+                )}
               </div>
               <div className="card-value-basis">
                 <span

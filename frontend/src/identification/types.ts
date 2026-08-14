@@ -1,5 +1,7 @@
 export const fieldDefinitions = [
+  { key: "category", label: "Card category", kind: "string" },
   { key: "player", label: "Player", kind: "string" },
+  { key: "character", label: "Pokémon", kind: "string" },
   { key: "sport", label: "Sport", kind: "string" },
   { key: "team", label: "Team", kind: "string" },
   { key: "year", label: "Year / season", kind: "string" },
@@ -8,6 +10,11 @@ export const fieldDefinitions = [
   { key: "brand", label: "Brand", kind: "string" },
   { key: "setOrInsert", label: "Set / insert", kind: "string" },
   { key: "cardNumber", label: "Card number", kind: "string" },
+  { key: "language", label: "Language", kind: "string" },
+  { key: "rarity", label: "Rarity", kind: "string" },
+  { key: "raritySymbol", label: "Rarity symbol", kind: "string" },
+  { key: "finish", label: "Finish", kind: "string" },
+  { key: "promo", label: "Promo card", kind: "boolean" },
   { key: "rookieStatus", label: "Rookie status", kind: "boolean" },
   { key: "parallel", label: "Parallel", kind: "string" },
   {
@@ -23,6 +30,92 @@ export const fieldDefinitions = [
 export type FieldKey = (typeof fieldDefinitions)[number]["key"];
 export type FieldValue = string | boolean | null;
 export type DecisionAction = "auto_accept" | "confirm" | "review";
+
+export type CardKind = "sports" | "pokemon" | "unknown";
+
+function cleanFieldText(value: FieldValue | undefined) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function cardKindFromFields(
+  fields: Partial<Record<FieldKey, FieldValue>>,
+): CardKind {
+  const category = cleanFieldText(fields.category).toLowerCase();
+  if (category.includes("pokémon") || category.includes("pokemon")) {
+    return "pokemon";
+  }
+  if (category.includes("sport")) return "sports";
+  if (cleanFieldText(fields.character)) return "pokemon";
+  if (cleanFieldText(fields.player) || cleanFieldText(fields.sport)) {
+    return "sports";
+  }
+  return "unknown";
+}
+
+const pokemonHiddenFields = new Set<FieldKey>([
+  "player",
+  "sport",
+  "team",
+  "rookieStatus",
+  "serialNumber",
+  "autograph",
+  "memorabilia",
+  "imageVariation",
+]);
+const sportsHiddenFields = new Set<FieldKey>([
+  "character",
+  "language",
+  "rarity",
+  "raritySymbol",
+  "finish",
+  "promo",
+]);
+
+const pokemonFieldLabels: Partial<Record<FieldKey, string>> = {
+  manufacturer: "Publisher",
+  product: "Expansion / product",
+  brand: "Game / brand",
+  setOrInsert: "Set",
+  cardNumber: "Collector number",
+  parallel: "Variant",
+};
+
+export function fieldDefinitionsFor(
+  fields: Partial<Record<FieldKey, FieldValue>>,
+) {
+  const kind = cardKindFromFields(fields);
+  return fieldDefinitions
+    .filter(({ key }) => {
+      if (kind === "pokemon") return !pokemonHiddenFields.has(key);
+      if (kind === "sports") return !sportsHiddenFields.has(key);
+      return true;
+    })
+    .map((definition) => ({
+      ...definition,
+      label:
+        kind === "pokemon"
+          ? pokemonFieldLabels[definition.key] ?? definition.label
+          : definition.label,
+    }));
+}
+
+export function fieldLabelFor(
+  key: FieldKey,
+  fields: Partial<Record<FieldKey, FieldValue>>,
+) {
+  return (
+    fieldDefinitionsFor(fields).find((definition) => definition.key === key)
+      ?.label ?? fieldDefinitions.find((definition) => definition.key === key)?.label ?? key
+  );
+}
+
+export function cardCategoryLabel(
+  fields: Partial<Record<FieldKey, FieldValue>>,
+) {
+  const kind = cardKindFromFields(fields);
+  if (kind === "pokemon") return "Pokémon";
+  return cleanFieldText(fields.sport) || cleanFieldText(fields.category) || "Trading card";
+}
 
 export const valuationFeatureOptions = [
   { value: "ordinary", label: "Ordinary non-auto / non-relic" },
@@ -93,7 +186,7 @@ export type IdentificationField = {
 export type CardIdentification = {
   schemaVersion: "1.0";
   identificationId: string;
-  status: "identified" | "partial" | "not_sports_card";
+  status: "identified" | "partial" | "not_sports_card" | "not_trading_card";
   fields: Record<FieldKey, IdentificationField>;
   evidence: Array<{
     id: string;
@@ -197,10 +290,16 @@ export type EbayItemDetails = {
     values: string[];
   }>;
   suggestions: {
+    character: string | null;
+    setOrInsert: string | null;
     year: string | null;
     cardNumber: string | null;
     parallel: string | null;
     serialNumber: string | null;
+    language: string | null;
+    rarity: string | null;
+    finish: string | null;
+    promo: boolean | null;
   };
 };
 
@@ -254,6 +353,7 @@ export type ActiveMarketSnapshot = {
   };
   marketplaceId: string;
   query: string;
+  queriesUsed: string[];
   searchedAt: string;
   candidateCount: number;
   matchedCount: number;
@@ -435,6 +535,12 @@ export type ValuationRecommendationSnapshot = {
     methodLabel: string;
     sampleCount: number;
     rationale: string;
+    pricePointAdjustment: {
+      originalAmountCents: number;
+      roundedAmountCents: number;
+      applied: boolean;
+      rule: "next_25_50_95";
+    };
     warnings: Array<{
       code: "single_sale_active_disagreement";
       activeAmountCents: number;

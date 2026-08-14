@@ -1,7 +1,9 @@
 import { z } from "zod";
 
 export const fieldKeys = [
+  "category",
   "player",
+  "character",
   "sport",
   "team",
   "year",
@@ -10,6 +12,11 @@ export const fieldKeys = [
   "brand",
   "setOrInsert",
   "cardNumber",
+  "language",
+  "rarity",
+  "raritySymbol",
+  "finish",
+  "promo",
   "rookieStatus",
   "parallel",
   "serialNumber",
@@ -23,6 +30,7 @@ export const IdentificationStatusSchema = z.enum([
   "identified",
   "partial",
   "not_sports_card",
+  "not_trading_card",
 ]);
 export const DecisionActionSchema = z.enum([
   "auto_accept",
@@ -54,10 +62,20 @@ const fieldResult = (valueSchema) =>
 
 export const StringFieldResultSchema = fieldResult(z.string());
 export const BooleanFieldResultSchema = fieldResult(z.boolean());
+const unknownStringField = {
+  value: null,
+  confidence: 0,
+  evidenceIds: [],
+  inferenceSource: "unknown",
+  missingEvidence: [],
+};
+const unknownBooleanField = { ...unknownStringField };
 
 export const IdentificationFieldsSchema = z
   .object({
+    category: StringFieldResultSchema.default(unknownStringField),
     player: StringFieldResultSchema,
+    character: StringFieldResultSchema.default(unknownStringField),
     sport: StringFieldResultSchema,
     team: StringFieldResultSchema,
     year: StringFieldResultSchema,
@@ -66,6 +84,11 @@ export const IdentificationFieldsSchema = z
     brand: StringFieldResultSchema,
     setOrInsert: StringFieldResultSchema,
     cardNumber: StringFieldResultSchema,
+    language: StringFieldResultSchema.default(unknownStringField),
+    rarity: StringFieldResultSchema.default(unknownStringField),
+    raritySymbol: StringFieldResultSchema.default(unknownStringField),
+    finish: StringFieldResultSchema.default(unknownStringField),
+    promo: BooleanFieldResultSchema.default(unknownBooleanField),
     rookieStatus: BooleanFieldResultSchema,
     parallel: StringFieldResultSchema,
     serialNumber: StringFieldResultSchema,
@@ -107,7 +130,9 @@ export const MissingEvidenceSchema = z
   .strict();
 
 const candidateValuesShape = {
+  category: z.string().nullable().default(null),
   player: z.string().nullable(),
+  character: z.string().nullable().default(null),
   sport: z.string().nullable(),
   team: z.string().nullable(),
   year: z.string().nullable(),
@@ -116,6 +141,11 @@ const candidateValuesShape = {
   brand: z.string().nullable(),
   setOrInsert: z.string().nullable(),
   cardNumber: z.string().nullable(),
+  language: z.string().nullable().default(null),
+  rarity: z.string().nullable().default(null),
+  raritySymbol: z.string().nullable().default(null),
+  finish: z.string().nullable().default(null),
+  promo: z.boolean().nullable().default(null),
   rookieStatus: z.boolean().nullable(),
   parallel: z.string().nullable(),
   serialNumber: z.string().nullable(),
@@ -201,6 +231,7 @@ export const CardIdentificationResultSchema = z
 
 export const scalarValueSchema = z.union([z.string(), z.boolean(), z.null()]);
 const booleanCorrectionFields = new Set([
+  "promo",
   "rookieStatus",
   "autograph",
   "memorabilia",
@@ -304,11 +335,15 @@ export const ModelVisibleMarkSchema = z
     text: z.string().min(1),
     kind: z.enum([
       "player_name",
+      "character_name",
       "team_mark",
       "manufacturer_logo",
       "anniversary_mark",
       "product_title",
       "insert_title",
+      "set_symbol",
+      "rarity_mark",
+      "language_mark",
       "card_number",
       "serial_stamp",
       "copyright_year",
@@ -334,7 +369,17 @@ export const ModelEvidenceExtractionSchema = z
     status: IdentificationStatusSchema,
     fields: z
       .object({
+        category: modelField(z.string()).default({
+          value: null,
+          confidence: 0,
+          observations: [],
+        }),
         player: modelField(z.string()),
+        character: modelField(z.string()).default({
+          value: null,
+          confidence: 0,
+          observations: [],
+        }),
         sport: modelField(z.string()),
         team: modelField(z.string()),
         year: modelField(z.string()),
@@ -343,6 +388,31 @@ export const ModelEvidenceExtractionSchema = z
         brand: modelField(z.string()),
         setOrInsert: modelField(z.string()),
         cardNumber: modelField(z.string()),
+        language: modelField(z.string()).default({
+          value: null,
+          confidence: 0,
+          observations: [],
+        }),
+        rarity: modelField(z.string()).default({
+          value: null,
+          confidence: 0,
+          observations: [],
+        }),
+        raritySymbol: modelField(z.string()).default({
+          value: null,
+          confidence: 0,
+          observations: [],
+        }),
+        finish: modelField(z.string()).default({
+          value: null,
+          confidence: 0,
+          observations: [],
+        }),
+        promo: modelField(z.boolean()).default({
+          value: null,
+          confidence: 0,
+          observations: [],
+        }),
         rookieStatus: modelField(z.boolean()),
         parallel: modelField(z.string()),
         serialNumber: modelField(z.string()),

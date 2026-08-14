@@ -27,6 +27,7 @@ function textMatches(left, right) {
 }
 
 function scoreCatalogRecord(extraction, record) {
+  if (extraction.fields.character?.value) return 0;
   const player = extraction.fields.player.value;
   if (!player || !textMatches(player, record.values.player)) return 0;
 
@@ -113,7 +114,7 @@ export function createProvisionalCandidate(extraction) {
   const label = [
     values.year,
     values.product ?? values.brand ?? values.manufacturer,
-    values.player,
+    values.character ?? values.player,
     values.cardNumber ? `#${values.cardNumber}` : null,
   ]
     .filter(Boolean)
@@ -126,6 +127,6 @@ export function createProvisionalCandidate(extraction) {
     catalogRecordId: null,
     values,
     plausibility: 0.5,
-    basis: "Built from visible evidence because no independent candidate provider result was available.",
+    basis: "Built from visible evidence because no independent checklist result was available.",
   };
 }

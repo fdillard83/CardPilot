@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   ValuationRecommendationService,
   buildValuationRecommendation,
+  roundRecommendedValueCents,
 } from "./recommendation.mjs";
 
 const raw = {
@@ -37,6 +38,17 @@ function activeSnapshot(groups = [], variantEstimates = []) {
     variantEstimates,
   };
 }
+
+test("recommended values round up to CardPilot price points", () => {
+  assert.equal(roundRecommendedValueCents(630), 650);
+  assert.equal(roundRecommendedValueCents(1454), 1495);
+  assert.equal(roundRecommendedValueCents(903), 925);
+  assert.equal(roundRecommendedValueCents(625), 625);
+  assert.equal(roundRecommendedValueCents(650), 650);
+  assert.equal(roundRecommendedValueCents(695), 695);
+  assert.equal(roundRecommendedValueCents(696), 725);
+  assert.equal(roundRecommendedValueCents(0), 0);
+});
 
 test("exact sold and active evidence are blended with more weight on active listings", () => {
   const snapshot = buildValuationRecommendation({
@@ -76,7 +88,13 @@ test("exact sold and active evidence are blended with more weight on active list
   });
 
   assert.equal(snapshot.recommendation.method, "blended_exact_market");
-  assert.equal(snapshot.recommendation.amountCents, 5280);
+  assert.equal(snapshot.recommendation.amountCents, 5295);
+  assert.deepEqual(snapshot.recommendation.pricePointAdjustment, {
+    originalAmountCents: 5280,
+    roundedAmountCents: 5295,
+    applied: true,
+    rule: "next_25_50_95",
+  });
   assert.equal(snapshot.recommendation.confidence, "medium");
   assert.deepEqual(snapshot.recommendation.blend, {
     activeWeight: 0.6,
@@ -109,6 +127,7 @@ test("active asking evidence is a low-confidence fallback when sales are absent"
 
   assert.equal(snapshot.recommendation.method, "exact_active");
   assert.equal(snapshot.recommendation.amountCents, 2750);
+  assert.equal(snapshot.recommendation.pricePointAdjustment.applied, false);
   assert.equal(snapshot.recommendation.confidence, "low");
   assert.equal(snapshot.recommendation.blend, null);
   assert.match(snapshot.recommendation.rationale, /not confirmed sales/i);
@@ -132,7 +151,7 @@ test("completed sales remain available when no active listing evidence exists", 
   });
 
   assert.equal(snapshot.recommendation.method, "exact_sold");
-  assert.equal(snapshot.recommendation.amountCents, 4500);
+  assert.equal(snapshot.recommendation.amountCents, 4525);
   assert.equal(snapshot.recommendation.blend, null);
 });
 
@@ -165,7 +184,7 @@ test("compatible broader evidence is blended but remains low confidence", () => 
   });
 
   assert.equal(snapshot.recommendation.method, "blended_broader_market");
-  assert.equal(snapshot.recommendation.amountCents, 4200);
+  assert.equal(snapshot.recommendation.amountCents, 4225);
   assert.deepEqual(snapshot.recommendation.typicalRange, {
     lowAmountCents: 3700,
     highAmountCents: 4700,
@@ -200,7 +219,7 @@ test("direct exact active evidence outranks a modeled sold variant", () => {
   });
 
   assert.equal(snapshot.recommendation.method, "exact_active");
-  assert.equal(snapshot.recommendation.amountCents, 5517);
+  assert.equal(snapshot.recommendation.amountCents, 5525);
 });
 
 test("a one-sale variant estimate warns when active variant evidence materially disagrees", () => {
@@ -230,7 +249,7 @@ test("a one-sale variant estimate warns when active variant evidence materially 
   });
 
   assert.equal(snapshot.recommendation.method, "blended_variant_market");
-  assert.equal(snapshot.recommendation.amountCents, 8108);
+  assert.equal(snapshot.recommendation.amountCents, 8125);
   assert.deepEqual(snapshot.recommendation.blend, {
     activeWeight: 0.6,
     completedSalesWeight: 0.4,

@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import {
   fieldDefinitions,
+  fieldDefinitionsFor,
   type CardIdentification,
   type FieldKey,
   type FieldValue,
@@ -50,9 +51,38 @@ export function ConfirmationEditor({
   );
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const visibleDefinitions = fieldDefinitionsFor(draft);
 
   const updateValue = (field: FieldKey, value: FieldValue) => {
     setDraft((current) => ({ ...current, [field]: value }));
+  };
+
+  const updateCategory = (value: string | null) => {
+    setDraft((current) => ({
+      ...current,
+      category: value,
+      ...(value === "Pokémon"
+        ? {
+            player: null,
+            sport: null,
+            team: null,
+            rookieStatus: null,
+            serialNumber: null,
+            autograph: null,
+            memorabilia: null,
+            imageVariation: null,
+          }
+        : value === "Sports"
+          ? {
+              character: null,
+              language: null,
+              rarity: null,
+              raritySymbol: null,
+              finish: null,
+              promo: null,
+            }
+          : {}),
+    }));
   };
 
   const submit = async (event: FormEvent) => {
@@ -90,10 +120,21 @@ export function ConfirmationEditor({
       )}
 
       <div className="editor-grid">
-        {fieldDefinitions.map((definition) => (
+        {visibleDefinitions.map((definition) => (
           <label className="editor-field" key={definition.key}>
             <span>{definition.label}</span>
-            {definition.kind === "boolean" ? (
+            {definition.key === "category" ? (
+              <select
+                value={String(draft.category ?? "")}
+                onChange={(event) =>
+                  updateCategory(event.target.value || null)
+                }
+              >
+                <option value="">Unknown</option>
+                <option value="Sports">Sports</option>
+                <option value="Pokémon">Pokémon</option>
+              </select>
+            ) : definition.kind === "boolean" ? (
               <select
                 value={
                   draft[definition.key] === null

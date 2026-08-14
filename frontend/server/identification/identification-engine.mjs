@@ -27,6 +27,10 @@ async function runStage(stages, name, operation) {
   }
 }
 
+function unsupportedStatus(status) {
+  return status === "not_sports_card" || status === "not_trading_card";
+}
+
 export class IdentificationEngine {
   constructor({
     evidenceEngine,
@@ -65,7 +69,7 @@ export class IdentificationEngine {
 
     let candidates = [];
     const candidateStartedAt = performance.now();
-    if (extraction.status !== "not_sports_card") {
+    if (!unsupportedStatus(extraction.status)) {
       try {
         candidates = await this.candidateGenerator.generate(extraction);
         if (candidates.length === 0) {

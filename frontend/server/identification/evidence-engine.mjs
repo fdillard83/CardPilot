@@ -9,7 +9,7 @@ const evidenceExtractionFormat = zodTextFormat(
   "card_evidence_extraction",
 );
 
-const evidencePrompt = `Extract visible evidence from sports-card photographs, then separately propose up to three plausible card candidates. Evidence extraction must finish before candidate generation, and model knowledge must never be reported as visible evidence.
+const evidencePrompt = `Extract visible evidence from trading-card photographs, including sports cards and Pokémon cards, then separately propose up to three plausible card candidates. Evidence extraction must finish before candidate generation, and model knowledge must never be reported as visible evidence.
 
 Rules:
 - Treat pixels as the primary source of truth. Transcribe useful words and digits exactly as printed and say where each observation appears.
@@ -20,6 +20,14 @@ Rules:
 - Compare the full image with every supplied detail crop. The crop is an enlarged view of the same card, not a separate card.
 - Distinguish 75 from 70 and 50 by the actual second-character shape. Never use anniversary arithmetic, a familiar issue year, or a known slogan to decide which digit is printed. If character shape remains ambiguous, list the alternatives and lower confidence.
 - A field may be null. Never invent obscured text, a parallel, rookie designation, autograph, memorabilia feature, image variation, or serial number.
+- Set category to "Sports" for a sports card and "Pokémon" for a Pokémon TCG card. For Pokémon, put the creature name in character, never in player or team. Keep sport, team, and rookieStatus null.
+- For a sports card, put the specific sport in sport using a clear common name such as Baseball, Basketball, Football, Hockey, Soccer, Golf, Tennis, Wrestling, Boxing, Mixed Martial Arts, Racing, Cricket, or Rugby. Do not put the sport name in category; category must remain Sports.
+- For Pokémon cards, use cardNumber for the printed collector number exactly as shown, including a set code or denominator when visible. Carefully inspect both enlarged bottom-corner crops because the small rarity and set marks are materially important to collectors. Record the normalized rarity name in rarity, and separately transcribe the exact visible mark in raritySymbol (for example Circle, Diamond, Black Star, Double Black Star, Single Gold Star, Double Silver Star, Double Gold Star, or Triple Gold Star). Record the surface treatment in finish only when the image supports it.
+- Keep rarity and raritySymbol separate from the set symbol, regulation mark, language mark, promo mark, and collector number. Do not infer rarity from shine, artwork, card number, market value, or general card design. If the mark is absent, obscured, or unclear, leave rarity and raritySymbol null and add user-review missing evidence rather than guessing.
+- Use era-appropriate Pokémon rarity names only when the printed mark supports them. Common can be a circle, Uncommon a diamond, and Rare a star. Modern cards may use multiple black or gold stars for Double Rare, Ultra Rare, Illustration Rare, Special Illustration Rare, and Hyper Rare; preserve the visible star count and color in raritySymbol even when the precise named rarity remains uncertain.
+- On modern Pokémon cards, a lone letter inside an outlined box near the lower-left corner (for example J) is a regulation mark, not a language. Use a separate printed code such as EN, JP, DE, FR, IT, ES, PT, KR, or CN for language; otherwise keep language null.
+- Set promo true only when a promo label, promo set code, stamp, or other strong visible evidence supports it. Use parallel for a named Pokémon variant, not merely for ordinary holo shine.
+- Treat a Pokémon set symbol or printed set code as visible evidence, but do not expand it into a full set name unless that name is printed. A model candidate may propose the set name as an unverified search lead. A set symbol identifies the expansion and must never be reported as raritySymbol.
 - Treat a facsimile signature as printed design, not an autograph.
 - Do not add generic uncertainty for serial numbering, autographs, memorabilia, or image variations when nothing in the image suggests that feature. Add missing evidence for those high-impact fields only when a visible clue makes the feature plausible but unresolved.
 - Confidence measures support in the supplied images only. Clear exact text can be high confidence; design recognition alone cannot.
@@ -27,7 +35,7 @@ Rules:
 - A back photo is optional. Suggest it only as a possible evidence source; never describe it as required.
 - Candidate suggestions are unverified search leads. They must preserve exact numericReadings, return alternatives when the issue is ambiguous, keep unsupported values null, and set catalogRecordId to null because no checklist was queried.
 - A shiny surface alone is not evidence of a named parallel. Candidate plausibility is only a ranking hint, not final confidence.
-- If the image is not a sports trading card, return not_sports_card.
+- If the image is neither a sports card nor a Pokémon trading card, return not_trading_card.
 - Keep observations, candidate bases, and the summary concise.`;
 
 function createUserContent(intake) {

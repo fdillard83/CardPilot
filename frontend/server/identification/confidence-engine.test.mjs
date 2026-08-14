@@ -72,3 +72,26 @@ test("a core candidate conflict caps confidence in the review range", () => {
 
   assert.ok(overall <= 0.79);
 });
+
+test("Pokémon confidence uses character and collector fields instead of player", () => {
+  const fields = completeFields();
+  Object.assign(fields, {
+    category: field("Pokémon"),
+    player: field(null, 0),
+    character: field("Charmander"),
+    sport: field(null, 0),
+    team: field(null, 0),
+    setOrInsert: field("MEP Promo"),
+    cardNumber: field("038"),
+    rarity: field("Promo"),
+    finish: field("Holo"),
+  });
+  const overall = calculateOverallConfidence({
+    status: "identified",
+    fields,
+    missingEvidence: [],
+    candidateMatches: [{ conflictingFields: [] }],
+  });
+
+  assert.ok(overall >= 0.95);
+});

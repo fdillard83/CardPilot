@@ -1,3 +1,13 @@
+import {
+  buildVariantAdjustedEstimates,
+  buildVariantDiscoveryQuery,
+  deriveValuationProfile,
+} from "./variant-adjustment.mjs";
+import {
+  cardIdentity,
+  isPokemonCard,
+} from "../card-category.mjs";
+
 const activeMarketDisclaimer =
   "Active Buy It Now asking prices are not completed sales, appraisals, or guaranteed sale values. Shipping is included only when eBay provides it in search results.";
 
@@ -23,6 +33,7 @@ const parallelWords = new Set([
   "foil",
   "gold",
   "green",
+  "holo",
   "lava",
   "mosaic",
   "negative",
@@ -34,6 +45,7 @@ const parallelWords = new Set([
   "raywave",
   "red",
   "refractor",
+  "reverse",
   "sapphire",
   "sepia",
   "shimmer",
@@ -44,7 +56,7 @@ const parallelWords = new Set([
   "wave",
 ]);
 
-const genericParallelWords = new Set(["foil", "prizm", "refractor"]);
+const genericParallelWords = new Set(["foil", "holo", "prizm", "refractor"]);
 const productVariantWords = new Set([
   "bowman",
   "chrome",
@@ -65,6 +77,26 @@ const productVariantWords = new Set([
 
 function cleanText(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function searchKey(value) {
+  return cleanText(value)
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase();
+}
+
+function pokemonProductTerm(value) {
+  const key = searchKey(value).replace(/[^a-z0-9]+/g, " ").trim();
+  return new Set([
+    "pokemon",
+    "pokemon tcg",
+    "pokemon trading card game",
+    "the pokemon company",
+    "nintendo",
+  ]).has(key)
+    ? ""
+    : value;
 }
 
 function normalizedWords(value) {
@@ -90,6 +122,14 @@ function titleHasWords(title, value) {
   const titleWords = new Set(normalizedWords(title));
   const expected = significantWords(value);
   return expected.length > 0 && expected.every((word) => titleWords.has(word));
+}
+
+function titleHasPromo(title) {
+  return /\bpromo(?:tional)?\b/i.test(cleanText(title));
+}
+
+function variantText(fields) {
+  return [fields.parallel, fields.finish].map(cleanText).filter(Boolean).join(" ");
 }
 
 function titleHasCardNumber(title, cardNumber) {
@@ -175,7 +215,7 @@ function hasBroaderMatchConflict(title, fields) {
   }
 
   const expectedParallelWords = new Set(
-    normalizedWords(fields.parallel).filter((word) => parallelWords.has(word)),
+    normalizedWords(variantText(fields)).filter((word) => parallelWords.has(word)),
   );
   if (expectedParallelWords.size > 0) {
     const conflictingParallel = normalizedWords(title)
@@ -206,24 +246,31 @@ function uniqueParts(parts) {
     (part, index) =>
       part &&
       parts.findIndex(
-        (candidate) => candidate.toLowerCase() === part.toLowerCase(),
+        (candidate) => searchKey(candidate) === searchKey(part),
       ) === index,
   );
 }
 
 export function buildActiveMarketQuery(fields) {
   const printRun = printRunFromSerial(fields.serialNumber);
+  const pokemon = isPokemonCard(fields);
   return uniqueParts(
     [
+      pokemon ? "Pokemon" : "",
+      pokemon ? "" : fields.sport,
       fields.year,
-      fields.player,
-      fields.manufacturer,
-      fields.product,
+      cardIdentity(fields),
+      pokemon ? "" : fields.manufacturer,
+      pokemon ? pokemonProductTerm(fields.product) : fields.product,
       fields.setOrInsert,
       fields.cardNumber
         ? `#${cleanText(fields.cardNumber).replace(/^#/, "")}`
         : "",
       fields.parallel,
+      pokemon ? fields.finish : "",
+      pokemon ? fields.rarity : "",
+      pokemon && fields.promo === true ? "Promo" : "",
+      pokemon ? fields.language : "",
       printRun ? `/${printRun}` : "",
       fields.autograph === true ? "autograph" : "",
       fields.memorabilia === true ? "patch relic" : "",
@@ -233,6 +280,32 @@ export function buildActiveMarketQuery(fields) {
   )
     .join(" ")
     .slice(0, 500);
+}
+
+export function buildPokemonDiscoveryQueries(fields) {
+  if (!isPokemonCard(fields)) return [];
+
+  const identity = cardIdentity(fields);
+  if (!identity) return [];
+  const cardNumber = cleanText(fields.cardNumber).replace(/^#/, "");
+  const promo = fields.promo === true ? "Promo" : "";
+  const variant = cleanText(fields.parallel) || cleanText(fields.finish);
+  const set = cleanText(fields.setOrInsert);
+  const queries = [
+    cardNumber ? ["Pokemon", identity, cardNumber, promo || variant] : null,
+    cardNumber ? ["Pokemon", identity, cardNumber] : null,
+    set ? ["Pokemon", identity, set, promo || variant] : null,
+    !cardNumber && !set
+      ? ["Pokemon", identity, promo || variant]
+      : null,
+  ]
+    .filter(Boolean)
+    .map((parts) => uniqueParts(parts.map(cleanText).filter(Boolean)).join(" "))
+    .filter(Boolean);
+
+  return [...new Set(queries)].filter(
+    (query) => query.toLowerCase() !== buildActiveMarketQuery(fields).toLowerCase(),
+  );
 }
 
 function obviousMismatch(title, fields) {
@@ -261,7 +334,7 @@ function obviousMismatch(title, fields) {
   if (fields.memorabilia === true && !memorabiliaTitle) return true;
   if (fields.memorabilia === false && memorabiliaTitle) return true;
 
-  if (!cleanText(fields.parallel)) {
+  if (!cleanText(variantText(fields))) {
     const titleWords = normalizedWords(title);
     if (titleWords.some((word) => parallelWords.has(word))) return true;
   }
@@ -272,12 +345,16 @@ function evaluateMatch(candidate, fields) {
   const title = candidate.title;
   if (obviousMismatch(title, fields)) return null;
 
+  const pokemon = isPokemonCard(fields);
+  const identity = cardIdentity(fields);
+  const identitySignal = pokemon ? "character" : "player";
+
   const checks = [
     {
-      id: "player",
+      id: identitySignal,
       weight: 5,
-      required: Boolean(cleanText(fields.player)),
-      matched: titleHasWords(title, fields.player),
+      required: Boolean(identity),
+      matched: titleHasWords(title, identity),
     },
     {
       id: "year",
@@ -296,6 +373,30 @@ function evaluateMatch(candidate, fields) {
       weight: 4,
       required: Boolean(cleanText(fields.parallel)),
       matched: titleHasWords(title, fields.parallel),
+    },
+    {
+      id: "finish",
+      weight: 3,
+      required: pokemon && Boolean(cleanText(fields.finish)),
+      matched: titleHasWords(title, fields.finish),
+    },
+    {
+      id: "rarity",
+      weight: 2,
+      required: false,
+      matched: titleHasWords(title, fields.rarity),
+    },
+    {
+      id: "promo",
+      weight: 3,
+      required: pokemon && fields.promo === true,
+      matched: titleHasPromo(title),
+    },
+    {
+      id: "language",
+      weight: 1,
+      required: false,
+      matched: titleHasWords(title, fields.language),
     },
     {
       id: "print_run",
@@ -322,7 +423,9 @@ function evaluateMatch(candidate, fields) {
     (check) =>
       check.required ||
       (check.id === "product" && cleanText(fields.product)) ||
-      (check.id === "set" && cleanText(fields.setOrInsert)),
+      (check.id === "set" && cleanText(fields.setOrInsert)) ||
+      (check.id === "rarity" && cleanText(fields.rarity)) ||
+      (check.id === "language" && cleanText(fields.language)),
   );
 
   if (checks.some((check) => check.required && !check.matched)) return null;
@@ -342,17 +445,20 @@ function evaluateMatch(candidate, fields) {
 
 function evaluateBroaderMatch(candidate, fields) {
   const title = candidate.title;
+  const pokemon = isPokemonCard(fields);
+  const identity = cardIdentity(fields);
+  const identitySignal = pokemon ? "character" : "player";
   if (
     obviousMismatch(title, fields) ||
-    !cleanText(fields.player) ||
-    !titleHasWords(title, fields.player) ||
+    !identity ||
+    !titleHasWords(title, identity) ||
     hasBroaderMatchConflict(title, fields)
   ) {
     return null;
   }
 
   const checks = [
-    { id: "player", weight: 5, matched: true },
+    { id: identitySignal, weight: 5, matched: true },
     { id: "year", weight: 3, matched: titleHasWords(title, fields.year) },
     {
       id: "card_number",
@@ -363,6 +469,21 @@ function evaluateBroaderMatch(candidate, fields) {
       id: "parallel",
       weight: 4,
       matched: titleHasWords(title, fields.parallel),
+    },
+    {
+      id: "finish",
+      weight: 3,
+      matched: titleHasWords(title, fields.finish),
+    },
+    {
+      id: "rarity",
+      weight: 2,
+      matched: titleHasWords(title, fields.rarity),
+    },
+    {
+      id: "promo",
+      weight: 3,
+      matched: titleHasPromo(title),
     },
     {
       id: "print_run",
@@ -376,10 +497,13 @@ function evaluateBroaderMatch(candidate, fields) {
     { id: "set", weight: 2, matched: titleHasWords(title, fields.setOrInsert) },
   ].filter(
     (check) =>
-      check.id === "player" ||
+      check.id === identitySignal ||
       (check.id === "year" && cleanText(fields.year)) ||
       (check.id === "card_number" && cleanText(fields.cardNumber)) ||
       (check.id === "parallel" && cleanText(fields.parallel)) ||
+      (check.id === "finish" && cleanText(fields.finish)) ||
+      (check.id === "rarity" && cleanText(fields.rarity)) ||
+      (check.id === "promo" && pokemon && fields.promo === true) ||
       (check.id === "print_run" && printRunFromSerial(fields.serialNumber)) ||
       (check.id === "product" && cleanText(fields.product)) ||
       (check.id === "set" && cleanText(fields.setOrInsert)),
@@ -387,10 +511,10 @@ function evaluateBroaderMatch(candidate, fields) {
   const matchedSignals = checks
     .filter((check) => check.matched)
     .map((check) => check.id);
-  if (matchedSignals.every((signal) => signal === "player")) return null;
+  if (matchedSignals.every((signal) => signal === identitySignal)) return null;
   const expectedDiscriminators = checks
     .filter((check) =>
-      ["card_number", "parallel", "print_run"].includes(check.id),
+      ["card_number", "parallel", "finish", "promo", "print_run"].includes(check.id),
     )
     .map((check) => check.id);
   if (
@@ -504,6 +628,7 @@ export function buildActiveMarketSnapshot({
   valuationProfile = deriveValuationProfile(fields),
   marketplaceId,
   candidates,
+  queriesUsed = [buildActiveMarketQuery(fields)],
   confirmedReferenceItemId = null,
   excludedObservationIds = [],
   searchedAt = new Date().toISOString(),
@@ -621,7 +746,7 @@ export function buildActiveMarketSnapshot({
     ? `${grading.company ?? ""} ${grading.grade ?? ""}`.trim().toLowerCase()
     : null;
   const variantEstimates =
-    exactListings.length < 3
+    exactListings.length < 3 && !isPokemonCard(fields)
       ? buildVariantAdjustedEstimates({
           fields,
           valuationProfile,
@@ -670,6 +795,7 @@ export function buildActiveMarketSnapshot({
     },
     marketplaceId,
     query,
+    queriesUsed,
     searchedAt,
     candidateCount: candidates.length,
     matchedCount: matchedListings.length,
@@ -709,7 +835,7 @@ export class ActiveMarketService {
     const query = buildActiveMarketQuery(fields);
     if (!query) {
       throw new TypeError(
-        "Add a player, year, set, or card number before checking the active market.",
+        "Add a player or Pokémon name, year, set, or card number before checking the active market.",
       );
     }
     const gradeProfile = grading.isGraded
@@ -717,13 +843,19 @@ export class ActiveMarketService {
       : "raw";
     const cacheKey = `${query.toLowerCase()}|reference:${confirmedReferenceItemId ?? "none"}|${gradeProfile}|${valuationProfile.featureType}:${valuationProfile.source}`;
     const cached = this.cache.get(cacheKey);
-    const snapshotFrom = ({ marketplaceId, candidates, searchedAt }) =>
+    const snapshotFrom = ({
+      marketplaceId,
+      candidates,
+      searchedAt,
+      queriesUsed = [query],
+    }) =>
       buildActiveMarketSnapshot({
         fields,
         grading,
         valuationProfile,
         marketplaceId,
         candidates,
+        queriesUsed,
         confirmedReferenceItemId,
         excludedObservationIds,
         searchedAt,
@@ -732,22 +864,24 @@ export class ActiveMarketService {
 
     const result = await this.ebayClient.searchByKeywords({ query, limit: 50 });
     let candidates = result.candidates;
+    const queriesUsed = [query];
     const searchedAt = new Date(this.now()).toISOString();
-    const snapshot = buildActiveMarketSnapshot({
+    let snapshot = buildActiveMarketSnapshot({
       fields,
       grading,
       valuationProfile,
       marketplaceId: result.marketplaceId,
       candidates,
+      queriesUsed,
       confirmedReferenceItemId,
+      excludedObservationIds,
       searchedAt,
     });
-    const discoveryQuery = buildVariantDiscoveryQuery(fields);
-    if (
-      snapshot.exactMatchedCount < 3 &&
-      discoveryQuery &&
-      discoveryQuery !== query
-    ) {
+    const discoveryQueries = isPokemonCard(fields)
+      ? buildPokemonDiscoveryQueries(fields)
+      : [buildVariantDiscoveryQuery(fields)].filter(Boolean);
+    for (const discoveryQuery of discoveryQueries) {
+      if (snapshot.matchedCount >= 3 || discoveryQuery === query) break;
       const discovery = await this.ebayClient.searchByKeywords({
         query: discoveryQuery,
         limit: 50,
@@ -759,24 +893,33 @@ export class ActiveMarketService {
         ]),
       );
       candidates = [...unique.values()];
+      queriesUsed.push(discoveryQuery);
+      snapshot = buildActiveMarketSnapshot({
+        fields,
+        grading,
+        valuationProfile,
+        marketplaceId: result.marketplaceId,
+        candidates,
+        queriesUsed,
+        confirmedReferenceItemId,
+        excludedObservationIds,
+        searchedAt,
+      });
     }
     this.cache.set(cacheKey, {
       marketplaceId: result.marketplaceId,
       candidates,
+      queriesUsed,
       searchedAt,
       expiresAt: this.now() + this.cacheDurationMs,
     });
     return snapshotFrom({
       marketplaceId: result.marketplaceId,
       candidates,
+      queriesUsed,
       searchedAt,
     });
   }
 }
 
 export { activeMarketDisclaimer };
-import {
-  buildVariantAdjustedEstimates,
-  buildVariantDiscoveryQuery,
-  deriveValuationProfile,
-} from "./variant-adjustment.mjs";

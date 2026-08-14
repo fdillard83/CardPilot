@@ -112,6 +112,14 @@ function suggestedAspectValue(aspects, acceptedNames) {
   );
 }
 
+function suggestedAspectIncludes(aspects, acceptedNames, pattern) {
+  const accepted = new Set(acceptedNames.map(normalizeAspectName));
+  return aspects
+    .filter((aspect) => accepted.has(normalizeAspectName(aspect.name)))
+    .flatMap((aspect) => aspect.values)
+    .some((value) => pattern.test(value));
+}
+
 function suggestedCardNumberFromTitle(title) {
   if (typeof title !== "string") return null;
   const hashNumber = title.match(/#\s*([a-z0-9]+(?:-[a-z0-9]+)*)/i)?.[1];
@@ -304,6 +312,12 @@ export class EbayImageSearchClient {
       imageUrl: optionalString(payload?.image?.imageUrl),
       aspects,
       suggestions: {
+        character: suggestedAspectValue(aspects, [
+          "Character",
+          "Pokémon",
+          "Pokemon",
+        ]),
+        setOrInsert: suggestedAspectValue(aspects, ["Set", "Card Set"]),
         year: suggestedYearFromTitle(title),
         cardNumber:
           suggestedAspectValue(aspects, [
@@ -320,6 +334,17 @@ export class EbayImageSearchClient {
         serialNumber:
           suggestedSerialNumberFromAspects(aspects) ??
           suggestedSerialNumberFromTitle(title),
+        language: suggestedAspectValue(aspects, ["Language"]),
+        rarity: suggestedAspectValue(aspects, ["Rarity"]),
+        finish: suggestedAspectValue(aspects, ["Finish", "Card Finish"]),
+        promo:
+          suggestedAspectIncludes(
+            aspects,
+            ["Features", "Card Type"],
+            /\bpromo(?:tional)?\b/i,
+          ) || /\bpromo(?:tional)?\b/i.test(title)
+            ? true
+            : null,
       },
     };
   }

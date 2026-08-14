@@ -153,3 +153,50 @@ test("collection records persist images and support update and removal", async (
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("collection records normalize and title Pokémon fields", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cardpilot-pokemon-"));
+  const store = new CollectionStore({
+    recordsFile: path.join(directory, "collection.json"),
+    imagesDirectory: path.join(directory, "images"),
+  });
+
+  try {
+    const created = await store.create({
+      identificationId: "pokemon-1",
+      fields: {
+        ...fields,
+        category: "Pokémon",
+        player: null,
+        character: "Charmander",
+        sport: null,
+        team: null,
+        setOrInsert: "Mega Evolution Promos",
+        cardNumber: "038",
+        language: "English",
+        rarity: "Promo",
+        raritySymbol: "Black Star",
+        finish: "Holo",
+        promo: true,
+        rookieStatus: null,
+        serialNumber: null,
+        autograph: null,
+        memorabilia: null,
+        imageVariation: null,
+      },
+      overallConfidence: 0.92,
+      decision: "confirm",
+      frontImage: "data:image/jpeg;base64,Zm9v",
+    });
+
+    assert.equal(
+      created.title,
+      "2026 Charmander Mega Evolution Promos #038",
+    );
+    assert.equal(created.fields.character, "Charmander");
+    assert.equal(created.fields.raritySymbol, "Black Star");
+    assert.equal(created.fields.promo, true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

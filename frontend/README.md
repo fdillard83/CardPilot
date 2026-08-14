@@ -1,6 +1,6 @@
 # CardPilot
 
-CardPilot is a mobile-friendly sports trading card identifier. A collector starts with one front photo, optionally adds the back only when useful, and receives an evidence-backed identification with field-level confidence and a trust decision.
+CardPilot is a mobile-friendly sports and Pokémon trading card identifier. A collector starts with one front photo, optionally adds the back only when useful, and receives an evidence-backed identification with field-level confidence and a trust decision.
 
 ## Current milestone
 
@@ -19,6 +19,8 @@ CardPilot is a mobile-friendly sports trading card identifier. A collector start
 - Strict versioned result with field-level confidence, evidence, missing evidence, and candidate matches
 - Configurable Trust Engine for auto-accept, one-tap confirmation, and full review
 - Special handling for uncertain parallels, serial numbers, autographs, memorabilia, and image variations
+- Pokémon-aware identification with separate character, set, collector-number, language, rarity, finish, promo, and variant fields
+- Category-aware collection labels, filtering, eBay searches, and valuation matching without placing Pokémon names in sports-player fields
 - Editable confirmation screen for every returned field
 - Local correction logging that retains original values and never treats one edit as global truth
 - Private local collection storage with saved photos, search, filters, editing, and removal
@@ -108,6 +110,30 @@ Card details show **Numbered card** as a derived Yes/No value and label the
 exact stamp separately as **Numbered Card Serial Number**. For example, `63/85`
 means Numbered card: Yes and identifies that physical copy as number 63 in a
 print run of 85.
+
+## Pokémon cards
+
+Pokémon scans use the same Express identification and collection workflow as
+sports cards. The model classifies the card category first, stores the Pokémon
+name separately from a sports player, and reads the printed collector number,
+set code or name, language, rarity, rarity symbol, finish, promo status, and
+named variant when the image supports them. CardPilot inspects the enlarged
+bottom corners and keeps the literal rarity mark separate from the normalized
+rarity name, set symbol, regulation mark, and language code. A lone boxed
+regulation mark such as `J` is not treated as a language code.
+
+Pokémon pricing starts with the full confirmed identity. When that literal
+query is too restrictive, CardPilot retries focused searches that retain the
+Pokémon name, collector number, set, and promo or variant details while dropping
+generic publisher and product wording. All search phrases are shown in the
+market panels, and the same title-conflict checks still protect exact and
+broader comparisons.
+
+The confirmation and collection screens automatically switch to Pokémon labels
+such as **Pokémon**, **Set**, **Collector number**, and **Variant**. Current eBay
+searches use those confirmed details. CardPilot does not apply the sports-card
+serial-number, autograph, relic, or rookie multiplier model to Pokémon cards;
+Pokémon variant modeling needs its own evidence-backed methodology.
 
 The Browse API returns active purchasable listings, not verified sold
 comparables. Sold-price history requires a separately authorized data source
@@ -201,6 +227,11 @@ mixing in a lower-quality tier. Active-only, broader, and variant-adjusted
 recommendations remain low confidence because asking prices are not confirmed
 sales and modeled estimates add assumptions. The interface shows both source
 amounts, sample counts, and their weights whenever a blend is used.
+
+The final CardPilot recommendation rounds upward to the next price point ending
+in `.25`, `.50`, or `.95`. This display adjustment does not change source
+prices, source medians, the modeled range, or a collector's ability to enter a
+different confirmed value.
 
 Collectors can accept or edit the recommendation. `PUT /api/collection/:collectionId/valuation`
 saves only the confirmed amount,
