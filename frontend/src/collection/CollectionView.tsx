@@ -4,6 +4,7 @@ import {
   cardKindFromFields,
   deriveValuationProfile,
   fieldDefinitionsFor,
+  fieldLabelFor,
   formatFieldValue,
   valuationFeatureOptions,
   type ActiveMarketSnapshot,
@@ -12,6 +13,7 @@ import {
   type GradingProfile,
   type SavedCollectionCard,
   type SoldCompsSnapshot,
+  type SoldComparable,
   type ValuationProfile,
   type ValuationMethod,
   type ValuationRecommendationSnapshot,
@@ -160,6 +162,47 @@ function formatFactor(value: number) {
   if (value >= 10) return `${Math.round(value)}×`;
   if (value >= 1) return `${value.toFixed(1).replace(/\.0$/, "")}×`;
   return `${value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}×`;
+}
+
+function isExactSerialNumber(value: FieldValue) {
+  return typeof value === "string" && /^\s*\d{1,3}\s*\/\s*\d{1,5}\s*$/.test(value);
+}
+
+function soldSuggestionFields(card: SavedCollectionCard, sale: SoldComparable) {
+  const fields: Partial<Record<FieldKey, FieldValue>> = {};
+  const suggestions = sale.suggestions ?? {
+    character: null,
+    setOrInsert: null,
+    year: null,
+    cardNumber: null,
+    parallel: null,
+    serialNumber: null,
+    language: null,
+    rarity: null,
+    finish: null,
+    promo: null,
+  };
+  const supported: Array<[FieldKey, FieldValue]> = [
+    ["character", suggestions.character],
+    ["setOrInsert", suggestions.setOrInsert],
+    ["year", suggestions.year],
+    ["cardNumber", suggestions.cardNumber],
+    ["parallel", suggestions.parallel],
+    ["language", suggestions.language],
+    ["rarity", suggestions.rarity],
+    ["finish", suggestions.finish],
+    ["promo", suggestions.promo],
+  ];
+  for (const [key, value] of supported) {
+    if (value !== null) fields[key] = value;
+  }
+  if (
+    suggestions.serialNumber &&
+    !isExactSerialNumber(card.fields.serialNumber)
+  ) {
+    fields.serialNumber = suggestions.serialNumber;
+  }
+  return fields;
 }
 
 function PricingExclusionControls({
@@ -681,6 +724,11 @@ function SoldCompsPanel({
   isRecommendationUpdating,
   recommendationError,
   onReviewRecommendation,
+  selectedMatchId,
+  confirmedMatchId,
+  isConfirmingMatch,
+  onSelectMatch,
+  onConfirmMatch,
 }: {
   card: SavedCollectionCard;
   snapshot: SoldCompsSnapshot | null;
@@ -695,6 +743,11 @@ function SoldCompsPanel({
   isRecommendationUpdating: boolean;
   recommendationError: string | null;
   onReviewRecommendation: () => void;
+  selectedMatchId: string | null;
+  confirmedMatchId: string | null;
+  isConfirmingMatch: boolean;
+  onSelectMatch: (sale: SoldComparable | null) => void;
+  onConfirmMatch: (sale: SoldComparable) => void;
 }) {
   const coverageLabel = snapshot?.coverage.from || snapshot?.coverage.to
     ? `${snapshot.coverage.from ?? "earliest available"} to ${snapshot.coverage.to ?? "latest available"}`
@@ -819,6 +872,12 @@ function SoldCompsPanel({
                   )}
                   <div className="market-listings">
                     {group.sales.map((sale) => {
+                      const isSelected = selectedMatchId === sale.id;
+                      const isConfirmed = confirmedMatchId === sale.id;
+                      const suggestedFields = soldSuggestionFields(card, sale);
+                      const suggestionEntries = Object.entries(suggestedFields) as Array<
+                        [FieldKey, FieldValue]
+                      >;
                       const saleContents = (
                         <>
                           {sale.imageUrl ? (
@@ -830,6 +889,9 @@ function SoldCompsPanel({
                             <strong>{sale.title}</strong>
                             {sale.matchTier === "broader" && (
                               <span className="market-broader-badge">Broader comparison</span>
+                            )}
+                            {isConfirmed && (
+                              <span className="market-reference-badge">Confirmed as your card</span>
                             )}
                             <small>{listingTypeLabel(sale.listingType)} · {saleDateLabel(sale.soldAt ?? sale.saleDate)}</small>
                             <em>{formatPrice(sale.salePriceCents, sale.currency)} sold price</em>
@@ -864,6 +926,44 @@ function SoldCompsPanel({
                           >
                             Exclude from pricing
                           </button>
+                          {!isConfirmed && (
+                            <button
+                              type="button"
+                              className="market-match-card"
+                              disabled={isConfirmingMatch}
+                              onClick={() => onSelectMatch(isSelected ? null : sale)}
+                            >
+                              {isSelected ? "Cancel selection" : "This looks like my card"}
+                            </button>
+                          )}
+                          {isSelected && !isConfirmed && (
+                            <div className="market-match-confirmation">
+                              <strong>Confirm this completed sale matches your card?</strong>
+                              {suggestionEntries.length > 0 ? (
+                                <>
+                                  <span>CardPilot will update these details:</span>
+                                  <div className="ebay-suggestions">
+                                    {suggestionEntries.map(([key, value]) => (
+                                      <span key={key}>
+                                        {fieldLabelFor(key, card.fields)}: {formatFieldValue(value)}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </>
+                              ) : (
+                                <span>
+                                  The sale confirms the visual match, but its title has no additional safe details to apply.
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                disabled={isConfirmingMatch}
+                                onClick={() => onConfirmMatch(sale)}
+                              >
+                                {isConfirmingMatch ? "Updating card..." : "Confirm match and update card"}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -929,6 +1029,9 @@ export function CollectionView({
   const [soldExcludedAnchorIds, setSoldExcludedAnchorIds] = useState<string[]>(
     [],
   );
+  const [selectedSoldMatchId, setSelectedSoldMatchId] = useState<string | null>(null);
+  const [confirmedSoldMatchId, setConfirmedSoldMatchId] = useState<string | null>(null);
+  const [confirmingSoldMatchId, setConfirmingSoldMatchId] = useState<string | null>(null);
   const soldRequestIdRef = useRef(0);
   const [pricingSessionCardId, setPricingSessionCardId] = useState<
     string | null
@@ -1044,6 +1147,9 @@ export function CollectionView({
     setSoldError(null);
     setSoldShowingPrevious(false);
     setSoldExcludedAnchorIds([]);
+    setSelectedSoldMatchId(null);
+    setConfirmedSoldMatchId(null);
+    setConfirmingSoldMatchId(null);
     setPricingSessionCardId(null);
     closeValuationPanel();
     setEditingId(card.collectionId);
@@ -1252,6 +1358,7 @@ export function CollectionView({
       setSoldSnapshot(null);
       setSoldError(null);
       setSoldShowingPrevious(false);
+      setSelectedSoldMatchId(null);
     } else {
       const samePricingSession = pricingSessionCardId === card.collectionId;
       if (!samePricingSession) {
@@ -1261,7 +1368,9 @@ export function CollectionView({
         setValuationSnapshot(null);
         setValuationError(null);
         setValuationShowingPrevious(false);
+        setConfirmedSoldMatchId(null);
       }
+      setSelectedSoldMatchId(null);
       void loadSoldComps(
         card,
         samePricingSession ? soldExcludedAnchorIds : [],
@@ -1294,6 +1403,57 @@ export function CollectionView({
     setSoldExcludedAnchorIds([]);
     void loadSoldComps(card, []);
     void refreshValuationSnapshot(card, [], []);
+  };
+
+  const confirmSoldCompMatch = async (
+    card: SavedCollectionCard,
+    sale: SoldComparable,
+  ) => {
+    if (confirmingSoldMatchId || busyId) return;
+    const suggestions = soldSuggestionFields(card, sale);
+    const updatedFields = { ...card.fields, ...suggestions };
+    setConfirmingSoldMatchId(sale.id);
+    setActionError(null);
+    try {
+      const response = await fetch(
+        `/api/collection/${encodeURIComponent(card.collectionId)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fields: updatedFields,
+            grading: card.grading,
+            valuationProfile:
+              card.valuationProfile.source === "derived"
+                ? deriveValuationProfile(updatedFields)
+                : card.valuationProfile,
+          }),
+        },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { card?: SavedCollectionCard; error?: string }
+        | null;
+      if (!response.ok || !payload?.card) {
+        throw new Error(
+          payload?.error ?? "CardPilot could not update this card from the completed sale.",
+        );
+      }
+      onCardsChange(
+        cards.map((item) =>
+          item.collectionId === payload.card?.collectionId ? payload.card : item,
+        ),
+      );
+      setSelectedSoldMatchId(null);
+      setConfirmedSoldMatchId(sale.id);
+    } catch (caughtError) {
+      setActionError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not update this card from the completed sale.",
+      );
+    } finally {
+      setConfirmingSoldMatchId(null);
+    }
   };
 
   const refreshValuationSnapshot = async (
@@ -2358,6 +2518,15 @@ export function CollectionView({
                     recommendationError={valuationError}
                     onReviewRecommendation={() =>
                       reviewUpdatedRecommendation(card)
+                    }
+                    selectedMatchId={selectedSoldMatchId}
+                    confirmedMatchId={confirmedSoldMatchId}
+                    isConfirmingMatch={confirmingSoldMatchId !== null}
+                    onSelectMatch={(sale) =>
+                      setSelectedSoldMatchId(sale?.id ?? null)
+                    }
+                    onConfirmMatch={(sale) =>
+                      void confirmSoldCompMatch(card, sale)
                     }
                   />
                 )}

@@ -9,6 +9,7 @@ import {
   deriveValuationProfile,
 } from "../valuation/variant-adjustment.mjs";
 import { isPokemonCard } from "../card-category.mjs";
+import { suggestionsFromListingTitle } from "../ebay/image-search.mjs";
 
 const soldCompsDisclaimer =
   "Completed-sale records are supplied by The Card API and are informational comparisons, not an appraisal or guaranteed value. Exact and broader title matches remain separate, and marketplace fee or buyer-premium treatment can differ by platform.";
@@ -140,6 +141,7 @@ export function buildSoldCompsSnapshot({
       matchScore: match.score,
       matchedSignals: match.matchedSignals,
       matchTier,
+      suggestions: suggestionsFromListingTitle(sale.title),
     };
   }
 

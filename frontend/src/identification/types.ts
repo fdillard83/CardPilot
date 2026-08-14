@@ -414,6 +414,18 @@ export type SoldComparable = {
   matchScore: number;
   matchedSignals: string[];
   matchTier: "exact" | "broader";
+  suggestions: {
+    character: string | null;
+    setOrInsert: string | null;
+    year: string | null;
+    cardNumber: string | null;
+    parallel: string | null;
+    serialNumber: string | null;
+    language: string | null;
+    rarity: string | null;
+    finish: string | null;
+    promo: boolean | null;
+  };
 };
 
 export type SoldCompsGroup = {

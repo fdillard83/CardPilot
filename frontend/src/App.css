@@ -2941,6 +2941,53 @@ main {
   background: rgba(255, 190, 100, 0.13);
 }
 
+.market-match-card {
+  justify-self: start;
+  border: 1px solid rgba(183, 238, 79, 0.34);
+  border-radius: 999px;
+  padding: 5px 8px;
+  color: var(--lime);
+  background: rgba(183, 238, 79, 0.06);
+  font: inherit;
+  font-size: 8px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.market-match-card:hover {
+  border-color: rgba(183, 238, 79, 0.7);
+  background: rgba(183, 238, 79, 0.12);
+}
+
+.market-match-confirmation {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(183, 238, 79, 0.28);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(183, 238, 79, 0.05);
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.market-match-confirmation strong {
+  color: var(--ink);
+}
+
+.market-match-confirmation button {
+  justify-self: start;
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: #07110d;
+  background: var(--lime);
+  font: inherit;
+  font-size: 8px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
 .market-listing {
   min-width: 0;
   display: grid;

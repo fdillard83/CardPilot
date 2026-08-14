@@ -62,3 +62,28 @@ test("rejects distorted quadrilaterals", () => {
     false,
   );
 });
+
+test("preserves a nearly straight photo when one detected corner would exaggerate perspective", () => {
+  assert.equal(
+    isReliableCardDetection({
+      ...reliable,
+      oppositeWidthBalance: 0.7,
+      oppositeHeightBalance: 0.93,
+      diagonalBalance: 0.74,
+      confidence: 0.84,
+    }),
+    false,
+  );
+});
+
+test("still corrects modest perspective when all four edges agree", () => {
+  assert.equal(
+    isReliableCardDetection({
+      ...reliable,
+      oppositeWidthBalance: 0.78,
+      oppositeHeightBalance: 0.8,
+      diagonalBalance: 0.82,
+    }),
+    true,
+  );
+});

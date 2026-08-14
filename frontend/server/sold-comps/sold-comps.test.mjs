@@ -112,6 +112,18 @@ test("sold snapshots use only confirmed prices and trim outliers", () => {
     lowAmountCents: 4150,
     highAmountCents: 4575,
   });
+  assert.deepEqual(snapshot.groups[0].sales[0].suggestions, {
+    character: null,
+    setOrInsert: null,
+    year: "2026",
+    cardNumber: "CN-14",
+    parallel: "Green Foil",
+    serialNumber: "/85",
+    language: null,
+    rarity: null,
+    finish: null,
+    promo: null,
+  });
 });
 
 test("broader sold comparisons stay separate and reject known conflicts", () => {

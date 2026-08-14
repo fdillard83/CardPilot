@@ -20,6 +20,14 @@ export function isReliableCardDetection(metrics: CardDetectionMetrics) {
   const frameAlreadyLooksCardShaped =
     Math.abs(metrics.frameShortLongRatio - STANDARD_CARD_RATIO) <= 0.065;
 
+  // Perspective correction amplifies even small corner errors. Favor the
+  // untouched photo when opposing edges or diagonals disagree enough that a
+  // slightly misplaced corner could visibly skew an otherwise straight card.
+  const geometryIsStable =
+    metrics.oppositeWidthBalance >= 0.72 &&
+    metrics.oppositeHeightBalance >= 0.72 &&
+    metrics.diagonalBalance >= 0.76;
+
   return !(
     metrics.areaRatio < 0.28 ||
     metrics.areaRatio > 0.94 ||
@@ -27,9 +35,7 @@ export function isReliableCardDetection(metrics: CardDetectionMetrics) {
     metrics.shortLongRatio > 0.84 ||
     metrics.fillRatio < 0.48 ||
     metrics.foregroundShare < 0.7 ||
-    metrics.oppositeWidthBalance < 0.62 ||
-    metrics.oppositeHeightBalance < 0.62 ||
-    metrics.diagonalBalance < 0.68 ||
+    !geometryIsStable ||
     metrics.confidence < 0.66 ||
     (frameAlreadyLooksCardShaped && metrics.areaRatio < 0.72)
   );

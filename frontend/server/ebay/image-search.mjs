@@ -195,6 +195,21 @@ function suggestedSerialNumberFromAspects(aspects) {
   return normalizePrintRun(printRun, { allowBareNumber: true });
 }
 
+export function suggestionsFromListingTitle(title) {
+  return {
+    character: null,
+    setOrInsert: null,
+    year: suggestedYearFromTitle(title),
+    cardNumber: suggestedCardNumberFromTitle(title),
+    parallel: suggestedParallelFromTitle(title),
+    serialNumber: suggestedSerialNumberFromTitle(title),
+    language: null,
+    rarity: null,
+    finish: null,
+    promo: /\bpromo(?:tional)?\b/i.test(title ?? "") ? true : null,
+  };
+}
+
 export class EbayImageSearchClient {
   constructor({
     oauthClient,
@@ -305,6 +320,7 @@ export class EbayImageSearchClient {
 
     const aspects = normalizeAspects(payload?.localizedAspects);
     const title = optionalString(payload?.title) ?? "Untitled eBay listing";
+    const titleSuggestions = suggestionsFromListingTitle(title);
     return {
       itemId: optionalString(payload?.itemId) ?? itemId,
       title,
@@ -312,28 +328,29 @@ export class EbayImageSearchClient {
       imageUrl: optionalString(payload?.image?.imageUrl),
       aspects,
       suggestions: {
+        ...titleSuggestions,
         character: suggestedAspectValue(aspects, [
           "Character",
           "Pokémon",
           "Pokemon",
         ]),
         setOrInsert: suggestedAspectValue(aspects, ["Set", "Card Set"]),
-        year: suggestedYearFromTitle(title),
+        year: titleSuggestions.year,
         cardNumber:
           suggestedAspectValue(aspects, [
             "Card Number",
             "Card No",
             "Card #",
-          ]) ?? suggestedCardNumberFromTitle(title),
+          ]) ?? titleSuggestions.cardNumber,
         parallel:
           suggestedAspectValue(aspects, [
             "Parallel/Variety",
             "Parallel",
             "Variety",
-          ]) ?? suggestedParallelFromTitle(title),
+          ]) ?? titleSuggestions.parallel,
         serialNumber:
           suggestedSerialNumberFromAspects(aspects) ??
-          suggestedSerialNumberFromTitle(title),
+          titleSuggestions.serialNumber,
         language: suggestedAspectValue(aspects, ["Language"]),
         rarity: suggestedAspectValue(aspects, ["Rarity"]),
         finish: suggestedAspectValue(aspects, ["Finish", "Card Finish"]),
