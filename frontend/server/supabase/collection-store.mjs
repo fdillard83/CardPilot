@@ -174,6 +174,63 @@ export class SupabaseCollectionRepository {
     return { signedUrl: data.signedUrl, mimeType: image.mimeType };
   }
 
+  async export(userId) {
+    const { data, error } = await this.client
+      .from("collection_cards")
+      .select("record")
+      .eq("user_id", userId)
+      .order("updated_at", { ascending: false });
+    if (error) throw databaseError("collection export", error);
+    return Promise.all(
+      (data ?? []).map(async ({ record }) => {
+        const encode = async (image) => {
+          if (!image?.objectPath) return null;
+          const { data: blob, error: downloadError } = await this.client.storage
+            .from(this.bucket)
+            .download(image.objectPath);
+          if (downloadError || !blob) {
+            throw databaseError("private image export", downloadError);
+          }
+          return {
+            mimeType: image.mimeType,
+            base64: Buffer.from(await blob.arrayBuffer()).toString("base64"),
+          };
+        };
+        return {
+          ...publicRecord(record),
+          images: {
+            front: await encode(record.images?.front),
+            back: await encode(record.images?.back),
+          },
+        };
+      }),
+    );
+  }
+
+  async removeAllForUser(userId) {
+    const { data, error } = await this.client
+      .from("collection_cards")
+      .select("record")
+      .eq("user_id", userId);
+    if (error) throw databaseError("account collection lookup", error);
+    const paths = (data ?? []).flatMap(({ record }) => [
+      record.images?.front?.objectPath,
+      record.images?.back?.objectPath,
+    ]).filter(Boolean);
+    if (paths.length > 0) {
+      const { error: storageError } = await this.client.storage
+        .from(this.bucket)
+        .remove(paths);
+      if (storageError) throw databaseError("account image removal", storageError);
+    }
+    const { error: deleteError } = await this.client
+      .from("collection_cards")
+      .delete()
+      .eq("user_id", userId);
+    if (deleteError) throw databaseError("account collection removal", deleteError);
+    return { cardCount: data?.length ?? 0, imageCount: paths.length };
+  }
+
   async #record(userId, collectionId) {
     const { data, error } = await this.client
       .from("collection_cards")

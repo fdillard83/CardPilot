@@ -90,3 +90,76 @@ test("invalid account inputs are rejected before reaching Supabase", () => {
     /Invalid email address|Too small/,
   );
 });
+
+test("password reset uses the configured CardPilot recovery page", async () => {
+  let request;
+  const service = new SupabaseAuthService({
+    emailRedirectTo: "https://cardpilot.example/",
+    client: {
+      auth: {
+        async resetPasswordForEmail(email, options) {
+          request = { email, options };
+          return { error: null };
+        },
+      },
+    },
+  });
+  await service.requestPasswordReset({ email: "collector@example.com" });
+  assert.deepEqual(request, {
+    email: "collector@example.com",
+    options: { redirectTo: "https://cardpilot.example/account/reset-password" },
+  });
+});
+
+test("recovery tokens establish a server-side cookie session", async () => {
+  const session = {
+    access_token: "new-access-token-that-is-long-enough",
+    refresh_token: "new-refresh-token-that-is-long-enough",
+    expires_in: 3600,
+  };
+  const service = new SupabaseAuthService({
+    client: { auth: {} },
+    clientFactory: () => ({
+      auth: {
+        async setSession(tokens) {
+          assert.equal(tokens.access_token, session.access_token);
+          return {
+            data: {
+              user: { id: "user-1", email: "collector@example.com" },
+              session,
+            },
+            error: null,
+          };
+        },
+      },
+    }),
+  });
+  const result = await service.establishRecoverySession({
+    accessToken: session.access_token,
+    refreshToken: session.refresh_token,
+  });
+  const response = responseRecorder();
+  service.setSessionCookies(response, result.session);
+  assert.equal(result.user.id, "user-1");
+  assert.equal(response.cookies.length, 2);
+  assert.match(response.cookies[0], /HttpOnly/);
+});
+
+test("account deletion uses the administrative client", async () => {
+  let deletedUser;
+  const service = new SupabaseAuthService({
+    client: { auth: {} },
+    adminClient: {
+      auth: {
+        admin: {
+          async deleteUser(userId, softDelete) {
+            deletedUser = { userId, softDelete };
+            return { error: null };
+          },
+        },
+      },
+    },
+  });
+  await service.deleteUser("user-1");
+  assert.deepEqual(deletedUser, { userId: "user-1", softDelete: false });
+});

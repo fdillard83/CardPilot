@@ -6,6 +6,7 @@ import {
   type AccountSession,
   type AccountUser,
 } from "./accounts/AccountGate";
+import { AccountSettings } from "./accounts/AccountSettings";
 import { CollectionView } from "./collection/CollectionView";
 import {
   createCardDetailImages,
@@ -563,6 +564,8 @@ function App() {
     useState<LocalImportStatus | null>(null);
   const [isImportingLocal, setIsImportingLocal] = useState(false);
   const [localImportError, setLocalImportError] = useState<string | null>(null);
+  const [isAccountSettingsOpen, setIsAccountSettingsOpen] = useState(false);
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
 
   const originalFrontPreview = usePreviewUrl(frontFile);
   const originalBackPreview = usePreviewUrl(backFile);
@@ -1573,6 +1576,15 @@ function App() {
     setAccountSessionError(null);
   };
 
+  const handleRecoveryAuthenticated = (user: AccountUser) => {
+    setIsLoadingCollection(true);
+    setCollectionError(null);
+    setAccountSession({ mode: "supabase", user });
+    setAccountSessionError(null);
+    setIsPasswordRecovery(true);
+    setIsAccountSettingsOpen(true);
+  };
+
   const signOut = async () => {
     setIsSigningOut(true);
     try {
@@ -1581,6 +1593,8 @@ function App() {
       setCollectionCards([]);
       setAccountSession({ mode: "supabase", user: null });
       setView("scan");
+      setIsAccountSettingsOpen(false);
+      setIsPasswordRecovery(false);
       setIsSigningOut(false);
     }
   };
@@ -1640,7 +1654,12 @@ function App() {
   }
 
   if (accountSession.mode === "supabase" && !accountSession.user) {
-    return <AccountGate onAuthenticated={handleAuthenticated} />;
+    return (
+      <AccountGate
+        onAuthenticated={handleAuthenticated}
+        onRecoveryAuthenticated={handleRecoveryAuthenticated}
+      />
+    );
   }
 
   return (
@@ -1673,6 +1692,9 @@ function App() {
           {accountSession.user && (
             <div className="account-menu">
               <small>{accountSession.user.email}</small>
+              <button type="button" onClick={() => setIsAccountSettingsOpen(true)}>
+                Account
+              </button>
               <button
                 type="button"
                 disabled={isSigningOut}
@@ -2194,6 +2216,21 @@ function App() {
         <span>CardPilot</span>
         <span>Fast by default. Extra evidence only when it matters.</span>
       </footer>
+      {accountSession.user && isAccountSettingsOpen && (
+        <AccountSettings
+          user={accountSession.user}
+          recoveryMode={isPasswordRecovery}
+          onRecoveryComplete={() => setIsPasswordRecovery(false)}
+          onClose={() => setIsAccountSettingsOpen(false)}
+          onAccountDeleted={() => {
+            setCollectionCards([]);
+            setIsAccountSettingsOpen(false);
+            setIsPasswordRecovery(false);
+            setAccountSession({ mode: "supabase", user: null });
+            setView("scan");
+          }}
+        />
+      )}
     </div>
   );
 }

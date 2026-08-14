@@ -1,5 +1,8 @@
 import { once } from "node:events";
-import { app } from "./index.mjs";
+
+// Keep this smoke test independent from a developer's private cloud configuration.
+process.env.COLLECTION_STORAGE_MODE = "local";
+const { app } = await import("./index.mjs");
 
 const server = app.listen(0);
 await once(server, "listening");

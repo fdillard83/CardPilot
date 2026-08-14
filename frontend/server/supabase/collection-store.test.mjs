@@ -101,6 +101,12 @@ function fakeClient() {
             for (const path of paths) objects.delete(path);
             return { error: null };
           },
+          async download(path) {
+            const object = objects.get(path);
+            return object
+              ? { data: new Blob([object.buffer]), error: null }
+              : { data: null, error: new Error("Object not found") };
+          },
           async createSignedUrl(path) {
             return {
               data: { signedUrl: `https://private.example/${path}?token=signed` },
@@ -157,4 +163,34 @@ test("Supabase collections and images are scoped to one account", async () => {
   assert.equal(await store.remove("user-b", created.collectionId), false);
   assert.equal(await store.remove("user-a", created.collectionId), true);
   assert.equal(client.objects.size, 0);
+});
+
+test("collection export includes private images and account cleanup stays scoped", async () => {
+  const client = fakeClient();
+  const store = new SupabaseCollectionRepository({ client });
+  await store.create("user-a", {
+    identificationId: "identification-a",
+    fields,
+    overallConfidence: 0.91,
+    decision: "confirm",
+    frontImage: "data:image/jpeg;base64,Zm9v",
+  });
+  await store.create("user-b", {
+    identificationId: "identification-b",
+    fields,
+    overallConfidence: 0.82,
+    decision: "confirm",
+    frontImage: "data:image/jpeg;base64,YmFy",
+  });
+
+  const backup = await store.export("user-a");
+  assert.equal(backup.length, 1);
+  assert.equal(backup[0].images.front.base64, "Zm9v");
+  assert.equal(backup[0].images.front.mimeType, "image/jpeg");
+
+  const removed = await store.removeAllForUser("user-a");
+  assert.deepEqual(removed, { cardCount: 1, imageCount: 1 });
+  assert.equal((await store.list("user-a")).length, 0);
+  assert.equal((await store.list("user-b")).length, 1);
+  assert.equal(client.objects.size, 1);
 });

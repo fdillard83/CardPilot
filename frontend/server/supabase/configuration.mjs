@@ -30,17 +30,21 @@ export function supabaseConfiguration(env = process.env) {
 
 export function createSupabaseServices(configuration) {
   if (!configuration.requested || !configuration.configured) return null;
-  const authClient = createClient(
-    configuration.url,
-    configuration.publishableKey,
-    {
+  const authClientOptions = {
       auth: {
         autoRefreshToken: false,
         persistSession: false,
         detectSessionInUrl: false,
+        flowType: "implicit",
       },
-    },
-  );
+    };
+  const createAuthClient = () =>
+    createClient(
+      configuration.url,
+      configuration.publishableKey,
+      authClientOptions,
+    );
+  const authClient = createAuthClient();
   const adminClient = createClient(
     configuration.url,
     configuration.secretKey,
@@ -55,6 +59,8 @@ export function createSupabaseServices(configuration) {
   return {
     auth: new SupabaseAuthService({
       client: authClient,
+      clientFactory: createAuthClient,
+      adminClient,
       secureCookies: configuration.secureCookies,
       emailRedirectTo: configuration.appOrigin,
     }),

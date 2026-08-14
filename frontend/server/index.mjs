@@ -5,7 +5,7 @@ import path from "node:path";
 import dotenv from "dotenv";
 import express from "express";
 import OpenAI from "openai";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import { EbayImageSearchClient } from "./ebay/image-search.mjs";
 import { EbayApiError, EbayOAuthClient } from "./ebay/oauth-client.mjs";
 import { CatalogCandidateGenerator } from "./identification/candidate-generator.mjs";
@@ -218,9 +218,158 @@ app.post("/api/auth/logout", (_request, response) => {
   response.status(204).end();
 });
 
+app.post("/api/auth/forgot-password", async (request, response) => {
+  response.set("Cache-Control", "no-store");
+  if (!cloudServices) {
+    response.status(503).json({
+      error: "Cloud accounts have not been configured for CardPilot yet.",
+    });
+    return;
+  }
+  try {
+    await cloudServices.auth.requestPasswordReset(request.body);
+    response.json({
+      message:
+        "If that email belongs to a CardPilot account, a password-reset link has been sent.",
+    });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      response.status(400).json({ error: "Enter a valid email address." });
+      return;
+    }
+    if (error?.status === 429) {
+      response.status(429).json({
+        error: "Please wait before requesting another password-reset email.",
+      });
+      return;
+    }
+    console.error("CardPilot password reset request failed", {
+      status: error?.status,
+      code: error?.code,
+    });
+    response.json({
+      message:
+        "If that email belongs to a CardPilot account, a password-reset link has been sent.",
+    });
+  }
+});
+
+app.post("/api/auth/recovery-session", async (request, response) => {
+  response.set("Cache-Control", "no-store");
+  if (!cloudServices) {
+    response.status(503).json({ error: "Cloud accounts are not configured." });
+    return;
+  }
+  try {
+    const result = await cloudServices.auth.establishRecoverySession(request.body);
+    cloudServices.auth.setSessionCookies(response, result.session);
+    response.json({ user: result.user });
+  } catch (error) {
+    if (!(error instanceof ZodError)) {
+      console.error("CardPilot recovery session failed", {
+        status: error?.status,
+        code: error?.code,
+      });
+    }
+    response.status(400).json({
+      error: "That password-reset link is invalid or has expired.",
+    });
+  }
+});
+
 if (cloudServices) {
   app.use("/api", requireCloudUser(cloudServices.auth));
 }
+
+app.put("/api/account/password", async (request, response) => {
+  if (!cloudServices || !request.cardPilotSession) {
+    response.status(409).json({ error: "Cloud accounts are not enabled." });
+    return;
+  }
+  try {
+    const result = await cloudServices.auth.updatePassword(
+      request.cardPilotSession,
+      request.body,
+    );
+    if (result.session) cloudServices.auth.setSessionCookies(response, result.session);
+    response.json({ user: result.user });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      response.status(400).json({
+        error: "Use a new password containing at least 8 characters.",
+      });
+      return;
+    }
+    console.error("CardPilot password update failed", {
+      status: error?.status,
+      code: error?.code,
+    });
+    response.status(400).json({
+      error: request.body?.currentPassword
+        ? "The current password was not accepted, or the new password is invalid."
+        : "The new password could not be saved. Request a new reset link and try again.",
+    });
+  }
+});
+
+app.get("/api/account/export", async (request, response) => {
+  try {
+    const cards = await collectionStore.export(collectionUserId(request));
+    const exportedAt = new Date().toISOString();
+    const backup = {
+      schemaVersion: "cardpilot-account-backup-v1",
+      exportedAt,
+      account: { email: request.cardPilotUser?.email ?? null },
+      cardCount: cards.length,
+      cards,
+    };
+    response.set({
+      "Cache-Control": "private, no-store",
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Disposition": `attachment; filename="cardpilot-backup-${exportedAt.slice(0, 10)}.json"`,
+    });
+    response.send(`${JSON.stringify(backup, null, 2)}\n`);
+  } catch (error) {
+    console.error("CardPilot account export failed", error);
+    response.status(500).json({
+      error: "CardPilot could not prepare the collection backup.",
+    });
+  }
+});
+
+const AccountDeletionSchema = z.object({
+  password: z.string().min(8).max(128),
+  confirmation: z.literal("DELETE"),
+}).strict();
+
+app.delete("/api/account", async (request, response) => {
+  if (!cloudServices || collectionStore.mode !== "supabase") {
+    response.status(409).json({ error: "Cloud accounts are not enabled." });
+    return;
+  }
+  try {
+    const input = AccountDeletionSchema.parse(request.body);
+    await cloudServices.auth.verifyPassword(
+      request.cardPilotUser.email,
+      input.password,
+    );
+    await collectionStore.removeAllForUser(request.cardPilotUser.id);
+    await cloudServices.auth.deleteUser(request.cardPilotUser.id);
+    cloudServices.auth.clearSessionCookies(response);
+    response.status(204).end();
+  } catch (error) {
+    if (!(error instanceof ZodError)) {
+      console.error("CardPilot account deletion failed", {
+        status: error?.status,
+        code: error?.code,
+      });
+    }
+    response.status(400).json({
+      error:
+        "CardPilot could not delete the account. Verify the password and type DELETE exactly.",
+    });
+  }
+});
 
 app.get("/api/collection", async (request, response) => {
   try {
