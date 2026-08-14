@@ -7,6 +7,10 @@ import {
   type AccountUser,
 } from "./accounts/AccountGate";
 import { AccountSettings } from "./accounts/AccountSettings";
+import {
+  defaultAccountPreferences,
+  type AccountPreferences,
+} from "./accounts/preferences";
 import { CollectionView } from "./collection/CollectionView";
 import {
   createCardDetailImages,
@@ -566,6 +570,9 @@ function App() {
   const [localImportError, setLocalImportError] = useState<string | null>(null);
   const [isAccountSettingsOpen, setIsAccountSettingsOpen] = useState(false);
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
+  const [accountPreferences, setAccountPreferences] = useState<AccountPreferences>(
+    defaultAccountPreferences,
+  );
 
   const originalFrontPreview = usePreviewUrl(frontFile);
   const originalBackPreview = usePreviewUrl(backFile);
@@ -640,6 +647,33 @@ function App() {
       isCurrent = false;
     };
   }, [accountSession]);
+
+  useEffect(() => {
+    if (!accountSession?.user) return;
+    let isCurrent = true;
+    void fetch("/api/account/preferences")
+      .then(async (response) => {
+        const payload = (await response.json().catch(() => null)) as
+          | (AccountPreferences & { error?: string })
+          | null;
+        if (!response.ok || !payload) {
+          throw new Error(payload?.error ?? "CardPilot could not load account preferences.");
+        }
+        if (isCurrent) setAccountPreferences(payload);
+      })
+      .catch((caughtError) => {
+        if (isCurrent) {
+          setAccountSessionError(
+            caughtError instanceof Error
+              ? caughtError.message
+              : "CardPilot could not load account preferences.",
+          );
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [accountSession?.user]);
 
   useEffect(() => {
     if (accountSession?.mode !== "supabase" || !accountSession.user) return;
@@ -1735,6 +1769,7 @@ function App() {
             error={collectionError}
             onCardsChange={setCollectionCards}
             onScanCard={startNewScan}
+            accountPreferences={accountPreferences}
           />
         ) : (
           <>
@@ -2224,11 +2259,14 @@ function App() {
           onClose={() => setIsAccountSettingsOpen(false)}
           onAccountDeleted={() => {
             setCollectionCards([]);
+            setAccountPreferences(defaultAccountPreferences);
             setIsAccountSettingsOpen(false);
             setIsPasswordRecovery(false);
             setAccountSession({ mode: "supabase", user: null });
             setView("scan");
           }}
+          preferences={accountPreferences}
+          onPreferencesChange={setAccountPreferences}
         />
       )}
     </div>

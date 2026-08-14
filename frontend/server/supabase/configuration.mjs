@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { SupabaseAuthService } from "./auth.mjs";
 import { SupabaseCollectionRepository } from "./collection-store.mjs";
+import { SupabaseAccountPreferencesRepository } from "./account-preferences.mjs";
 
 export function supabaseConfiguration(env = process.env) {
   const requested = env.COLLECTION_STORAGE_MODE?.trim().toLowerCase() === "supabase";
@@ -68,5 +69,6 @@ export function createSupabaseServices(configuration) {
       client: adminClient,
       bucket: configuration.bucket,
     }),
+    preferences: new SupabaseAccountPreferencesRepository({ client: adminClient }),
   };
 }

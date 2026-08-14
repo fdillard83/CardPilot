@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { AccountUser } from "./AccountGate";
+import type { AccountPreferences } from "./preferences";
 
 export function AccountSettings({
   user,
@@ -7,12 +8,16 @@ export function AccountSettings({
   onRecoveryComplete,
   onClose,
   onAccountDeleted,
+  preferences,
+  onPreferencesChange,
 }: {
   user: AccountUser;
   recoveryMode: boolean;
   onRecoveryComplete: () => void;
   onClose: () => void;
   onAccountDeleted: () => void;
+  preferences: AccountPreferences;
+  onPreferencesChange: (preferences: AccountPreferences) => void;
 }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -26,6 +31,54 @@ export function AccountSettings({
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [autoValueEnabled, setAutoValueEnabled] = useState(
+    preferences.autoValueEnabled,
+  );
+  const [autoValueLimit, setAutoValueLimit] = useState(
+    preferences.autoValueMaxCents === null
+      ? ""
+      : (preferences.autoValueMaxCents / 100).toFixed(2),
+  );
+  const [preferenceStatus, setPreferenceStatus] = useState<string | null>(null);
+  const [preferenceError, setPreferenceError] = useState<string | null>(null);
+  const [isSavingPreferences, setIsSavingPreferences] = useState(false);
+
+  const savePreferences = async () => {
+    const dollars = Number(autoValueLimit);
+    if (autoValueEnabled && (!Number.isFinite(dollars) || dollars <= 0)) {
+      setPreferenceError("Enter a dollar limit greater than $0.");
+      return;
+    }
+    setIsSavingPreferences(true);
+    setPreferenceError(null);
+    setPreferenceStatus(null);
+    try {
+      const response = await fetch("/api/account/preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          autoValueEnabled,
+          autoValueMaxCents: autoValueEnabled ? Math.round(dollars * 100) : null,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | (AccountPreferences & { error?: string })
+        | null;
+      if (!response.ok || !payload) {
+        throw new Error(payload?.error ?? "CardPilot could not save this pricing rule.");
+      }
+      onPreferencesChange(payload);
+      setPreferenceStatus("Your automatic pricing rule has been saved.");
+    } catch (caughtError) {
+      setPreferenceError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not save this pricing rule.",
+      );
+    } finally {
+      setIsSavingPreferences(false);
+    }
+  };
 
   const savePassword = async () => {
     if (newPassword !== confirmPassword) {
@@ -214,6 +267,49 @@ export function AccountSettings({
 
         {!recoveryMode && (
           <>
+            <section className="account-settings-section">
+              <h3>Automatic values</h3>
+              <p>
+                Let CardPilot save its recommended value automatically for lower-value
+                cards. Recommendations above your limit still wait for your review.
+              </p>
+              <div className="account-settings-form">
+                <label className="account-toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={autoValueEnabled}
+                    onChange={(event) => setAutoValueEnabled(event.target.checked)}
+                  />
+                  Automatically save lower card values
+                </label>
+                {autoValueEnabled && (
+                  <label>
+                    Automatically save recommendations at or below
+                    <input
+                      type="number"
+                      min="0.01"
+                      max="1000000"
+                      step="0.01"
+                      inputMode="decimal"
+                      placeholder="25.00"
+                      value={autoValueLimit}
+                      onChange={(event) => setAutoValueLimit(event.target.value)}
+                    />
+                  </label>
+                )}
+                {preferenceError && <small className="account-inline-error">{preferenceError}</small>}
+                {preferenceStatus && <small className="account-inline-success">{preferenceStatus}</small>}
+                <button
+                  className="primary-action"
+                  type="button"
+                  disabled={isSavingPreferences}
+                  onClick={() => void savePreferences()}
+                >
+                  {isSavingPreferences ? "Saving..." : "Save pricing rule"}
+                </button>
+              </div>
+            </section>
+
             <section className="account-settings-section">
               <h3>Personal backup</h3>
               <p>Download your card details and original private images in one JSON backup file.</p>

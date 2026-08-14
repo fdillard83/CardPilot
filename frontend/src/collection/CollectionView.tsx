@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AccountPreferences } from "../accounts/preferences";
 import {
   cardCategoryLabel,
   cardKindFromFields,
@@ -994,12 +995,14 @@ export function CollectionView({
   error,
   onCardsChange,
   onScanCard,
+  accountPreferences,
 }: {
   cards: SavedCollectionCard[];
   isLoading: boolean;
   error: string | null;
   onCardsChange: (cards: SavedCollectionCard[]) => void;
   onScanCard: () => void;
+  accountPreferences: AccountPreferences;
 }) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
@@ -1011,6 +1014,9 @@ export function CollectionView({
     useState<ValuationProfile | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [automaticValueStatus, setAutomaticValueStatus] = useState<string | null>(null);
+  const [expandedImageCard, setExpandedImageCard] =
+    useState<SavedCollectionCard | null>(null);
   const [marketCardId, setMarketCardId] = useState<string | null>(null);
   const [marketSnapshot, setMarketSnapshot] =
     useState<ActiveMarketSnapshot | null>(null);
@@ -1060,6 +1066,15 @@ export function CollectionView({
   const [bulkValuationError, setBulkValuationError] = useState<string | null>(
     null,
   );
+
+  useEffect(() => {
+    if (!expandedImageCard) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExpandedImageCard(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [expandedImageCard]);
 
   const categories = useMemo(
     () =>
@@ -1456,6 +1471,35 @@ export function CollectionView({
     }
   };
 
+  const saveAutomaticRecommendation = async (
+    card: SavedCollectionCard,
+    recommendation: NonNullable<ValuationRecommendationSnapshot["recommendation"]>,
+  ) => {
+    const response = await fetch(
+      `/api/collection/${encodeURIComponent(card.collectionId)}/valuation`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amountCents: recommendation.amountCents,
+          currency: recommendation.currency,
+          confidence: recommendation.confidence,
+          method: recommendation.method,
+          userAdjusted: false,
+        }),
+      },
+    );
+    const payload = (await response.json().catch(() => null)) as
+      | { card?: SavedCollectionCard; error?: string }
+      | null;
+    if (!response.ok || !payload?.card) {
+      throw new Error(
+        payload?.error ?? "CardPilot could not automatically save this value.",
+      );
+    }
+    return payload.card;
+  };
+
   const refreshValuationSnapshot = async (
     card: SavedCollectionCard,
     soldExcludedObservationIds: string[],
@@ -1512,6 +1556,29 @@ export function CollectionView({
         );
         setValuationCurrency(snapshot.recommendation.currency);
         setValuationConfidence(snapshot.recommendation.confidence);
+        const limit = accountPreferences.autoValueMaxCents;
+        if (
+          accountPreferences.autoValueEnabled &&
+          limit !== null &&
+          snapshot.recommendation.amountCents <= limit
+        ) {
+          const savedCard = await saveAutomaticRecommendation(
+            card,
+            snapshot.recommendation,
+          );
+          onCardsChange(
+            cards.map((item) =>
+              item.collectionId === savedCard.collectionId ? savedCard : item,
+            ),
+          );
+          setAutomaticValueStatus(
+            `${card.title} was automatically valued at ${formatPrice(
+              snapshot.recommendation.amountCents,
+              snapshot.recommendation.currency,
+            )}.`,
+          );
+          if (openPanel) closeValuationPanel();
+        }
       }
     } catch (caughtError) {
       if (requestId !== valuationRequestIdRef.current) return;
@@ -1739,6 +1806,7 @@ export function CollectionView({
     setBulkValuationError(null);
     setBulkRefreshing(true);
     const results: BulkValuationResult[] = [];
+    const automaticUpdates = new Map<string, SavedCollectionCard>();
     try {
       for (let index = 0; index < cards.length; index += 1) {
         const card = cards[index];
@@ -1750,7 +1818,19 @@ export function CollectionView({
             pricingCacheContext([], []),
             snapshot,
           );
-          results.push({ card, snapshot, error: null });
+          let resultCard = card;
+          const recommendation = snapshot.recommendation;
+          const limit = accountPreferences.autoValueMaxCents;
+          if (
+            recommendation &&
+            accountPreferences.autoValueEnabled &&
+            limit !== null &&
+            recommendation.amountCents <= limit
+          ) {
+            resultCard = await saveAutomaticRecommendation(card, recommendation);
+            automaticUpdates.set(resultCard.collectionId, resultCard);
+          }
+          results.push({ card: resultCard, snapshot, error: null });
           setBulkValuationResults([...results]);
           setBulkCompletedCount(results.length);
           if (
@@ -1790,9 +1870,22 @@ export function CollectionView({
       }
       setBulkSelectedIds(
         results
-          .filter((result) => result.snapshot?.recommendation && !result.error)
+          .filter(
+            (result) =>
+              result.snapshot?.recommendation &&
+              !result.error &&
+              !automaticUpdates.has(result.card.collectionId),
+          )
           .map((result) => result.card.collectionId),
       );
+      if (automaticUpdates.size > 0) {
+        onCardsChange(
+          cards.map((card) => automaticUpdates.get(card.collectionId) ?? card),
+        );
+        setAutomaticValueStatus(
+          `${automaticUpdates.size} lower-value card${automaticUpdates.size === 1 ? " was" : "s were"} valued automatically.`,
+        );
+      }
     } finally {
       setBulkRefreshing(false);
     }
@@ -1998,7 +2091,7 @@ export function CollectionView({
       <div className="collection-summary" aria-label="Collection summary">
         <div className="collection-summary-value">
           <strong>{collectionValuation.totalLabel}</strong>
-          <span>Confirmed collection value</span>
+          <span>Saved collection value</span>
         </div>
         <div><strong>{cards.length}</strong><span>Total cards</span></div>
         <div><strong>{collectionValuation.valuedCount}</strong><span>Valued</span></div>
@@ -2060,6 +2153,12 @@ export function CollectionView({
           <span>{actionError ?? error}</span>
         </div>
       )}
+      {automaticValueStatus && (
+        <div className="collection-status-banner" role="status">
+          <span>{automaticValueStatus}</span>
+          <button type="button" onClick={() => setAutomaticValueStatus(null)}>Dismiss</button>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="collection-empty"><span className="spinner" /> Loading your collection...</div>
@@ -2087,7 +2186,15 @@ export function CollectionView({
                 key={card.collectionId}
               >
                 <div className="collection-card-image">
-                  <img src={card.images.frontUrl} alt={`Front of ${card.title}`} />
+                  <button
+                    className="collection-card-image-button"
+                    type="button"
+                    onClick={() => setExpandedImageCard(card)}
+                    aria-label={`View the full image of ${card.title}`}
+                  >
+                    <img src={card.images.frontUrl} alt={`Front of ${card.title}`} />
+                    <span className="collection-image-view-label">View full card</span>
+                  </button>
                   {card.fields.serialNumber && <span>Numbered {card.fields.serialNumber}</span>}
                 </div>
                 {isEditing ? (
@@ -2323,7 +2430,7 @@ export function CollectionView({
                     {card.confirmedValuation ? (
                       <div className="collection-card-value">
                         <div>
-                          <span>Confirmed value</span>
+                          <span>Saved value</span>
                           <strong>
                             {formatPrice(
                               card.confirmedValuation.amountCents,
@@ -2344,13 +2451,13 @@ export function CollectionView({
                         <small>
                           {valuationMethodLabel(card.confirmedValuation.method)}
                           {card.confirmedValuation.userAdjusted ? " · Adjusted by collector" : ""}
-                          {` · Confirmed ${new Date(card.confirmedValuation.valuedAt).toLocaleDateString()}`}
+                          {` · Saved ${new Date(card.confirmedValuation.valuedAt).toLocaleDateString()}`}
                         </small>
                       </div>
                     ) : (
                       <div className="collection-card-value collection-card-value-empty">
                         <div>
-                          <span>Confirmed value</span>
+                          <span>Saved value</span>
                           <strong>Not valued yet</strong>
                         </div>
                         <small>Check current pricing and confirm a value.</small>
@@ -2558,6 +2665,26 @@ export function CollectionView({
               </article>
             );
           })}
+        </div>
+      )}
+      {expandedImageCard && (
+        <div
+          className="collection-image-viewer"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setExpandedImageCard(null);
+          }}
+        >
+          <section role="dialog" aria-modal="true" aria-label={`Full image of ${expandedImageCard.title}`}>
+            <header>
+              <strong>{expandedImageCard.title}</strong>
+              <button type="button" onClick={() => setExpandedImageCard(null)}>Close</button>
+            </header>
+            <img
+              src={expandedImageCard.images.frontUrl}
+              alt={`Full front of ${expandedImageCard.title}`}
+            />
+          </section>
         </div>
       )}
     </section>

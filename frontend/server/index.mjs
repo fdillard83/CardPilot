@@ -312,6 +312,38 @@ app.put("/api/account/password", async (request, response) => {
   }
 });
 
+app.get("/api/account/preferences", async (request, response) => {
+  if (!cloudServices) {
+    response.json({ autoValueEnabled: false, autoValueMaxCents: null });
+    return;
+  }
+  try {
+    response.json(await cloudServices.preferences.get(request.cardPilotUser.id));
+  } catch (error) {
+    console.error("Account preferences loading failed", error);
+    response.status(500).json({ error: "CardPilot could not load account preferences." });
+  }
+});
+
+app.put("/api/account/preferences", async (request, response) => {
+  if (!cloudServices) {
+    response.status(409).json({ error: "Cloud accounts are not enabled." });
+    return;
+  }
+  try {
+    response.json(
+      await cloudServices.preferences.update(request.cardPilotUser.id, request.body),
+    );
+  } catch (error) {
+    if (!(error instanceof ZodError)) {
+      console.error("Account preferences update failed", error);
+    }
+    response.status(400).json({
+      error: "Choose a valid automatic-value limit, or turn the rule off.",
+    });
+  }
+});
+
 app.get("/api/account/export", async (request, response) => {
   try {
     const cards = await collectionStore.export(collectionUserId(request));
