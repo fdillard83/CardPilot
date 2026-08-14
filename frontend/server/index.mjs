@@ -17,6 +17,7 @@ import {
 } from "./identification/image-intake.mjs";
 import { createCorrectionLogger } from "./correction-log.mjs";
 import { CollectionStore } from "./collection-store.mjs";
+import { LocalCollectionRepository } from "./collection-repository.mjs";
 import { ActiveMarketService } from "./valuation/active-market.mjs";
 import { ValuationRecommendationService } from "./valuation/recommendation.mjs";
 import {
@@ -24,6 +25,21 @@ import {
   TheCardApiError,
 } from "./sold-comps/the-card-api-client.mjs";
 import { SoldCompsService } from "./sold-comps/sold-comps.mjs";
+import {
+  PokemonTcgApiError,
+  PokemonTcgClient,
+} from "./pokemon-tcg/client.mjs";
+import { PokemonCatalogSearchService } from "./pokemon-tcg/catalog-search.mjs";
+import { CandidateValuesSchema } from "./identification/contracts.mjs";
+import {
+  createSupabaseServices,
+  supabaseConfiguration,
+} from "./supabase/configuration.mjs";
+import { requireCloudUser } from "./supabase/auth.mjs";
+import {
+  importLocalCollection,
+  localImportStatus,
+} from "./supabase/local-import.mjs";
 
 const serverFile = fileURLToPath(import.meta.url);
 const currentDirectory = path.dirname(serverFile);
@@ -56,6 +72,10 @@ const soldComps = theCardApiKey
       cardApiClient: new TheCardApiClient({ apiKey: theCardApiKey }),
     })
   : null;
+const pokemonTcgApiKey = process.env.POKEMON_TCG_API_KEY?.trim() || null;
+const pokemonCatalog = new PokemonCatalogSearchService({
+  client: new PokemonTcgClient({ apiKey: pokemonTcgApiKey }),
+});
 const valuationRecommendations = new ValuationRecommendationService({
   soldComps,
   activeMarket,
@@ -63,13 +83,24 @@ const valuationRecommendations = new ValuationRecommendationService({
 const correctionLogger = createCorrectionLogger({
   filePath: path.resolve(currentDirectory, "../.data/corrections.jsonl"),
 });
-const collectionStore = new CollectionStore({
+const localCollectionStore = new CollectionStore({
   recordsFile: path.resolve(currentDirectory, "../.data/collection.json"),
   imagesDirectory: path.resolve(currentDirectory, "../.data/collection-images"),
 });
+const cloudConfiguration = supabaseConfiguration();
+const cloudServices = createSupabaseServices(cloudConfiguration);
+const localCollectionImportEnabled =
+  process.env.LOCAL_COLLECTION_IMPORT_ENABLED === "true";
+const collectionStore =
+  cloudServices?.collection ??
+  new LocalCollectionRepository({ store: localCollectionStore });
 
 app.disable("x-powered-by");
 app.use(express.json({ limit: "30mb" }));
+
+function collectionUserId(request) {
+  return request.cardPilotUser?.id ?? null;
+}
 
 function excludedObservationIds(request, queryName = "exclude") {
   const raw = request.query[queryName];
@@ -96,13 +127,106 @@ app.get("/api/health", (_request, response) => {
       ebayConfigured,
       activeMarketConfigured: ebayConfigured,
       soldCompsConfigured: Boolean(soldComps),
+      pokemonCatalogAvailable: true,
+      pokemonTcgApiKeyConfigured: Boolean(pokemonTcgApiKey),
+      accountsConfigured: Boolean(cloudServices),
+      collectionStorage: collectionStore.mode,
     },
   });
 });
 
-app.get("/api/collection", async (_request, response) => {
+app.get("/api/auth/session", async (request, response) => {
+  response.set("Cache-Control", "no-store");
+  if (!cloudServices) {
+    response.json({ mode: "local", user: null });
+    return;
+  }
   try {
-    response.json({ cards: await collectionStore.list() });
+    const user = await cloudServices.auth.userFromRequest(request, response);
+    response.json({ mode: "supabase", user });
+  } catch (error) {
+    console.error("CardPilot account session failed", error);
+    response.status(503).json({
+      error: "CardPilot could not check your account session. Please try again.",
+    });
+  }
+});
+
+app.post("/api/auth/signup", async (request, response) => {
+  response.set("Cache-Control", "no-store");
+  if (!cloudServices) {
+    response.status(503).json({
+      error: "Cloud accounts have not been configured for CardPilot yet.",
+    });
+    return;
+  }
+  try {
+    const result = await cloudServices.auth.signUp(request.body);
+    if (result.session) {
+      cloudServices.auth.setSessionCookies(response, result.session);
+    }
+    response.status(201).json({
+      user: result.user,
+      confirmationRequired: result.confirmationRequired,
+    });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      response.status(400).json({
+        error: "Enter a valid email address and a password of at least 8 characters.",
+      });
+      return;
+    }
+    console.error("CardPilot account creation failed", {
+      status: error?.status,
+      code: error?.code,
+    });
+    response.status(error?.status === 429 ? 429 : 400).json({
+      error:
+        error?.status === 429
+          ? "Too many account attempts. Wait a moment and try again."
+          : "CardPilot could not create that account. Check the email and try again.",
+    });
+  }
+});
+
+app.post("/api/auth/login", async (request, response) => {
+  response.set("Cache-Control", "no-store");
+  if (!cloudServices) {
+    response.status(503).json({
+      error: "Cloud accounts have not been configured for CardPilot yet.",
+    });
+    return;
+  }
+  try {
+    const result = await cloudServices.auth.signIn(request.body);
+    cloudServices.auth.setSessionCookies(response, result.session);
+    response.json({ user: result.user });
+  } catch (error) {
+    if (!(error instanceof ZodError)) {
+      console.error("CardPilot sign-in failed", {
+        status: error?.status,
+        code: error?.code,
+      });
+    }
+    response.status(400).json({ error: "The email or password was not accepted." });
+  }
+});
+
+app.post("/api/auth/logout", (_request, response) => {
+  response.set("Cache-Control", "no-store");
+  if (cloudServices) cloudServices.auth.clearSessionCookies(response);
+  response.status(204).end();
+});
+
+if (cloudServices) {
+  app.use("/api", requireCloudUser(cloudServices.auth));
+}
+
+app.get("/api/collection", async (request, response) => {
+  try {
+    response.json({
+      cards: await collectionStore.list(collectionUserId(request)),
+    });
   } catch (error) {
     console.error("Collection loading failed", error);
     response.status(500).json({
@@ -111,9 +235,58 @@ app.get("/api/collection", async (_request, response) => {
   }
 });
 
+app.get("/api/collection-import/status", async (request, response) => {
+  if (!cloudServices || !localCollectionImportEnabled) {
+    response.json({ enabled: false, localCount: 0, readyCount: 0 });
+    return;
+  }
+  try {
+    response.json({
+      enabled: true,
+      ...(await localImportStatus({
+        userId: request.cardPilotUser.id,
+        localStore: localCollectionStore,
+        cloudRepository: cloudServices.collection,
+      })),
+    });
+  } catch (error) {
+    console.error("Local collection import status failed", error);
+    response.status(500).json({
+      error: "CardPilot could not check the local collection.",
+    });
+  }
+});
+
+app.post("/api/collection-import", async (request, response) => {
+  if (!cloudServices || !localCollectionImportEnabled) {
+    response.status(403).json({
+      error: "Local collection import is not enabled.",
+    });
+    return;
+  }
+  try {
+    response.json(
+      await importLocalCollection({
+        userId: request.cardPilotUser.id,
+        localStore: localCollectionStore,
+        cloudRepository: cloudServices.collection,
+      }),
+    );
+  } catch (error) {
+    console.error("Local collection import failed", error);
+    response.status(500).json({
+      error:
+        "CardPilot stopped the import because one local card could not be copied. Cards already copied remain safe.",
+    });
+  }
+});
+
 app.post("/api/collection", async (request, response) => {
   try {
-    const card = await collectionStore.create(request.body);
+    const card = await collectionStore.create(
+      collectionUserId(request),
+      request.body,
+    );
     response.status(201).json({ card });
   } catch (error) {
     if (error instanceof ZodError || error instanceof TypeError) {
@@ -133,6 +306,7 @@ app.post("/api/collection", async (request, response) => {
 app.put("/api/collection/:collectionId", async (request, response) => {
   try {
     const card = await collectionStore.update(
+      collectionUserId(request),
       request.params.collectionId,
       request.body,
     );
@@ -156,7 +330,10 @@ app.put("/api/collection/:collectionId", async (request, response) => {
 
 app.delete("/api/collection/:collectionId", async (request, response) => {
   try {
-    const removed = await collectionStore.remove(request.params.collectionId);
+    const removed = await collectionStore.remove(
+      collectionUserId(request),
+      request.params.collectionId,
+    );
     if (!removed) {
       response.status(404).json({ error: "That saved card was not found." });
       return;
@@ -174,7 +351,10 @@ app.get(
   "/api/collection/:collectionId/valuation",
   async (request, response) => {
     try {
-      const card = await collectionStore.get(request.params.collectionId);
+      const card = await collectionStore.get(
+        collectionUserId(request),
+        request.params.collectionId,
+      );
       if (!card) {
         response.status(404).json({ error: "That saved card was not found." });
         return;
@@ -205,6 +385,7 @@ app.put(
   async (request, response) => {
     try {
       const card = await collectionStore.updateConfirmedValuation(
+        collectionUserId(request),
         request.params.collectionId,
         request.body,
       );
@@ -233,6 +414,7 @@ app.delete(
   async (request, response) => {
     try {
       const card = await collectionStore.clearConfirmedValuation(
+        collectionUserId(request),
         request.params.collectionId,
       );
       if (!card) {
@@ -259,11 +441,17 @@ app.get(
 
     try {
       const image = await collectionStore.image(
+        collectionUserId(request),
         request.params.collectionId,
         request.params.side,
       );
       if (!image) {
         response.status(404).end();
+        return;
+      }
+      if (image.signedUrl) {
+        response.set("Cache-Control", "private, no-store");
+        response.redirect(302, image.signedUrl);
         return;
       }
       const contents = await readFile(image.filePath);
@@ -283,7 +471,10 @@ app.get(
   "/api/collection/:collectionId/active-market",
   async (request, response) => {
     try {
-      const card = await collectionStore.get(request.params.collectionId);
+      const card = await collectionStore.get(
+        collectionUserId(request),
+        request.params.collectionId,
+      );
       if (!card) {
         response.status(404).json({ error: "That saved card was not found." });
         return;
@@ -345,7 +536,10 @@ app.get(
   "/api/collection/:collectionId/sold-comps",
   async (request, response) => {
     try {
-      const card = await collectionStore.get(request.params.collectionId);
+      const card = await collectionStore.get(
+        collectionUserId(request),
+        request.params.collectionId,
+      );
       if (!card) {
         response.status(404).json({ error: "That saved card was not found." });
         return;
@@ -480,6 +674,68 @@ app.post("/api/identify-card", async (request, response) => {
         error instanceof Error && error.message.startsWith("The card evidence")
           ? error.message
           : "CardPilot could not reach the identification service. Please try again.",
+    });
+  }
+});
+
+app.post("/api/pokemon/catalog-search", async (request, response) => {
+  const limit = request.body?.limit ?? 6;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 12) {
+    response.status(400).json({
+      error: "The Pokémon catalog-search limit must be from 1 through 12.",
+    });
+    return;
+  }
+
+  try {
+    const fields = CandidateValuesSchema.parse(request.body?.fields);
+    const result = await pokemonCatalog.search(fields, { limit });
+    console.info(
+      "Pokémon catalog search completed",
+      JSON.stringify({
+        candidateCount: result.candidates.length,
+        queryCount: result.queriesUsed.length,
+        cacheStatus: result.cacheStatus,
+        authenticated: result.source.authenticated,
+      }),
+    );
+    response.json(result);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      response.status(400).json({
+        error: "The Pokémon catalog-search card details are invalid.",
+      });
+      return;
+    }
+    if (error instanceof TypeError) {
+      response.status(422).json({ error: error.message });
+      return;
+    }
+    if (error instanceof PokemonTcgApiError) {
+      console.error("Pokémon TCG API catalog search failed", {
+        status: error.status,
+        code: error.code,
+      });
+      if (error.status === 429) {
+        response.status(429).json({
+          error:
+            "The Pokémon catalog has reached its current request limit. Wait a moment and try again.",
+        });
+        return;
+      }
+      if (error.status === 401 || error.status === 403) {
+        response.status(503).json({
+          error:
+            "The Pokémon TCG API key was rejected. Verify POKEMON_TCG_API_KEY or remove it to use reduced unauthenticated access.",
+        });
+        return;
+      }
+    } else {
+      console.error("Pokémon catalog search failed", error);
+    }
+    response.status(502).json({
+      error:
+        "The Pokémon catalog is temporarily unavailable. CardPilot identification and eBay pricing still work.",
     });
   }
 });
@@ -690,6 +946,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === serverFile) {
     if (!soldComps) {
       console.log(
         "THE_CARD_API_KEY is not set; completed-sales comparisons are disabled.",
+      );
+    }
+    if (!pokemonTcgApiKey) {
+      console.log(
+        "POKEMON_TCG_API_KEY is not set; Pokémon catalog search will use reduced unauthenticated limits.",
       );
     }
   });

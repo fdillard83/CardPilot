@@ -24,6 +24,21 @@ try {
   if (typeof health.services?.soldCompsConfigured !== "boolean") {
     throw new Error("The health endpoint did not report sold-comps readiness.");
   }
+  if (health.services?.pokemonCatalogAvailable !== true) {
+    throw new Error("The health endpoint did not report Pokémon catalog readiness.");
+  }
+  if (typeof health.services?.pokemonTcgApiKeyConfigured !== "boolean") {
+    throw new Error("The health endpoint did not report Pokémon API-key readiness.");
+  }
+  if (health.services?.collectionStorage !== "local") {
+    throw new Error("The smoke test expected safe local collection storage.");
+  }
+
+  const sessionResponse = await fetch(`${baseUrl}/api/auth/session`);
+  const session = await sessionResponse.json();
+  if (!sessionResponse.ok || session.mode !== "local" || session.user !== null) {
+    throw new Error("The local account-session endpoint was not available.");
+  }
 
   const homeResponse = await fetch(baseUrl);
   const home = await homeResponse.text();
@@ -56,6 +71,20 @@ try {
   if (ebayResponse.status !== expectedEbayStatus) {
     throw new Error(
       `The eBay image-search endpoint returned ${ebayResponse.status}; expected ${expectedEbayStatus}.`,
+    );
+  }
+
+  const pokemonCatalogResponse = await fetch(
+    `${baseUrl}/api/pokemon/catalog-search`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    },
+  );
+  if (pokemonCatalogResponse.status !== 400) {
+    throw new Error(
+      `The Pokémon catalog endpoint returned ${pokemonCatalogResponse.status}; expected 400 for invalid data.`,
     );
   }
 

@@ -67,6 +67,222 @@
   font-size: 9px;
 }
 
+.account-menu {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-left: 7px;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+
+.account-menu small {
+  max-width: 190px;
+  overflow: hidden;
+  color: var(--soft-ink);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-shell {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 42px 0;
+}
+
+.account-card {
+  width: min(100%, 470px);
+  padding: clamp(28px, 6vw, 48px);
+  border: 1px solid var(--line-bright);
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(183, 238, 79, 0.09), transparent 38%),
+    var(--panel);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.32);
+}
+
+.account-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 40px;
+  font-size: 19px;
+  font-weight: 850;
+}
+
+.account-eyebrow {
+  color: var(--lime);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.account-card h1 {
+  margin: 12px 0 12px;
+  font-size: clamp(36px, 8vw, 50px);
+  line-height: 0.98;
+  letter-spacing: -0.055em;
+}
+
+.account-card > p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.account-form {
+  display: grid;
+  gap: 17px;
+  margin-top: 30px;
+}
+
+.account-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--soft-ink);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.account-form input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--line-bright);
+  border-radius: 12px;
+  color: var(--ink);
+  background: rgba(3, 10, 7, 0.48);
+}
+
+.account-form label small {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.account-message {
+  padding: 12px 14px;
+  border: 1px solid var(--line-bright);
+  border-radius: 11px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.account-error {
+  color: #ffc6bd;
+  border-color: rgba(255, 130, 110, 0.28);
+  background: rgba(255, 94, 75, 0.08);
+}
+
+.account-notice {
+  color: var(--soft-ink);
+  border-color: rgba(183, 238, 79, 0.24);
+  background: rgba(183, 238, 79, 0.07);
+}
+
+.account-card .primary-action {
+  width: 100%;
+  min-height: 49px;
+  justify-content: center;
+}
+
+.account-mode-button {
+  width: 100%;
+  margin-top: 16px;
+  padding: 10px;
+  border: 0;
+  color: var(--soft-ink);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.account-loading {
+  text-align: center;
+}
+
+.account-loading .account-brand {
+  justify-content: center;
+}
+
+.account-confirmation-icon {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 24px;
+  border-radius: 50%;
+  color: #07100d;
+  background: var(--lime);
+  font-size: 25px;
+  font-weight: 900;
+  box-shadow: 0 10px 30px rgba(183, 238, 79, 0.2);
+}
+
+.account-confirmation > p strong {
+  color: var(--soft-ink);
+  overflow-wrap: anywhere;
+}
+
+.account-confirmation-help {
+  display: grid;
+  gap: 5px;
+  margin: 24px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.account-confirmation-help strong {
+  color: var(--soft-ink);
+}
+
+.local-import-banner {
+  width: min(1180px, calc(100% - 48px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 18px auto 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(183, 238, 79, 0.22);
+  border-radius: 15px;
+  background: rgba(183, 238, 79, 0.065);
+}
+
+.local-import-banner > div {
+  display: grid;
+  gap: 4px;
+}
+
+.local-import-banner strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.local-import-banner span,
+.local-import-banner small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.local-import-banner small {
+  color: #ffc6bd;
+}
+
+.local-import-banner .primary-action {
+  flex: 0 0 auto;
+}
+
 .brand-mark {
   width: 38px;
   height: 38px;
@@ -940,6 +1156,39 @@ main {
   margin-top: 34px;
   padding-top: 28px;
   border-top: 1px solid var(--line);
+}
+
+.pokemon-catalog-results {
+  border-top-color: rgba(100, 176, 255, 0.2);
+}
+
+.pokemon-source-badge {
+  border-color: rgba(100, 176, 255, 0.3);
+  color: #9dccff;
+  background: rgba(100, 176, 255, 0.07);
+}
+
+.pokemon-match-image {
+  background:
+    linear-gradient(145deg, rgba(100, 176, 255, 0.08), transparent),
+    #09130f;
+}
+
+.pokemon-match-basis {
+  min-height: 34px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.pokemon-cache-note {
+  margin-top: 16px;
+  border-left: 2px solid #9dccff;
+  padding: 8px 10px;
+  color: var(--soft-ink);
+  background: rgba(100, 176, 255, 0.055);
+  font-size: 10px;
 }
 
 .ebay-results-heading {
@@ -2076,6 +2325,33 @@ main {
   font: inherit;
   font-weight: 850;
   cursor: pointer;
+}
+
+.pricing-snapshot-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 16px;
+  border: 1px solid rgba(183, 238, 79, 0.2);
+  border-radius: 11px;
+  padding: 10px 12px;
+  color: var(--muted);
+  background: rgba(183, 238, 79, 0.035);
+  font-size: 9px;
+}
+
+.pricing-snapshot-status strong {
+  color: var(--lime);
+}
+
+.pricing-snapshot-status-previous {
+  border-color: rgba(255, 196, 87, 0.28);
+  background: rgba(255, 196, 87, 0.045);
+}
+
+.pricing-snapshot-status-previous strong {
+  color: #ffc457;
 }
 
 .card-value-panel {
@@ -3252,6 +3528,14 @@ select:focus-visible {
   .prototype-badge { display: none; }
   .brand > span:last-child { display: none; }
   .topbar-nav button { padding: 0 9px; }
+  .account-menu small { display: none; }
+  .account-menu { margin-left: 0; padding-left: 6px; }
+  .account-menu button { padding: 0 7px; }
+  .local-import-banner {
+    width: min(100% - 28px, 1180px);
+    align-items: flex-start;
+    flex-direction: column;
+  }
 
   .hero-section {
     min-height: auto;
@@ -3355,6 +3639,7 @@ select:focus-visible {
   .collection-card-expanded { display: block; }
   .collection-card-expanded .collection-card-image { min-height: 0; height: 320px; }
   .valuation-heading { align-items: flex-start; flex-direction: column; }
+  .pricing-snapshot-status { align-items: flex-start; flex-direction: column; }
   .card-value-recommendation,
   .card-value-blend,
   .valuation-evidence-grid,

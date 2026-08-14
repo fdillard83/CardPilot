@@ -28,6 +28,15 @@ const EbayReferenceSchema = z
   })
   .strict();
 
+const PokemonCatalogReferenceSchema = z
+  .object({
+    cardId: z.string().min(1).max(200),
+    label: z.string().min(1).max(500),
+    imageUrl: z.string().url().nullable(),
+    catalogUrl: z.string().url().nullable(),
+  })
+  .strict();
+
 const rawGradingProfile = Object.freeze({
   isGraded: false,
   company: null,
@@ -91,6 +100,7 @@ export const CollectionCreateSchema = z
     frontImage: imageDataUrl,
     backImage: imageDataUrl.nullable().default(null),
     ebayReference: EbayReferenceSchema.nullable().default(null),
+    pokemonCatalogReference: PokemonCatalogReferenceSchema.nullable().default(null),
     grading: GradingProfileSchema.default(rawGradingProfile),
     valuationProfile: ValuationProfileSchema.optional(),
   })
@@ -102,31 +112,32 @@ export const CollectionUpdateSchema = z
     grading: GradingProfileSchema.optional(),
     valuationProfile: ValuationProfileSchema.optional(),
     ebayReference: EbayReferenceSchema.nullable().optional(),
+    pokemonCatalogReference: PokemonCatalogReferenceSchema.nullable().optional(),
   })
   .strict();
 
-function gradingFromRecord(record) {
+export function gradingFromRecord(record) {
   const parsed = GradingProfileSchema.safeParse(record.grading);
   return parsed.success ? parsed.data : { ...rawGradingProfile };
 }
 
-function valuationProfileFromRecord(record) {
+export function valuationProfileFromRecord(record) {
   const parsed = ValuationProfileSchema.safeParse(record.valuationProfile);
   return parsed.success
     ? parsed.data
     : deriveValuationProfile(fieldsFromRecord(record));
 }
 
-function fieldsFromRecord(record) {
+export function fieldsFromRecord(record) {
   return CandidateValuesSchema.parse(record.fields);
 }
 
-function confirmedValuationFromRecord(record) {
+export function confirmedValuationFromRecord(record) {
   const parsed = ConfirmedValuationSchema.safeParse(record.confirmedValuation);
   return parsed.success ? parsed.data : null;
 }
 
-function titleFromFields(fields) {
+export function titleFromFields(fields) {
   const identity = cardIdentity(fields);
   if (isPokemonCard(fields)) {
     return (
@@ -146,7 +157,7 @@ function titleFromFields(fields) {
       .join(" ") || "Saved sports card"
   );
 }
-function decodeImage(dataUrl) {
+export function decodeImage(dataUrl) {
   const match = dataUrl.match(
     /^data:image\/(jpeg|png|webp|gif);base64,([a-z0-9+/=\r\n]+)$/i,
   );
@@ -162,7 +173,7 @@ function decodeImage(dataUrl) {
   return { buffer, extension, mimeType };
 }
 
-function publicRecord(record) {
+export function publicRecord(record) {
   const fields = fieldsFromRecord(record);
   return {
     collectionId: record.collectionId,
@@ -171,7 +182,8 @@ function publicRecord(record) {
     fields,
     overallConfidence: record.overallConfidence,
     decision: record.decision,
-    ebayReference: record.ebayReference,
+    ebayReference: record.ebayReference ?? null,
+    pokemonCatalogReference: record.pokemonCatalogReference ?? null,
     grading: gradingFromRecord(record),
     valuationProfile: valuationProfileFromRecord(record),
     confirmedValuation: confirmedValuationFromRecord(record),
@@ -237,6 +249,7 @@ export class CollectionStore {
           overallConfidence: validated.overallConfidence,
           decision: validated.decision,
           ebayReference: validated.ebayReference,
+          pokemonCatalogReference: validated.pokemonCatalogReference,
           grading: validated.grading,
           valuationProfile:
             validated.valuationProfile ?? deriveValuationProfile(validated.fields),
@@ -290,6 +303,10 @@ export class CollectionStore {
           validated.ebayReference === undefined
             ? records[index].ebayReference
             : validated.ebayReference,
+        pokemonCatalogReference:
+          validated.pokemonCatalogReference === undefined
+            ? records[index].pokemonCatalogReference ?? null
+            : validated.pokemonCatalogReference,
         updatedAt: this.now().toISOString(),
       };
       await this.writeRecords(records);

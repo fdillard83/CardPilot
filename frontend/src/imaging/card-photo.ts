@@ -1,3 +1,5 @@
+import { isReliableCardDetection } from "./card-detection";
+
 export type PreparedCardPhoto = {
   image: string;
   normalized: boolean;
@@ -228,6 +230,9 @@ function detectCardQuad(canvas: HTMLCanvasElement): Quad | null {
   const component = largestComponent(closedMask, width, height);
   if (!component) return null;
 
+  let foregroundCount = 0;
+  for (const value of closedMask) foregroundCount += value;
+
   const corners = expandQuad(component.corners, width, height);
   const area = quadArea(corners);
   const imageArea = width * height;
@@ -242,6 +247,18 @@ function detectCardQuad(canvas: HTMLCanvasElement): Quad | null {
     Math.min(measuredWidth, measuredHeight) /
     Math.max(measuredWidth, measuredHeight);
   const fillRatio = Math.min(1, component.count / Math.max(1, area));
+  const foregroundShare = component.count / Math.max(1, foregroundCount);
+  const oppositeWidthBalance =
+    Math.min(topWidth, bottomWidth) / Math.max(1, Math.max(topWidth, bottomWidth));
+  const oppositeHeightBalance =
+    Math.min(leftHeight, rightHeight) /
+    Math.max(1, Math.max(leftHeight, rightHeight));
+  const firstDiagonal = distance(corners[0], corners[2]);
+  const secondDiagonal = distance(corners[1], corners[3]);
+  const diagonalBalance =
+    Math.min(firstDiagonal, secondDiagonal) /
+    Math.max(1, Math.max(firstDiagonal, secondDiagonal));
+  const frameShortLongRatio = Math.min(width, height) / Math.max(width, height);
   const aspectScore = Math.max(
     0,
     1 - Math.abs(shortLongRatio - STANDARD_CARD_RATIO) / 0.22,
@@ -249,14 +266,17 @@ function detectCardQuad(canvas: HTMLCanvasElement): Quad | null {
   const fillScore = Math.max(0, Math.min(1, (fillRatio - 0.35) / 0.5));
   const sizeScore = Math.max(0, Math.min(1, (areaRatio - 0.14) / 0.24));
   const confidence = aspectScore * 0.45 + fillScore * 0.4 + sizeScore * 0.15;
-  if (
-    areaRatio < 0.16 ||
-    areaRatio > 0.94 ||
-    shortLongRatio < 0.5 ||
-    shortLongRatio > 0.88 ||
-    fillRatio < 0.42 ||
-    confidence < 0.58
-  ) {
+  if (!isReliableCardDetection({
+    areaRatio,
+    shortLongRatio,
+    fillRatio,
+    foregroundShare,
+    oppositeWidthBalance,
+    oppositeHeightBalance,
+    diagonalBalance,
+    frameShortLongRatio,
+    confidence,
+  })) {
     return null;
   }
 

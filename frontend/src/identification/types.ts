@@ -303,6 +303,34 @@ export type EbayItemDetails = {
   };
 };
 
+export type PokemonCatalogCandidate = {
+  id: string;
+  source: "pokemon_tcg";
+  rank: number;
+  cardId: string;
+  label: string;
+  imageUrl: string | null;
+  largeImageUrl: string | null;
+  catalogUrl: string | null;
+  values: Record<FieldKey, FieldValue>;
+  matchScore: number;
+  matchedSignals: string[];
+  conflictingSignals: string[];
+  basis: string;
+};
+
+export type PokemonCatalogSearchResult = {
+  source: {
+    provider: "pokemon_tcg_api";
+    displayName: "Pokémon TCG API";
+    authenticated: boolean;
+  };
+  searchedAt: string;
+  queriesUsed: string[];
+  cacheStatus: "live" | "fresh" | "stale";
+  candidates: PokemonCatalogCandidate[];
+};
+
 export type Correction = {
   field: FieldKey;
   originalValue: FieldValue;
@@ -601,6 +629,12 @@ export type SavedCollectionCard = {
     itemId: string;
     title: string;
     itemWebUrl: string | null;
+  } | null;
+  pokemonCatalogReference: {
+    cardId: string;
+    label: string;
+    imageUrl: string | null;
+    catalogUrl: string | null;
   } | null;
   createdAt: string;
   updatedAt: string;

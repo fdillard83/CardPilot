@@ -187,6 +187,12 @@ test("collection records normalize and title Pokémon fields", async () => {
       overallConfidence: 0.92,
       decision: "confirm",
       frontImage: "data:image/jpeg;base64,Zm9v",
+      pokemonCatalogReference: {
+        cardId: "mep-038",
+        label: "Charmander · Mega Evolution Promos · #038",
+        imageUrl: "https://images.pokemontcg.io/mep/038.png",
+        catalogUrl: "https://prices.pokemontcg.io/tcgplayer/mep-038",
+      },
     });
 
     assert.equal(
@@ -196,6 +202,7 @@ test("collection records normalize and title Pokémon fields", async () => {
     assert.equal(created.fields.character, "Charmander");
     assert.equal(created.fields.raritySymbol, "Black Star");
     assert.equal(created.fields.promo, true);
+    assert.equal(created.pokemonCatalogReference.cardId, "mep-038");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

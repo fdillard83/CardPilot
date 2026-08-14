@@ -20,6 +20,7 @@ CardPilot is a mobile-friendly sports and Pokémon trading card identifier. A co
 - Configurable Trust Engine for auto-accept, one-tap confirmation, and full review
 - Special handling for uncertain parallels, serial numbers, autographs, memorabilia, and image variations
 - Pokémon-aware identification with separate character, set, collector-number, language, rarity, finish, promo, and variant fields
+- Optional Pokémon TCG API catalog candidates with images, explicit confirmation, server-side caching, and unauthenticated fallback
 - Category-aware collection labels, filtering, eBay searches, and valuation matching without placing Pokémon names in sports-player fields
 - Editable confirmation screen for every returned field
 - Local correction logging that retains original values and never treats one edit as global truth
@@ -30,6 +31,7 @@ CardPilot is a mobile-friendly sports and Pokémon trading card identifier. A co
 - Experimental on-demand completed-sales comparisons from The Card API
 - Bidirectional serial- and feature-adjusted fallback estimates when exact pricing is scarce
 - Review-first CardPilot valuation recommendations with collector confirmation or adjustment
+- Session-cached last-successful pricing with one automatic retry, provider status, and clear freshness timestamps
 - Confirmed per-card values, portfolio totals, stale-pricing filters, and sequential collection refresh
 - Optimized upload payloads, parallel eBay matching, and visible scan progress
 - A repeatable, opt-in accuracy evaluation library for verified sample cards
@@ -57,8 +59,10 @@ cloud sync remain future milestones. See
    [eBay Application Keys](https://developer.ebay.com/my/keys) and select a
    supported `EBAY_MARKETPLACE_ID`. The same eBay credentials power both image
    matching and collection active-market searches. To evaluate completed-sales
-   comparisons, add a The Card API key as `THE_CARD_API_KEY`. Keep every
-   credential server-side and never prefix it with `VITE_`.
+   comparisons, add a The Card API key as `THE_CARD_API_KEY`. Pokémon catalog
+   search works without a key at reduced limits; when the free key arrives, add
+   it as `POKEMON_TCG_API_KEY`. Keep every credential server-side and never
+   prefix it with `VITE_`.
 
 3. Start the web app and identification server together:
 
@@ -134,6 +138,22 @@ such as **Pokémon**, **Set**, **Collector number**, and **Variant**. Current eB
 searches use those confirmed details. CardPilot does not apply the sports-card
 serial-number, autograph, relic, or rookie multiplier model to Pokémon cards;
 Pokémon variant modeling needs its own evidence-backed methodology.
+
+After OpenAI identification, `POST /api/pokemon/catalog-search` searches the
+independent Pokémon TCG API by Pokémon name, collector number, and set. Results
+include catalog artwork and normalized CardPilot fields. Merely displaying or
+selecting a candidate does not change the identification. If the collector
+confirms that the artwork and collector number are the same card, CardPilot
+applies the catalog-backed details, stores the catalog reference, saves the
+card, and opens My Collection.
+
+The API key is optional and is sent only from Express in the `X-Api-Key` header.
+Successful responses are cached in server memory for six hours and can be used
+as stale fallback data for up to seven days during a provider outage. Without a
+key, the documented reduced unauthenticated rate limit applies. The Pokémon TCG
+API is an independent community service and is not affiliated with Nintendo or
+The Pokémon Company, so catalog failure never disables OpenAI identification,
+eBay visual search, collection storage, or pricing.
 
 The Browse API returns active purchasable listings, not verified sold
 comparables. Sold-price history requires a separately authorized data source
@@ -245,6 +265,46 @@ values older than 30 days or made stale by later card-detail edits. **Refresh al
 values** searches sequentially and pauses when a provider reports a request
 limit. Recommendations are reviewed and selected before the collection is
 updated.
+
+## Durable collection storage and accounts
+
+CardPilot supports two collection-storage modes without creating a second
+backend:
+
+- `local` (the default) keeps the existing `.data/collection.json` and local
+  image files. This preserves the current development collection.
+- `supabase` enables email/password accounts, Postgres-backed collection
+  records, and a private Supabase Storage bucket. All collection and pricing
+  routes are then scoped to the authenticated user.
+
+The browser never receives the Supabase service-role key or refresh token.
+CardPilot's existing Express server performs authentication, keeps the session
+in `HttpOnly`/`SameSite=Lax` cookies, scopes every database query by user ID,
+and issues five-minute image links only after authenticating the request.
+
+To configure cloud mode:
+
+1. Create a Supabase project.
+2. Open its SQL editor and run
+   `supabase/migrations/202608140001_cardpilot_accounts.sql`. This creates the
+   RLS-protected table and private `card-images` bucket.
+3. Copy the project URL, publishable key, and server secret key into the local
+   `.env` using the names in `.env.example`. The secret key is sensitive and
+   must never use a `VITE_` prefix.
+4. Keep `COLLECTION_STORAGE_MODE=local` until the migration and credentials are
+   ready. Then change it to `supabase` and restart CardPilot.
+5. For localhost use `APP_ORIGIN=http://localhost:5173` and
+   `SECURE_COOKIES=false`. A deployed HTTPS environment must use its public URL
+   and `SECURE_COOKIES=true` (production mode also enables secure cookies).
+6. To copy the existing collection from this computer, temporarily set
+   `LOCAL_COLLECTION_IMPORT_ENABLED=true`, restart, sign in, and use the import
+   banner. After it reports no remaining cards, set the value back to `false`
+   and restart.
+
+Switching to cloud mode does not delete or overwrite the existing local
+collection. The import skips cards whose identification ID is already present,
+so restarting an interrupted import will not intentionally duplicate completed
+copies.
 
 ## Checks
 

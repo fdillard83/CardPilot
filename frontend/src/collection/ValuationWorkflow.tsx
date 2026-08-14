@@ -25,6 +25,7 @@ export function CardValuationPanel({
   isLoading,
   isSaving,
   error,
+  showingPrevious,
   amountInput,
   currency,
   confidence,
@@ -42,6 +43,7 @@ export function CardValuationPanel({
   isLoading: boolean;
   isSaving: boolean;
   error: string | null;
+  showingPrevious: boolean;
   amountInput: string;
   currency: string;
   confidence: "low" | "medium" | "high";
@@ -99,9 +101,28 @@ export function CardValuationPanel({
         <>
           {error && (
             <div className="valuation-error" role="alert">
-              <strong>The estimate could not be refreshed.</strong>
+              <strong>
+                {snapshot
+                  ? "Refresh failed—showing the previously retrieved estimate."
+                  : "The estimate could not be refreshed."}
+              </strong>
               <span>{error}</span>
               <button type="button" onClick={onRetry}>Try again</button>
+            </div>
+          )}
+
+          {snapshot && (
+            <div
+              className={`pricing-snapshot-status${showingPrevious ? " pricing-snapshot-status-previous" : ""}`}
+              role="status"
+            >
+              <strong>
+                {showingPrevious ? "Previously retrieved estimate" : "Latest estimate"}
+              </strong>
+              <span>
+                Combined pricing · Last successful update{" "}
+                {new Date(snapshot.generatedAt).toLocaleString()}
+              </span>
             </div>
           )}
 
@@ -223,14 +244,14 @@ export function CardValuationPanel({
           {snapshot && (
             <div className="valuation-evidence-grid">
               <div>
-                <span>Completed sales</span>
+                <span>The Card API sold comps</span>
                 <strong>{sourceStatusLabel(snapshot.evidence.sold.status)}</strong>
                 <small>
                   {snapshot.evidence.sold.exactCount} exact, {snapshot.evidence.sold.broaderCount} broader, {snapshot.evidence.sold.variantEstimateCount} modeled
                 </small>
               </div>
               <div>
-                <span>Active market</span>
+                <span>eBay active market</span>
                 <strong>{sourceStatusLabel(snapshot.evidence.active.status)}</strong>
                 <small>
                   {snapshot.evidence.active.exactCount} exact, {snapshot.evidence.active.broaderCount} broader, {snapshot.evidence.active.variantEstimateCount} modeled

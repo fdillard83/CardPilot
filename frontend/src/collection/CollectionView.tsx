@@ -26,6 +26,12 @@ import {
   valuationIsStale,
   valuationMethodLabel,
 } from "./valuation-utils";
+import {
+  fetchJsonWithTransientRetry,
+  pricingCacheContext,
+  readPricingSnapshot,
+  writePricingSnapshot,
+} from "./pricing-resilience";
 
 type CollectionFilter =
   | "all"
@@ -99,13 +105,12 @@ async function fetchValuationRecommendation(
     params.append("excludeActive", id),
   );
   const query = params.toString();
-  const response = await fetch(
-    `/api/collection/${encodeURIComponent(card.collectionId)}/valuation${query ? `?${query}` : ""}`,
-  );
-  const payload = (await response.json().catch(() => null)) as
+  const { response, payload } = await fetchJsonWithTransientRetry<
     | (ValuationRecommendationSnapshot & { error?: string })
     | { error?: string }
-    | null;
+  >(
+    `/api/collection/${encodeURIComponent(card.collectionId)}/valuation${query ? `?${query}` : ""}`,
+  );
   if (
     !response.ok ||
     !payload ||
@@ -174,6 +179,28 @@ function PricingExclusionControls({
       <button type="button" onClick={onRestore}>
         Restore all
       </button>
+    </div>
+  );
+}
+
+function PricingSnapshotStatus({
+  provider,
+  timestamp,
+  showingPrevious,
+}: {
+  provider: string;
+  timestamp: string;
+  showingPrevious: boolean;
+}) {
+  return (
+    <div
+      className={`pricing-snapshot-status${showingPrevious ? " pricing-snapshot-status-previous" : ""}`}
+      role="status"
+    >
+      <strong>{showingPrevious ? "Previously retrieved result" : "Latest result"}</strong>
+      <span>
+        {provider} · Last successful update {new Date(timestamp).toLocaleString()}
+      </span>
     </div>
   );
 }
@@ -399,6 +426,7 @@ function ActiveMarketPanel({
   snapshot,
   isLoading,
   error,
+  showingPrevious,
   onRetry,
   excludedAnchorCount,
   onExcludeAnchor,
@@ -412,6 +440,7 @@ function ActiveMarketPanel({
   snapshot: ActiveMarketSnapshot | null;
   isLoading: boolean;
   error: string | null;
+  showingPrevious: boolean;
   onRetry: () => void;
   excludedAnchorCount: number;
   onExcludeAnchor: (observationId: string) => void;
@@ -445,7 +474,11 @@ function ActiveMarketPanel({
 
       {error && (
         <div className="valuation-error" role="alert">
-          <strong>Active listings are unavailable.</strong>
+          <strong>
+            {snapshot
+              ? "eBay refresh failed—showing previously retrieved listings."
+              : "eBay active listings are unavailable."}
+          </strong>
           <span>{error}</span>
           <button type="button" onClick={onRetry}>Try again</button>
         </div>
@@ -457,6 +490,11 @@ function ActiveMarketPanel({
         </div>
       ) : snapshot ? (
         <>
+          <PricingSnapshotStatus
+            provider="eBay active market"
+            timestamp={snapshot.searchedAt}
+            showingPrevious={showingPrevious}
+          />
           <div className="market-summary">
             <div>
               <span>{snapshot.queriesUsed.length > 1 ? "Searches used" : "Search used"}</span>
@@ -634,6 +672,7 @@ function SoldCompsPanel({
   snapshot,
   isLoading,
   error,
+  showingPrevious,
   onRetry,
   excludedAnchorCount,
   onExcludeAnchor,
@@ -647,6 +686,7 @@ function SoldCompsPanel({
   snapshot: SoldCompsSnapshot | null;
   isLoading: boolean;
   error: string | null;
+  showingPrevious: boolean;
   onRetry: () => void;
   excludedAnchorCount: number;
   onExcludeAnchor: (observationId: string) => void;
@@ -674,7 +714,11 @@ function SoldCompsPanel({
 
       {error && (
         <div className="valuation-error" role="alert">
-          <strong>Completed sales are unavailable.</strong>
+          <strong>
+            {snapshot
+              ? "The Card API refresh failed—showing previously retrieved sales."
+              : "The Card API completed sales are unavailable."}
+          </strong>
           <span>{error}</span>
           <button type="button" onClick={onRetry}>Try again</button>
         </div>
@@ -686,6 +730,11 @@ function SoldCompsPanel({
         </div>
       ) : snapshot ? (
         <>
+          <PricingSnapshotStatus
+            provider="The Card API sold comps"
+            timestamp={snapshot.searchedAt}
+            showingPrevious={showingPrevious}
+          />
           <div className="market-summary sold-summary">
             <div>
               <span>{snapshot.queriesUsed.length > 1 ? "Searches used" : "Search used"}</span>
@@ -867,6 +916,7 @@ export function CollectionView({
     useState<ActiveMarketSnapshot | null>(null);
   const [marketBusy, setMarketBusy] = useState(false);
   const [marketError, setMarketError] = useState<string | null>(null);
+  const [marketShowingPrevious, setMarketShowingPrevious] = useState(false);
   const [marketExcludedAnchorIds, setMarketExcludedAnchorIds] = useState<
     string[]
   >([]);
@@ -875,6 +925,7 @@ export function CollectionView({
   const [soldSnapshot, setSoldSnapshot] = useState<SoldCompsSnapshot | null>(null);
   const [soldBusy, setSoldBusy] = useState(false);
   const [soldError, setSoldError] = useState<string | null>(null);
+  const [soldShowingPrevious, setSoldShowingPrevious] = useState(false);
   const [soldExcludedAnchorIds, setSoldExcludedAnchorIds] = useState<string[]>(
     [],
   );
@@ -888,6 +939,8 @@ export function CollectionView({
   const [valuationBusy, setValuationBusy] = useState(false);
   const [valuationSaving, setValuationSaving] = useState(false);
   const [valuationError, setValuationError] = useState<string | null>(null);
+  const [valuationShowingPrevious, setValuationShowingPrevious] =
+    useState(false);
   const [valuationAmountInput, setValuationAmountInput] = useState("");
   const [valuationCurrency, setValuationCurrency] = useState("USD");
   const [valuationConfidence, setValuationConfidence] = useState<
@@ -953,6 +1006,7 @@ export function CollectionView({
     setValuationBusy(false);
     setValuationSaving(false);
     setValuationError(null);
+    setValuationShowingPrevious(false);
     setValuationAmountInput("");
     setValuationCurrency("USD");
     setValuationConfidence("low");
@@ -981,12 +1035,14 @@ export function CollectionView({
     setMarketSnapshot(null);
     setMarketBusy(false);
     setMarketError(null);
+    setMarketShowingPrevious(false);
     setMarketExcludedAnchorIds([]);
     soldRequestIdRef.current += 1;
     setSoldCardId(null);
     setSoldSnapshot(null);
     setSoldBusy(false);
     setSoldError(null);
+    setSoldShowingPrevious(false);
     setSoldExcludedAnchorIds([]);
     setPricingSessionCardId(null);
     closeValuationPanel();
@@ -1002,28 +1058,41 @@ export function CollectionView({
     excludedAnchorIds = marketExcludedAnchorIds,
   ) => {
     if (marketBusy || soldBusy || valuationBusy || valuationSaving) return;
+    const cacheContext = pricingCacheContext(excludedAnchorIds);
+    const cached = readPricingSnapshot<ActiveMarketSnapshot>(
+      "active",
+      card.collectionId,
+      cacheContext,
+    );
+    const previousSnapshot =
+      marketCardId === card.collectionId && marketSnapshot
+        ? marketSnapshot
+        : cached?.snapshot?.kind === "active_asking_snapshot"
+          ? cached.snapshot
+          : null;
     hideValuationPanel();
     soldRequestIdRef.current += 1;
     setSoldCardId(null);
     setSoldSnapshot(null);
     setSoldBusy(false);
     setSoldError(null);
+    setSoldShowingPrevious(false);
     const requestId = ++marketRequestIdRef.current;
     setMarketCardId(card.collectionId);
-    setMarketSnapshot(null);
+    setMarketSnapshot(previousSnapshot);
+    setMarketShowingPrevious(Boolean(previousSnapshot));
     setMarketError(null);
     setMarketBusy(true);
     try {
-      const response = await fetch(
+      const { response, payload } = await fetchJsonWithTransientRetry<
+        | (ActiveMarketSnapshot & { error?: string })
+        | { error?: string }
+      >(
         pricingSnapshotUrl(
           `/api/collection/${encodeURIComponent(card.collectionId)}/active-market`,
           excludedAnchorIds,
         ),
       );
-      const payload = (await response.json().catch(() => null)) as
-        | (ActiveMarketSnapshot & { error?: string })
-        | { error?: string }
-        | null;
       if (requestId !== marketRequestIdRef.current) return;
       if (!response.ok || !payload || !("groups" in payload)) {
         throw new Error(
@@ -1031,8 +1100,16 @@ export function CollectionView({
         );
       }
       setMarketSnapshot(payload);
+      setMarketShowingPrevious(false);
+      writePricingSnapshot(
+        "active",
+        card.collectionId,
+        cacheContext,
+        payload,
+      );
     } catch (caughtError) {
       if (requestId !== marketRequestIdRef.current) return;
+      setMarketShowingPrevious(Boolean(previousSnapshot));
       setMarketError(
         caughtError instanceof Error
           ? caughtError.message
@@ -1052,6 +1129,7 @@ export function CollectionView({
       setMarketCardId(null);
       setMarketSnapshot(null);
       setMarketError(null);
+      setMarketShowingPrevious(false);
     } else {
       const samePricingSession = pricingSessionCardId === card.collectionId;
       if (!samePricingSession) {
@@ -1060,6 +1138,7 @@ export function CollectionView({
         setSoldExcludedAnchorIds([]);
         setValuationSnapshot(null);
         setValuationError(null);
+        setValuationShowingPrevious(false);
       }
       void loadActiveMarket(
         card,
@@ -1103,28 +1182,41 @@ export function CollectionView({
     excludedAnchorIds = soldExcludedAnchorIds,
   ) => {
     if (soldBusy || marketBusy || valuationBusy || valuationSaving) return;
+    const cacheContext = pricingCacheContext(excludedAnchorIds);
+    const cached = readPricingSnapshot<SoldCompsSnapshot>(
+      "sold",
+      card.collectionId,
+      cacheContext,
+    );
+    const previousSnapshot =
+      soldCardId === card.collectionId && soldSnapshot
+        ? soldSnapshot
+        : cached?.snapshot?.kind === "sold_comparables"
+          ? cached.snapshot
+          : null;
     hideValuationPanel();
     marketRequestIdRef.current += 1;
     setMarketCardId(null);
     setMarketSnapshot(null);
     setMarketBusy(false);
     setMarketError(null);
+    setMarketShowingPrevious(false);
     const requestId = ++soldRequestIdRef.current;
     setSoldCardId(card.collectionId);
-    setSoldSnapshot(null);
+    setSoldSnapshot(previousSnapshot);
+    setSoldShowingPrevious(Boolean(previousSnapshot));
     setSoldError(null);
     setSoldBusy(true);
     try {
-      const response = await fetch(
+      const { response, payload } = await fetchJsonWithTransientRetry<
+        | (SoldCompsSnapshot & { error?: string })
+        | { error?: string }
+      >(
         pricingSnapshotUrl(
           `/api/collection/${encodeURIComponent(card.collectionId)}/sold-comps`,
           excludedAnchorIds,
         ),
       );
-      const payload = (await response.json().catch(() => null)) as
-        | (SoldCompsSnapshot & { error?: string })
-        | { error?: string }
-        | null;
       if (requestId !== soldRequestIdRef.current) return;
       if (!response.ok || !payload || !("groups" in payload)) {
         throw new Error(
@@ -1132,8 +1224,16 @@ export function CollectionView({
         );
       }
       setSoldSnapshot(payload);
+      setSoldShowingPrevious(false);
+      writePricingSnapshot(
+        "sold",
+        card.collectionId,
+        cacheContext,
+        payload,
+      );
     } catch (caughtError) {
       if (requestId !== soldRequestIdRef.current) return;
+      setSoldShowingPrevious(Boolean(previousSnapshot));
       setSoldError(
         caughtError instanceof Error
           ? caughtError.message
@@ -1151,6 +1251,7 @@ export function CollectionView({
       setSoldCardId(null);
       setSoldSnapshot(null);
       setSoldError(null);
+      setSoldShowingPrevious(false);
     } else {
       const samePricingSession = pricingSessionCardId === card.collectionId;
       if (!samePricingSession) {
@@ -1159,6 +1260,7 @@ export function CollectionView({
         setSoldExcludedAnchorIds([]);
         setValuationSnapshot(null);
         setValuationError(null);
+        setValuationShowingPrevious(false);
       }
       void loadSoldComps(
         card,
@@ -1200,9 +1302,25 @@ export function CollectionView({
     activeExcludedObservationIds: string[],
     openPanel = false,
   ) => {
+    const cacheContext = pricingCacheContext(
+      soldExcludedObservationIds,
+      activeExcludedObservationIds,
+    );
+    const cached = readPricingSnapshot<ValuationRecommendationSnapshot>(
+      "valuation",
+      card.collectionId,
+      cacheContext,
+    );
+    const previousSnapshot =
+      pricingSessionCardId === card.collectionId && valuationSnapshot
+        ? valuationSnapshot
+        : cached?.snapshot?.kind === "card_valuation_recommendation"
+          ? cached.snapshot
+          : null;
     const requestId = ++valuationRequestIdRef.current;
     if (openPanel) setValuationCardId(card.collectionId);
-    setValuationSnapshot(null);
+    setValuationSnapshot(previousSnapshot);
+    setValuationShowingPrevious(Boolean(previousSnapshot));
     setValuationError(null);
     if (openPanel) {
       setValuationAmountInput(
@@ -1221,6 +1339,13 @@ export function CollectionView({
       });
       if (requestId !== valuationRequestIdRef.current) return;
       setValuationSnapshot(snapshot);
+      setValuationShowingPrevious(false);
+      writePricingSnapshot(
+        "valuation",
+        card.collectionId,
+        cacheContext,
+        snapshot,
+      );
       if (snapshot.recommendation) {
         setValuationAmountInput(
           amountInputFromCents(snapshot.recommendation.amountCents),
@@ -1230,6 +1355,7 @@ export function CollectionView({
       }
     } catch (caughtError) {
       if (requestId !== valuationRequestIdRef.current) return;
+      setValuationShowingPrevious(Boolean(previousSnapshot));
       setValuationError(
         caughtError instanceof Error
           ? caughtError.message
@@ -1256,11 +1382,13 @@ export function CollectionView({
     setMarketSnapshot(null);
     setMarketBusy(false);
     setMarketError(null);
+    setMarketShowingPrevious(false);
     soldRequestIdRef.current += 1;
     setSoldCardId(null);
     setSoldSnapshot(null);
     setSoldBusy(false);
     setSoldError(null);
+    setSoldShowingPrevious(false);
     const samePricingSession = pricingSessionCardId === card.collectionId;
     const activeExcludedObservationIds = samePricingSession
       ? marketExcludedAnchorIds
@@ -1288,11 +1416,13 @@ export function CollectionView({
     setMarketSnapshot(null);
     setMarketBusy(false);
     setMarketError(null);
+    setMarketShowingPrevious(false);
     soldRequestIdRef.current += 1;
     setSoldCardId(null);
     setSoldSnapshot(null);
     setSoldBusy(false);
     setSoldError(null);
+    setSoldShowingPrevious(false);
     setValuationCardId(card.collectionId);
   };
 
@@ -1433,11 +1563,13 @@ export function CollectionView({
     setMarketCardId(null);
     setMarketSnapshot(null);
     setMarketError(null);
+    setMarketShowingPrevious(false);
     setMarketExcludedAnchorIds([]);
     soldRequestIdRef.current += 1;
     setSoldCardId(null);
     setSoldSnapshot(null);
     setSoldError(null);
+    setSoldShowingPrevious(false);
     setSoldExcludedAnchorIds([]);
     setPricingSessionCardId(null);
     closeValuationPanel();
@@ -1452,6 +1584,12 @@ export function CollectionView({
         const card = cards[index];
         try {
           const snapshot = await fetchValuationRecommendation(card);
+          writePricingSnapshot(
+            "valuation",
+            card.collectionId,
+            pricingCacheContext([], []),
+            snapshot,
+          );
           results.push({ card, snapshot, error: null });
           setBulkValuationResults([...results]);
           setBulkCompletedCount(results.length);
@@ -1465,12 +1603,22 @@ export function CollectionView({
             break;
           }
         } catch (caughtError) {
+          const cached = readPricingSnapshot<ValuationRecommendationSnapshot>(
+            "valuation",
+            card.collectionId,
+            pricingCacheContext([], []),
+          );
           results.push({
             card,
-            snapshot: null,
+            snapshot:
+              cached?.snapshot?.kind === "card_valuation_recommendation"
+                ? cached.snapshot
+                : null,
             error:
               caughtError instanceof Error
-                ? caughtError.message
+                ? cached
+                  ? `Refresh failed; showing the previously retrieved estimate. ${caughtError.message}`
+                  : caughtError.message
                 : "Pricing could not be checked.",
           });
           setBulkValuationResults([...results]);
@@ -1482,7 +1630,7 @@ export function CollectionView({
       }
       setBulkSelectedIds(
         results
-          .filter((result) => result.snapshot?.recommendation)
+          .filter((result) => result.snapshot?.recommendation && !result.error)
           .map((result) => result.card.collectionId),
       );
     } finally {
@@ -2173,6 +2321,7 @@ export function CollectionView({
                     snapshot={marketSnapshot}
                     isLoading={marketBusy}
                     error={marketError}
+                    showingPrevious={marketShowingPrevious}
                     onRetry={() => void loadActiveMarket(card)}
                     excludedAnchorCount={
                       marketExcludedAnchorIds.length + soldExcludedAnchorIds.length
@@ -2195,6 +2344,7 @@ export function CollectionView({
                     snapshot={soldSnapshot}
                     isLoading={soldBusy}
                     error={soldError}
+                    showingPrevious={soldShowingPrevious}
                     onRetry={() => void loadSoldComps(card)}
                     excludedAnchorCount={
                       marketExcludedAnchorIds.length + soldExcludedAnchorIds.length
@@ -2218,6 +2368,7 @@ export function CollectionView({
                     isLoading={valuationBusy}
                     isSaving={valuationSaving}
                     error={valuationError}
+                    showingPrevious={valuationShowingPrevious}
                     amountInput={valuationAmountInput}
                     currency={valuationCurrency}
                     confidence={valuationConfidence}
