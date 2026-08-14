@@ -19,10 +19,10 @@ Render prompts for every value marked `sync: false`. Copy the corresponding
 values from the local `frontend/.env` file; never paste them into `render.yaml`
 or any tracked file.
 
-- `APP_ORIGIN`: initially use the final Render address, such as
-  `https://cardpilot.onrender.com`. If Render has not assigned it yet, finish
-  creating the service and then set this value in the service's Environment
-  page before the final deploy.
+- `APP_ORIGIN`: use the exact HTTPS address Render assigns to the web service.
+  If the address is not visible during Blueprint creation, enter a temporary
+  expected address and correct it in the service's Environment page before
+  testing sign-in or password recovery.
 - `OPENAI_API_KEY`
 - `EBAY_CLIENT_ID`
 - `EBAY_CLIENT_SECRET`
