@@ -455,6 +455,17 @@ async function loadEbaySellerSetup(token) {
   };
 }
 
+async function createEbaySandboxResource(label, operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    const wrapped = new Error(`${label} could not be created. ${error.message ?? "eBay rejected the request."}`, { cause: error });
+    wrapped.status = error?.status;
+    wrapped.code = error?.code;
+    throw wrapped;
+  }
+}
+
 app.get("/api/ebay/selling/setup", async (request, response) => {
   try {
     const token = await ebaySellerAccessToken(request.cardPilotUser.id);
@@ -475,31 +486,31 @@ app.post("/api/ebay/selling/setup/sandbox", async (request, response) => {
     const programs = await ebaySelling.request(token, "/sell/account/v1/program/get_opted_in_programs");
     const optedIn = (programs?.programs ?? []).some((program) => program.programType === "SELLING_POLICY_MANAGEMENT");
     if (!optedIn) {
-      await ebaySelling.request(token, "/sell/account/v1/program/opt_in", {
+      await createEbaySandboxResource("Business-policy enrollment", () => ebaySelling.request(token, "/sell/account/v1/program/opt_in", {
         method: "POST",
         body: { programType: "SELLING_POLICY_MANAGEMENT" },
-      });
+      }));
     }
     const existing = await loadEbaySellerSetup(token);
     if (!existing.locations.length) {
-      await ebaySelling.request(token, `/sell/inventory/v1/location/${encodeURIComponent(resources.merchantLocationKey)}`, {
+      await createEbaySandboxResource("Inventory location", () => ebaySelling.request(token, `/sell/inventory/v1/location/${encodeURIComponent(resources.merchantLocationKey)}`, {
         method: "POST", body: resources.location,
-      });
+      }));
     }
     if (!existing.fulfillmentPolicies.length) {
-      await ebaySelling.request(token, "/sell/account/v1/fulfillment_policy", {
+      await createEbaySandboxResource("Shipping policy", () => ebaySelling.request(token, "/sell/account/v1/fulfillment_policy", {
         method: "POST", body: resources.fulfillmentPolicy,
-      });
+      }));
     }
     if (!existing.paymentPolicies.length) {
-      await ebaySelling.request(token, "/sell/account/v1/payment_policy", {
+      await createEbaySandboxResource("Payment policy", () => ebaySelling.request(token, "/sell/account/v1/payment_policy", {
         method: "POST", body: resources.paymentPolicy,
-      });
+      }));
     }
     if (!existing.returnPolicies.length) {
-      await ebaySelling.request(token, "/sell/account/v1/return_policy", {
+      await createEbaySandboxResource("Return policy", () => ebaySelling.request(token, "/sell/account/v1/return_policy", {
         method: "POST", body: resources.returnPolicy,
-      });
+      }));
     }
     response.json(await loadEbaySellerSetup(token));
   } catch (error) {

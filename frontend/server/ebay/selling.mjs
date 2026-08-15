@@ -156,8 +156,17 @@ export class EbaySellingClient {
     });
     const payload = response.status === 204 ? null : await json(response);
     if (!response.ok) {
-      const message = payload?.errors?.[0]?.message ?? "eBay rejected the selling request.";
-      throw new EbayApiError(message, { service: "selling", status: response.status, code: payload?.errors?.[0]?.errorId?.toString() });
+      const ebayError = payload?.errors?.[0];
+      const parameterDetails = (ebayError?.parameters ?? [])
+        .map((parameter) => [parameter.name, parameter.value].filter(Boolean).join(": "))
+        .filter(Boolean)
+        .join(", ");
+      const details = [ebayError?.message, ebayError?.longMessage, parameterDetails]
+        .filter((value, index, values) => value && values.indexOf(value) === index)
+        .join(" ");
+      const code = ebayError?.errorId?.toString();
+      const message = details || `eBay rejected the selling request${code ? ` (error ${code})` : ""}.`;
+      throw new EbayApiError(message, { service: "selling", status: response.status, code });
     }
     return payload;
   }

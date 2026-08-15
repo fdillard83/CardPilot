@@ -58,3 +58,21 @@ test("Sandbox setup validates a US ZIP code and builds safe test defaults", () =
   assert.equal(resources.paymentPolicy.immediatePay, true);
   assert.equal(resources.returnPolicy.returnPeriod.value, 30);
 });
+
+test("selling requests preserve useful eBay validation details", async () => {
+  const client = new EbaySellingClient({
+    clientId: "sandbox-id",
+    clientSecret: "sandbox-secret",
+    redirectUriName: "sandbox-runame",
+    fetchImpl: async () => new Response(JSON.stringify({ errors: [{
+      errorId: 20403,
+      message: "Invalid request.",
+      longMessage: "The shipping service is not valid.",
+      parameters: [{ name: "shippingServiceCode", value: "Example" }],
+    }] }), { status: 400, headers: { "Content-Type": "application/json" } }),
+  });
+  await assert.rejects(
+    client.request("access-token", "/sell/account/v1/fulfillment_policy"),
+    /shipping service is not valid.*shippingServiceCode: Example/,
+  );
+});

@@ -64,9 +64,21 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
     if (!draft) return false;
     setBusy(true); setError(null); setMessage(null);
     try {
-      const input = { ...draft };
-      delete input.status;
-      delete input.ebayListingId;
+      const input = {
+        title: draft.title,
+        description: draft.description,
+        priceCents: draft.priceCents,
+        currency: draft.currency,
+        condition: draft.condition,
+        conditionDescription: draft.conditionDescription,
+        categoryId: draft.categoryId,
+        aspects: draft.aspects,
+        merchantLocationKey: draft.merchantLocationKey,
+        fulfillmentPolicyId: draft.fulfillmentPolicyId,
+        paymentPolicyId: draft.paymentPolicyId,
+        returnPolicyId: draft.returnPolicyId,
+        listingFormat: draft.listingFormat,
+      };
       const response = await fetch(`/api/collection/${encodeURIComponent(card.collectionId)}/ebay-draft`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
       });
