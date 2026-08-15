@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   EbayListingDraftSchema,
+  EbaySandboxSetupSchema,
   EbaySellingClient,
   decryptSellerToken,
+  ebaySandboxSetupResources,
   encryptSellerToken,
 } from "./selling.mjs";
 
@@ -45,4 +47,14 @@ test("listing drafts require an editable title and positive price", () => {
   };
   assert.equal(EbayListingDraftSchema.safeParse(base).success, true);
   assert.equal(EbayListingDraftSchema.safeParse({ ...base, priceCents: 0 }).success, false);
+});
+
+test("Sandbox setup validates a US ZIP code and builds safe test defaults", () => {
+  assert.equal(EbaySandboxSetupSchema.safeParse({ postalCode: "27514", shippingCostCents: 499 }).success, true);
+  assert.equal(EbaySandboxSetupSchema.safeParse({ postalCode: "invalid", shippingCostCents: 499 }).success, false);
+  const resources = ebaySandboxSetupResources({ postalCode: "27514", shippingCostCents: 499 });
+  assert.equal(resources.location.location.address.postalCode, "27514");
+  assert.equal(resources.fulfillmentPolicy.shippingOptions[0].shippingServices[0].shippingCost.value, "4.99");
+  assert.equal(resources.paymentPolicy.immediatePay, true);
+  assert.equal(resources.returnPolicy.returnPeriod.value, 30);
 });

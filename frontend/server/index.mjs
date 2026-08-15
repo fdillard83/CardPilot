@@ -11,8 +11,10 @@ import { EbayImageSearchClient } from "./ebay/image-search.mjs";
 import { EbayApiError, EbayOAuthClient } from "./ebay/oauth-client.mjs";
 import {
   EbayListingDraftSchema,
+  EbaySandboxSetupSchema,
   EbaySellingClient,
   decryptSellerToken,
+  ebaySandboxSetupResources,
   encryptSellerToken,
 } from "./ebay/selling.mjs";
 import { CatalogCandidateGenerator } from "./identification/candidate-generator.mjs";
@@ -438,23 +440,73 @@ app.delete("/api/ebay/selling/connection", async (request, response) => {
   response.status(204).end();
 });
 
-app.get("/api/ebay/selling/setup", async (request, response) => {
-  try {
-    const token = await ebaySellerAccessToken(request.cardPilotUser.id);
-    const [locations, fulfillment, payment, returns] = await Promise.all([
+async function loadEbaySellerSetup(token) {
+  const [locations, fulfillment, payment, returns] = await Promise.all([
       ebaySelling.request(token, "/sell/inventory/v1/location?limit=100"),
       ebaySelling.request(token, `/sell/account/v1/fulfillment_policy?marketplace_id=${ebayMarketplaceId}`),
       ebaySelling.request(token, `/sell/account/v1/payment_policy?marketplace_id=${ebayMarketplaceId}`),
       ebaySelling.request(token, `/sell/account/v1/return_policy?marketplace_id=${ebayMarketplaceId}`),
-    ]);
-    response.json({
-      locations: (locations?.locations ?? []).map((item) => ({ id: item.merchantLocationKey, name: item.name })),
-      fulfillmentPolicies: (fulfillment?.fulfillmentPolicies ?? []).map((item) => ({ id: item.fulfillmentPolicyId, name: item.name })),
-      paymentPolicies: (payment?.paymentPolicies ?? []).map((item) => ({ id: item.paymentPolicyId, name: item.name })),
-      returnPolicies: (returns?.returnPolicies ?? []).map((item) => ({ id: item.returnPolicyId, name: item.name })),
-    });
+  ]);
+  return {
+    locations: (locations?.locations ?? []).map((item) => ({ id: item.merchantLocationKey, name: item.name })),
+    fulfillmentPolicies: (fulfillment?.fulfillmentPolicies ?? []).map((item) => ({ id: item.fulfillmentPolicyId, name: item.name })),
+    paymentPolicies: (payment?.paymentPolicies ?? []).map((item) => ({ id: item.paymentPolicyId, name: item.name })),
+    returnPolicies: (returns?.returnPolicies ?? []).map((item) => ({ id: item.returnPolicyId, name: item.name })),
+  };
+}
+
+app.get("/api/ebay/selling/setup", async (request, response) => {
+  try {
+    const token = await ebaySellerAccessToken(request.cardPilotUser.id);
+    response.json(await loadEbaySellerSetup(token));
   } catch (error) {
     response.status(502).json({ error: error.message ?? "CardPilot could not load eBay seller policies." });
+  }
+});
+
+app.post("/api/ebay/selling/setup/sandbox", async (request, response) => {
+  if (ebaySellEnvironment !== "sandbox") {
+    return response.status(403).json({ error: "Automatic seller setup is available only in eBay Sandbox." });
+  }
+  try {
+    const input = EbaySandboxSetupSchema.parse(request.body);
+    const token = await ebaySellerAccessToken(request.cardPilotUser.id);
+    const resources = ebaySandboxSetupResources(input, ebayMarketplaceId);
+    const programs = await ebaySelling.request(token, "/sell/account/v1/program/get_opted_in_programs");
+    const optedIn = (programs?.programs ?? []).some((program) => program.programType === "SELLING_POLICY_MANAGEMENT");
+    if (!optedIn) {
+      await ebaySelling.request(token, "/sell/account/v1/program/opt_in", {
+        method: "POST",
+        body: { programType: "SELLING_POLICY_MANAGEMENT" },
+      });
+    }
+    const existing = await loadEbaySellerSetup(token);
+    if (!existing.locations.length) {
+      await ebaySelling.request(token, `/sell/inventory/v1/location/${encodeURIComponent(resources.merchantLocationKey)}`, {
+        method: "POST", body: resources.location,
+      });
+    }
+    if (!existing.fulfillmentPolicies.length) {
+      await ebaySelling.request(token, "/sell/account/v1/fulfillment_policy", {
+        method: "POST", body: resources.fulfillmentPolicy,
+      });
+    }
+    if (!existing.paymentPolicies.length) {
+      await ebaySelling.request(token, "/sell/account/v1/payment_policy", {
+        method: "POST", body: resources.paymentPolicy,
+      });
+    }
+    if (!existing.returnPolicies.length) {
+      await ebaySelling.request(token, "/sell/account/v1/return_policy", {
+        method: "POST", body: resources.returnPolicy,
+      });
+    }
+    response.json(await loadEbaySellerSetup(token));
+  } catch (error) {
+    console.error("eBay Sandbox seller setup failed", { status: error?.status, code: error?.code });
+    response.status(error instanceof ZodError ? 400 : 502).json({
+      error: error instanceof ZodError ? error.issues[0]?.message : error.message ?? "CardPilot could not prepare the Sandbox seller account.",
+    });
   }
 });
 

@@ -24,6 +24,8 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [setup, setSetup] = useState<SellerSetup | null>(null);
+  const [sandboxPostalCode, setSandboxPostalCode] = useState("");
+  const [sandboxShippingCost, setSandboxShippingCost] = useState("4.99");
 
   useEffect(() => {
     let current = true;
@@ -82,6 +84,38 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
     window.location.assign(payload.authorizationUrl);
   };
 
+  const createSandboxSetup = async () => {
+    if (!draft) return;
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      const shippingCost = Number(sandboxShippingCost);
+      if (!/^\d{5}(?:-\d{4})?$/.test(sandboxPostalCode.trim())) throw new Error("Enter a valid US ZIP code.");
+      if (!Number.isFinite(shippingCost) || shippingCost < 0) throw new Error("Enter a valid shipping charge.");
+      const response = await fetch("/api/ebay/selling/setup/sandbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postalCode: sandboxPostalCode.trim(),
+          shippingCostCents: Math.round(shippingCost * 100),
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error);
+      const next = payload as SellerSetup;
+      setSetup(next);
+      setDraft((current) => current ? {
+        ...current,
+        merchantLocationKey: current.merchantLocationKey || next.locations[0]?.id || "",
+        fulfillmentPolicyId: current.fulfillmentPolicyId || next.fulfillmentPolicies[0]?.id || "",
+        paymentPolicyId: current.paymentPolicyId || next.paymentPolicies[0]?.id || "",
+        returnPolicyId: current.returnPolicyId || next.returnPolicies[0]?.id || "",
+      } : current);
+      setMessage("Sandbox seller settings created and selected. Save the draft to remember them.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Sandbox seller settings could not be created.");
+    } finally { setBusy(false); }
+  };
+
   const publish = async () => {
     if (!draft || !window.confirm(`Publish “${draft.title}” to eBay ${status?.environment}? This creates an eBay listing.`)) return;
     if (!(await save())) return;
@@ -137,6 +171,20 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
               <span>Environment: {status.environment}. Production publishing remains separate.</span>
               {status.configured && !status.connected && <button type="button" onClick={() => void connect()}>Connect eBay</button>}
             </div>
+            {status.connected && status.environment === "sandbox" && setup && (
+              !setup.locations.length || !setup.fulfillmentPolicies.length || !setup.paymentPolicies.length || !setup.returnPolicies.length
+            ) && <section className="ebay-sandbox-setup" aria-labelledby="ebay-sandbox-setup-title">
+              <div>
+                <strong id="ebay-sandbox-setup-title">Finish setting up this test seller</strong>
+                <p>This new Sandbox account has no listing policies or inventory location. CardPilot can create test-only defaults; this cannot affect real eBay.</p>
+              </div>
+              <div className="ebay-sandbox-setup-fields">
+                <label>Ship-from ZIP code <input inputMode="numeric" autoComplete="postal-code" placeholder="12345" value={sandboxPostalCode} onChange={(event) => setSandboxPostalCode(event.target.value)} /></label>
+                <label>Buyer shipping charge <input type="number" min="0" step="0.01" value={sandboxShippingCost} onChange={(event) => setSandboxShippingCost(event.target.value)} /></label>
+              </div>
+              <small>Creates a one-business-day USPS test shipping policy, immediate payment, 30-day buyer-paid returns, and a ZIP-level warehouse location.</small>
+              <button className="primary-action" type="button" disabled={busy} onClick={() => void createSandboxSetup()}>{busy ? "Creating test settings..." : "Create Sandbox seller settings"}</button>
+            </section>}
             <div className="ebay-draft-grid">
               <label className="wide">Title <input maxLength={80} value={draft.title} onChange={(e) => update("title", e.target.value)} /><small>{draft.title.length}/80</small></label>
               <label className="wide">Description <textarea rows={7} value={draft.description} onChange={(e) => update("description", e.target.value)} /></label>

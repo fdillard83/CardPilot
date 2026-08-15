@@ -18,6 +18,57 @@ export const EbayListingDraftSchema = z.object({
   listingFormat: z.enum(["FIXED_PRICE", "AUCTION"]).default("FIXED_PRICE"),
 }).strict();
 
+export const EbaySandboxSetupSchema = z.object({
+  postalCode: z.string().trim().regex(/^\d{5}(?:-\d{4})?$/, "Enter a valid US ZIP code."),
+  shippingCostCents: z.number().int().min(0).max(10_000),
+}).strict();
+
+export function ebaySandboxSetupResources(input, marketplaceId = "EBAY_US") {
+  const setup = EbaySandboxSetupSchema.parse(input);
+  const shippingCost = (setup.shippingCostCents / 100).toFixed(2);
+  return {
+    merchantLocationKey: "cardpilot-sandbox-primary",
+    location: {
+      name: "CardPilot Sandbox Inventory",
+      merchantLocationStatus: "ENABLED",
+      location: { address: { postalCode: setup.postalCode, country: "US" } },
+    },
+    fulfillmentPolicy: {
+      name: "CardPilot Sandbox Shipping",
+      marketplaceId,
+      categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }],
+      handlingTime: { value: 1, unit: "DAY" },
+      shippingOptions: [{
+        optionType: "DOMESTIC",
+        costType: "FLAT_RATE",
+        shippingServices: [{
+          sortOrder: 1,
+          shippingCarrierCode: "USPS",
+          shippingServiceCode: "USPSPriorityFlatRateBox",
+          shippingCost: { value: shippingCost, currency: "USD" },
+          freeShipping: setup.shippingCostCents === 0,
+          buyerResponsibleForShipping: setup.shippingCostCents > 0,
+        }],
+      }],
+    },
+    paymentPolicy: {
+      name: "CardPilot Sandbox Payment",
+      marketplaceId,
+      categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }],
+      immediatePay: true,
+    },
+    returnPolicy: {
+      name: "CardPilot Sandbox Returns",
+      marketplaceId,
+      categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }],
+      returnsAccepted: true,
+      returnPeriod: { value: 30, unit: "DAY" },
+      refundMethod: "MONEY_BACK",
+      returnShippingCostPayer: "BUYER",
+    },
+  };
+}
+
 const SELL_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.inventory",

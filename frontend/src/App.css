@@ -2294,6 +2294,13 @@ main {
 .ebay-connection-status.connected { border-color: rgba(183, 238, 79, 0.4); background: rgba(183, 238, 79, 0.06); }
 .ebay-connection-status span { color: var(--muted); font-size: 11px; }
 .ebay-connection-status button { justify-self: start; }
+.ebay-sandbox-setup { display: grid; gap: 12px; margin: 0 0 18px; padding: 16px; border: 1px solid rgba(93, 214, 255, 0.35); border-radius: 14px; background: rgba(93, 214, 255, 0.06); }
+.ebay-sandbox-setup p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.ebay-sandbox-setup small { color: var(--muted); line-height: 1.45; }
+.ebay-sandbox-setup > button { justify-self: start; }
+.ebay-sandbox-setup-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ebay-sandbox-setup-fields label { display: grid; gap: 7px; color: var(--soft-ink); font-size: 11px; }
+.ebay-sandbox-setup-fields input { width: 100%; }
 .ebay-draft-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .ebay-draft-grid label { display: grid; gap: 7px; color: var(--soft-ink); font-size: 11px; }
 .ebay-draft-grid .wide { grid-column: 1 / -1; }
@@ -2305,6 +2312,7 @@ main {
 @media (max-width: 620px) {
   .ebay-draft-panel { padding: 17px; }
   .ebay-draft-grid { grid-template-columns: 1fr; }
+  .ebay-sandbox-setup-fields { grid-template-columns: 1fr; }
   .ebay-draft-grid .wide { grid-column: auto; }
   .ebay-draft-actions { display: grid; }
 }
