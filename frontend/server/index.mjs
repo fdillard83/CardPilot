@@ -423,11 +423,13 @@ app.get("/api/ebay/selling/status", async (request, response) => {
   const connection = cloudServices && ebaySellConfigured
     ? await cloudServices.ebaySelling.connection(request.cardPilotUser.id)
     : null;
+  const environmentMatches = connection?.environment === ebaySellEnvironment;
   response.json({
     configured: ebaySellConfigured,
     environment: ebaySellEnvironment,
-    connected: Boolean(connection),
-    connectedAt: connection?.connected_at ?? null,
+    connected: Boolean(connection && environmentMatches),
+    connectedAt: environmentMatches ? connection?.connected_at ?? null : null,
+    reconnectRequired: Boolean(connection && !environmentMatches),
   });
 });
 
@@ -719,6 +721,7 @@ async function ebaySellerAccessToken(userId) {
   if (!ebaySelling || !cloudServices) throw new Error("eBay selling is not configured.");
   const connection = await cloudServices.ebaySelling.connection(userId);
   if (!connection) throw new Error("Connect an eBay seller account first.");
+  if (connection.environment !== ebaySellEnvironment) throw new Error(`Reconnect your eBay ${ebaySellEnvironment} seller account before continuing.`);
   const refreshToken = decryptSellerToken(connection.encrypted_refresh_token, process.env.EBAY_TOKEN_ENCRYPTION_KEY);
   return (await ebaySelling.refresh(refreshToken)).access_token;
 }
