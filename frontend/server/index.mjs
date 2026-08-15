@@ -10,6 +10,7 @@ import { z, ZodError } from "zod";
 import { EbayImageSearchClient } from "./ebay/image-search.mjs";
 import { EbayApiError, EbayOAuthClient } from "./ebay/oauth-client.mjs";
 import { EbayTaxonomyClient } from "./ebay/taxonomy.mjs";
+import { listingReadiness } from "./ebay/listing-readiness.mjs";
 import {
   EbayListingDraftSchema,
   EbaySandboxSetupSchema,
@@ -500,6 +501,22 @@ app.get("/api/collection/:collectionId/ebay-categories", async (request, respons
   }
 });
 
+app.get("/api/collection/:collectionId/ebay-readiness", async (request, response) => {
+  if (!ebayTaxonomy) return response.status(503).json({ error: "eBay listing requirements are not configured." });
+  try {
+    const card = await collectionStore.get(collectionUserId(request), request.params.collectionId);
+    if (!card) return response.status(404).json({ error: "That saved card was not found." });
+    const categoryId = String(request.query.categoryId ?? "");
+    const definitions = await ebayTaxonomy.itemAspects(categoryId);
+    const saved = await cloudServices.ebaySelling.draft(request.cardPilotUser.id, card.collectionId);
+    const preferences = await cloudServices.preferences.get(request.cardPilotUser.id);
+    const draft = saved ?? ebayDraftFromCard(card, preferences.ebaySellingDefaults);
+    response.json({ definitions, ...listingReadiness(card, { ...draft, categoryId }, definitions) });
+  } catch (error) {
+    response.status(error instanceof TypeError ? 400 : 502).json({ error: error.message ?? "CardPilot could not load eBay listing requirements." });
+  }
+});
+
 app.post("/api/ebay/selling/setup/sandbox", async (request, response) => {
   if (ebaySellEnvironment !== "sandbox") {
     return response.status(403).json({ error: "Automatic seller setup is available only in eBay Sandbox." });
@@ -559,7 +576,9 @@ function ebayDraftFromCard(card, defaults = {}) {
     priceCents,
     currency: card.confirmedValuation?.currency ?? "USD",
     condition: "USED_EXCELLENT",
-    conditionDescription: "Ungraded trading card. Please review photographs for condition.",
+    conditionDescription: card.grading?.isGraded
+      ? `Professionally graded ${card.grading.company ?? ""} ${card.grading.grade ?? ""}. Certification: ${card.grading.certificationNumber ?? "see photographs"}.`.replace(/\s+/g, " ")
+      : "Raw / ungraded trading card. Please review photographs for the exact condition.",
     categoryId: "",
     aspects: Object.fromEntries([
       [fields.player ? "Player/Athlete" : "Character", fields.player ?? fields.character],
@@ -586,6 +605,41 @@ app.get("/api/collection/:collectionId/ebay-draft", async (request, response) =>
   const saved = await cloudServices.ebaySelling.draft(request.cardPilotUser.id, card.collectionId);
   const preferences = await cloudServices.preferences.get(request.cardPilotUser.id);
   response.json({ draft: saved ?? ebayDraftFromCard(card, preferences.ebaySellingDefaults), generated: !saved });
+});
+
+app.get("/api/ebay/listing-queue", async (request, response) => {
+  try {
+    const userId = request.cardPilotUser.id;
+    const [drafts, cards] = await Promise.all([
+      cloudServices.ebaySelling.drafts(userId),
+      collectionStore.list(userId),
+    ]);
+    const cardById = new Map(cards.map((card) => [card.collectionId, card]));
+    const items = await Promise.all(drafts.map(async (draft) => {
+      const card = cardById.get(draft.collectionId);
+      if (!card) return null;
+      let requirements = { missingAspects: [], checks: [], ready: false };
+      if (/^\d+$/.test(draft.categoryId) && ebayTaxonomy) {
+        try { requirements = listingReadiness(card, draft, await ebayTaxonomy.itemAspects(draft.categoryId)); }
+        catch { requirements = listingReadiness(card, draft, []); }
+      } else requirements = listingReadiness(card, draft, []);
+      return {
+        collectionId: card.collectionId,
+        title: draft.title || card.title,
+        priceCents: draft.priceCents,
+        currency: draft.currency,
+        status: draft.status,
+        updatedAt: draft.updatedAt,
+        imageUrl: card.images.frontUrl,
+        missingAspects: requirements.missingAspects,
+        checks: requirements.checks,
+        ready: requirements.ready,
+      };
+    }));
+    response.json({ environment: ebaySellEnvironment, productionPublishingEnabled: ebaySellEnvironment === "production", items: items.filter(Boolean) });
+  } catch (error) {
+    response.status(500).json({ error: error.message ?? "CardPilot could not load the listing queue." });
+  }
 });
 
 app.put("/api/collection/:collectionId/ebay-draft", async (request, response) => {
@@ -633,6 +687,12 @@ app.post("/api/collection/:collectionId/ebay-publish", async (request, response)
     const draft = EbayListingDraftSchema.parse((({ draftId, collectionId, status, ebayOfferId, ebayListingId, updatedAt, ...value }) => value)(saved));
     if ([draft.categoryId, draft.merchantLocationKey, draft.fulfillmentPolicyId, draft.paymentPolicyId, draft.returnPolicyId].some((value) => !value)) {
       return response.status(400).json({ error: "Category, location, and all three eBay policies are required." });
+    }
+    if (ebayTaxonomy) {
+      const requirements = listingReadiness(card, draft, await ebayTaxonomy.itemAspects(draft.categoryId));
+      if (requirements.missingAspects.length) {
+        return response.status(400).json({ error: `Complete the required eBay item specifics: ${requirements.missingAspects.join(", ")}.` });
+      }
     }
     const token = await ebaySellerAccessToken(userId);
     const sku = `cardpilot-${card.collectionId}`;

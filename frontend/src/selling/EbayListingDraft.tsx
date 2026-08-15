@@ -17,9 +17,20 @@ type SellerSetup = {
   returnPolicies: { id: string; name: string }[];
 };
 type CategoryOption = { id: string; name: string; breadcrumb: string };
+type AspectDefinition = { name: string; required: boolean; recommended: boolean; multiValue: boolean; values: string[] };
+type Readiness = { definitions: AspectDefinition[]; aspects: Record<string, string[]>; missingAspects: string[]; checks: { key: string; label: string; ready: boolean }[]; ready: boolean };
 const emptySellerSetup = (): SellerSetup => ({
   locations: [], fulfillmentPolicies: [], paymentPolicies: [], returnPolicies: [],
 });
+
+async function responsePayload(response: Response) {
+  const body = await response.text();
+  if (!body) return { error: response.ok
+    ? "CardPilot received an empty response from the server. Please try again."
+    : "The local CardPilot server restarted or disconnected. Please try again." };
+  try { return JSON.parse(body); }
+  catch { return { error: "CardPilot received an invalid response from the server. Please try again." }; }
+}
 
 export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard; onClose: () => void }) {
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -31,6 +42,8 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
   const [sandboxPostalCode, setSandboxPostalCode] = useState("");
   const [sandboxShippingCost, setSandboxShippingCost] = useState("4.99");
   const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([]);
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
+  const selectedCategoryId = draft?.categoryId ?? "";
 
   useEffect(() => {
     let current = true;
@@ -42,6 +55,19 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
     }).catch(() => current && setError("CardPilot could not prepare this eBay draft."));
     return () => { current = false; };
   }, [card.collectionId]);
+
+  useEffect(() => {
+    if (!/^\d+$/.test(selectedCategoryId)) return;
+    let current = true;
+    void fetch(`/api/collection/${encodeURIComponent(card.collectionId)}/ebay-readiness?categoryId=${encodeURIComponent(selectedCategoryId)}`).then(async (response) => {
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error);
+      if (!current) return;
+      setReadiness(payload);
+      setDraft((existing) => existing ? { ...existing, aspects: { ...payload.aspects, ...existing.aspects } } : existing);
+    }).catch(() => current && setReadiness(null));
+    return () => { current = false; };
+  }, [card.collectionId, selectedCategoryId]);
 
   useEffect(() => {
     if (!status?.connected) return;
@@ -135,7 +161,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
           shippingCostCents: Math.round(shippingCost * 100),
         }),
       });
-      const payload = await response.json();
+      const payload = await responsePayload(response);
       if (!response.ok) throw new Error(payload.error);
       const next = payload as SellerSetup;
       setSetup(next);
@@ -148,7 +174,10 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
       } : current);
       setMessage("Sandbox seller settings created and selected. Save the draft to remember them.");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Sandbox seller settings could not be created.");
+      const detail = caught instanceof Error ? caught.message : "Sandbox seller settings could not be created.";
+      setError(/system error|fulfillment policy/i.test(detail)
+        ? "eBay Sandbox is currently reporting a known seller-policy service outage. Your CardPilot draft is safe; retry this setup after eBay restores the Sandbox Account API."
+        : detail);
     } finally { setBusy(false); }
   };
 
@@ -203,6 +232,8 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
     !draft.paymentPolicyId && "payment policy",
     !draft.returnPolicyId && "return policy",
   ].filter(Boolean) as string[] : [];
+  const requiredDefinitions = readiness?.definitions.filter((item) => item.required) ?? [];
+  const optionalDefinitions = readiness?.definitions.filter((item) => !item.required && item.recommended).slice(0, 8) ?? [];
 
   return (
     <div className="ebay-draft-backdrop" role="presentation">
@@ -231,21 +262,27 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
             </section>}
             {error && <div className="error-banner ebay-setup-feedback" role="alert">{error}</div>}
             {message && <div className="collection-status-banner ebay-setup-feedback" role="status">{message}</div>}
+            <section className="ebay-listing-preview" aria-labelledby="ebay-preview-title">
+              <div className="ebay-preview-images"><img src={card.images.frontUrl} alt="Front of the card being listed" />{card.images.backUrl && <img src={card.images.backUrl} alt="Back of the card being listed" />}</div>
+              <div><span>Listing preview</span><h3 id="ebay-preview-title">{draft.title || "Add a listing title"}</h3><strong>{draft.currency} {(draft.priceCents / 100).toFixed(2)}</strong><p>{draft.description || "Add a description."}</p></div>
+            </section>
+            {readiness && <section className="ebay-readiness" aria-labelledby="ebay-readiness-title"><div><h3 id="ebay-readiness-title">Listing readiness</h3><p>CardPilot filled what it could from the confirmed card details. Only items still needing attention are marked below.</p></div><ul>{readiness.checks.map((check) => <li className={check.ready ? "ready" : "missing"} key={check.key}><span>{check.ready ? "✓" : "!"}</span>{check.label}</li>)}</ul></section>}
             <div className="ebay-draft-grid">
               <label className="wide">Title <input maxLength={80} value={draft.title} onChange={(e) => update("title", e.target.value)} /><small>{draft.title.length}/80</small></label>
               <label className="wide">Description <textarea rows={7} value={draft.description} onChange={(e) => update("description", e.target.value)} /></label>
               <label>Buy It Now price <input type="number" min="0.01" step="0.01" value={(draft.priceCents / 100).toFixed(2)} onChange={(e) => update("priceCents", Math.round(Number(e.target.value) * 100))} /></label>
-              <label>Condition <select value={draft.condition} onChange={(e) => update("condition", e.target.value)}><option value="USED_EXCELLENT">Excellent</option><option value="USED_VERY_GOOD">Very good</option><option value="USED_GOOD">Good</option><option value="USED_ACCEPTABLE">Acceptable</option><option value="LIKE_NEW">Like new</option><option value="NEW_OTHER">New other</option></select></label>
+              <label>Card type <input value={card.grading.isGraded ? `Professionally graded${card.grading.company ? ` by ${card.grading.company}` : ""}` : "Raw / ungraded"} readOnly /><small>Set automatically from Card Details.</small></label>
               <label className="wide">Condition details <input value={draft.conditionDescription} onChange={(e) => update("conditionDescription", e.target.value)} /></label>
               <label>eBay category <input list={`ebay-categories-${card.collectionId}`} value={draft.categoryId} onChange={(e) => update("categoryId", e.target.value)} placeholder="Recommended automatically" /><datalist id={`ebay-categories-${card.collectionId}`}>{categoryOptions.map((option) => <option key={option.id} value={option.id}>{option.breadcrumb || option.name}</option>)}</datalist><small>{categoryOptions.find((option) => option.id === draft.categoryId)?.breadcrumb ?? "Numeric eBay leaf category ID; advanced users can override it."}</small></label>
-              {Object.entries(draft.aspects).map(([name, values]) => <label key={name}>{name}<input value={values[0] ?? ""} onChange={(e) => updateAspect(name, e.target.value)} /></label>)}
+              {requiredDefinitions.map((definition) => <label className={!draft.aspects[definition.name]?.[0] ? "ebay-required-missing" : ""} key={definition.name}>{definition.name} <span>{definition.required ? "Required" : ""}</span>{definition.values.length ? <select value={draft.aspects[definition.name]?.[0] ?? ""} onChange={(e) => updateAspect(definition.name, e.target.value)}><option value="">Choose</option>{definition.values.map((value) => <option key={value} value={value}>{value}</option>)}</select> : <input value={draft.aspects[definition.name]?.[0] ?? ""} onChange={(e) => updateAspect(definition.name, e.target.value)} />}</label>)}
+              {optionalDefinitions.map((definition) => <label key={definition.name}>{definition.name}{definition.values.length ? <select value={draft.aspects[definition.name]?.[0] ?? ""} onChange={(e) => updateAspect(definition.name, e.target.value)}><option value="">Optional</option>{definition.values.map((value) => <option key={value} value={value}>{value}</option>)}</select> : <input value={draft.aspects[definition.name]?.[0] ?? ""} onChange={(e) => updateAspect(definition.name, e.target.value)} />}</label>)}
               <label>Inventory location <select value={draft.merchantLocationKey} onChange={(e) => update("merchantLocationKey", e.target.value)}><option value="">Choose location</option>{setup?.locations.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
               <label>Shipping policy <select value={draft.fulfillmentPolicyId} onChange={(e) => update("fulfillmentPolicyId", e.target.value)}><option value="">Choose shipping policy</option>{setup?.fulfillmentPolicies.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
               <label>Payment policy <select value={draft.paymentPolicyId} onChange={(e) => update("paymentPolicyId", e.target.value)}><option value="">Choose payment policy</option>{setup?.paymentPolicies.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
               <label>Return policy <select value={draft.returnPolicyId} onChange={(e) => update("returnPolicyId", e.target.value)}><option value="">Choose return policy</option>{setup?.returnPolicies.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
             </div>
-            {draft.status !== "published" && missingPublishingFields.length > 0 && <p className="ebay-missing-fields">Before publishing, complete: {missingPublishingFields.join(", ")}.</p>}
-            <div className="ebay-draft-actions"><button type="button" disabled={busy} onClick={() => void save()}>{busy ? "Working..." : "Save draft"}</button>{draft.status === "published" ? <><button className="primary-action" type="button" disabled={busy} onClick={() => void reviseListing()}>Save and revise eBay</button><button className="account-delete-button" type="button" disabled={busy} onClick={() => void endListing()}>End eBay listing</button></> : <button className="primary-action" type="button" disabled={busy || !status.connected || draft.status === "ended" || missingPublishingFields.length > 0} onClick={() => void publish()}>{draft.status === "ended" ? "Listing ended" : `Review and publish to ${status.environment}`}</button>}</div>
+            {draft.status !== "published" && (missingPublishingFields.length > 0 || (readiness?.missingAspects.length ?? 0) > 0) && <p className="ebay-missing-fields">Before publishing, complete: {[...missingPublishingFields, ...(readiness?.missingAspects ?? [])].join(", ")}.</p>}
+            <div className="ebay-draft-actions"><button type="button" disabled={busy} onClick={() => void save()}>{busy ? "Working..." : "Save draft"}</button>{draft.status === "published" ? <><button className="primary-action" type="button" disabled={busy} onClick={() => void reviseListing()}>Save and revise eBay</button><button className="account-delete-button" type="button" disabled={busy} onClick={() => void endListing()}>End eBay listing</button></> : <button className="primary-action" type="button" disabled={busy || !status.connected || draft.status === "ended" || missingPublishingFields.length > 0 || (readiness?.missingAspects.length ?? 0) > 0} onClick={() => void publish()}>{draft.status === "ended" ? "Listing ended" : `Review and publish to ${status.environment}`}</button>}</div>
             <p className="valuation-disclaimer">CardPilot never publishes from this screen without a separate confirmation. Verify condition, category, policies, price, and photographs first.</p>
           </>
         )}

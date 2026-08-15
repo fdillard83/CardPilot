@@ -13,6 +13,24 @@ export class EbayTaxonomyClient {
     this.fetch = fetchImpl;
     this.categoryTreeId = null;
     this.cache = new Map();
+    this.aspectCache = new Map();
+  }
+
+  async itemAspects(categoryId) {
+    if (!/^\d+$/.test(String(categoryId))) throw new TypeError("A numeric eBay category ID is required.");
+    const key = String(categoryId);
+    if (this.aspectCache.has(key)) return this.aspectCache.get(key);
+    const treeId = await this.#treeId();
+    const payload = await this.#request(`${TAXONOMY_ROOT}/category_tree/${encodeURIComponent(treeId)}/get_item_aspects_for_category?category_id=${encodeURIComponent(key)}`);
+    const aspects = (payload?.aspects ?? []).map((aspect) => ({
+      name: aspect.localizedAspectName,
+      required: aspect.aspectConstraint?.aspectRequired === true,
+      recommended: aspect.aspectConstraint?.aspectUsage === "RECOMMENDED",
+      multiValue: aspect.aspectConstraint?.itemToAspectCardinality === "MULTI",
+      values: (aspect.aspectValues ?? []).map((value) => value.localizedValue).filter(Boolean),
+    })).filter((aspect) => aspect.name);
+    this.aspectCache.set(key, aspects);
+    return aspects;
   }
 
   async suggestCategories(query) {

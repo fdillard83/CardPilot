@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AccountPreferences } from "../accounts/preferences";
 import { EbayListingDraft } from "../selling/EbayListingDraft";
+import { EbayListingQueue } from "../selling/EbayListingQueue";
 import {
   cardCategoryLabel,
   cardKindFromFields,
@@ -1019,6 +1020,7 @@ export function CollectionView({
   const [expandedImageCard, setExpandedImageCard] =
     useState<SavedCollectionCard | null>(null);
   const [sellingCard, setSellingCard] = useState<SavedCollectionCard | null>(null);
+  const [listingQueueOpen, setListingQueueOpen] = useState(false);
   const [marketCardId, setMarketCardId] = useState<string | null>(null);
   const [marketSnapshot, setMarketSnapshot] =
     useState<ActiveMarketSnapshot | null>(null);
@@ -2100,6 +2102,7 @@ export function CollectionView({
         <div><strong>{collectionValuation.unvaluedCount}</strong><span>Need a value</span></div>
         <div><strong>{collectionValuation.staleCount}</strong><span>Pricing out of date</span></div>
       </div>
+      <div className="ebay-queue-launch"><div><strong>eBay listing drafts</strong><span>Prepare cards now and publish them individually after final review.</span></div><button type="button" onClick={() => setListingQueueOpen(true)}>Open Ready to List queue</button></div>
 
       {(bulkRefreshing || bulkValuationResults.length > 0) && (
         <BulkValuationReview
@@ -2697,6 +2700,7 @@ export function CollectionView({
         </div>
       )}
       {sellingCard && <EbayListingDraft card={sellingCard} onClose={() => setSellingCard(null)} />}
+      {listingQueueOpen && <EbayListingQueue cards={cards} onClose={() => setListingQueueOpen(false)} onOpenDraft={(card) => { setListingQueueOpen(false); setSellingCard(card); }} />}
     </section>
   );
 }

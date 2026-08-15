@@ -2308,12 +2308,47 @@ main {
 .ebay-draft-grid input, .ebay-draft-grid select, .ebay-draft-grid textarea { width: 100%; }
 .ebay-draft-grid textarea { resize: vertical; }
 .ebay-draft-grid small { color: var(--muted); justify-self: end; }
+.ebay-listing-preview { display: grid; grid-template-columns: minmax(150px, 240px) 1fr; gap: 18px; margin: 18px 0; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel-soft); }
+.ebay-preview-images { display: flex; gap: 8px; min-width: 0; }
+.ebay-preview-images img { width: min(105px, 48%); max-height: 180px; object-fit: contain; border-radius: 9px; background: #fff; }
+.ebay-listing-preview h3 { margin: 5px 0 8px; }
+.ebay-listing-preview p { white-space: pre-line; color: var(--muted); font-size: 12px; }
+.ebay-listing-preview span { color: var(--lime); font-size: 10px; font-weight: 850; text-transform: uppercase; }
+.ebay-readiness { margin: 16px 0; padding: 16px; border: 1px solid var(--line); border-radius: 16px; }
+.ebay-readiness h3, .ebay-readiness p { margin: 0 0 7px; }
+.ebay-readiness ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; }
+.ebay-readiness li { display: flex; gap: 8px; align-items: center; font-size: 12px; }
+.ebay-readiness li span { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; font-weight: 900; }
+.ebay-readiness li.ready span { background: rgba(128, 255, 112, .16); color: var(--lime); }
+.ebay-readiness li.missing span, .ebay-required-missing > span { color: var(--danger); }
+.ebay-required-missing input, .ebay-required-missing select { border-color: var(--danger); }
+.ebay-queue-launch { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 14px 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-soft); }
+.ebay-queue-launch div { display: grid; gap: 4px; }
+.ebay-queue-launch span { color: var(--muted); font-size: 12px; }
+.ebay-environment-guard { display: grid; gap: 4px; margin: 16px 0; padding: 14px; border-radius: 12px; }
+.ebay-environment-guard.sandbox { background: rgba(98, 170, 255, .12); border: 1px solid rgba(98, 170, 255, .32); }
+.ebay-environment-guard.production { background: rgba(255, 174, 75, .12); border: 1px solid rgba(255, 174, 75, .4); }
+.ebay-environment-guard span { color: var(--muted); font-size: 12px; }
+.ebay-queue-list { display: grid; gap: 10px; }
+.ebay-queue-list article { display: grid; grid-template-columns: 72px 1fr auto; align-items: center; gap: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; }
+.ebay-queue-list img { width: 72px; height: 96px; object-fit: contain; border-radius: 7px; background: #fff; }
+.ebay-queue-list article > div { display: grid; gap: 4px; min-width: 0; }
+.ebay-queue-list h3, .ebay-queue-list p { margin: 0; }
+.ebay-queue-list p, .ebay-queue-list small { color: var(--muted); font-size: 11px; }
+.ebay-queue-state { width: max-content; padding: 3px 7px; border-radius: 999px; font-size: 9px; font-weight: 850; text-transform: uppercase; }
+.ebay-queue-state.ready { color: var(--lime); background: rgba(128, 255, 112, .14); }
+.ebay-queue-state.waiting { color: #ffbe68; background: rgba(255, 174, 75, .12); }
 .ebay-missing-fields { margin: 16px 0 0; color: #ffd27a; font-size: 12px; line-height: 1.5; }
 .ebay-draft-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 
 @media (max-width: 620px) {
   .ebay-draft-panel { padding: 17px; }
   .ebay-draft-grid { grid-template-columns: 1fr; }
+  .ebay-listing-preview { grid-template-columns: 1fr; }
+  .ebay-readiness ul { grid-template-columns: 1fr; }
+  .ebay-queue-launch { align-items: stretch; flex-direction: column; }
+  .ebay-queue-list article { grid-template-columns: 62px 1fr; }
+  .ebay-queue-list article > button { grid-column: 1 / -1; }
   .ebay-sandbox-setup-fields { grid-template-columns: 1fr; }
   .ebay-draft-grid .wide { grid-column: auto; }
   .ebay-draft-actions { display: grid; }

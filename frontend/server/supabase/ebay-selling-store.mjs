@@ -35,6 +35,12 @@ export class SupabaseEbaySellingStore {
     return data ? this.#public(data) : null;
   }
 
+  async drafts(userId) {
+    const { data, error } = await this.client.from("ebay_listing_drafts").select("*").eq("user_id", userId).order("updated_at", { ascending: false });
+    if (error) throw dbError("eBay drafts read", error);
+    return (data ?? []).map((row) => this.#public(row));
+  }
+
   async saveDraft(userId, collectionId, input) {
     const draft = EbayListingDraftSchema.parse(input);
     const existing = await this.draft(userId, collectionId);
