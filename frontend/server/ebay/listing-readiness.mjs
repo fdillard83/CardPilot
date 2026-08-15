@@ -56,7 +56,7 @@ export function listingReadiness(card, draft, definitions = []) {
     { key: "specifics", label: "Required item specifics complete", ready: missingAspects.length === 0 },
     { key: "title", label: "Listing title ready", ready: text(draft.title).length > 0 && text(draft.title).length <= 80 },
     { key: "description", label: "Description ready", ready: text(draft.description).length > 0 },
-    { key: "price", label: "Buy It Now price ready", ready: Number(draft.priceCents) > 0 },
+    { key: "price", label: draft.listingFormat === "AUCTION" ? "Auction starting bid ready" : "Buy It Now price ready", ready: Number(draft.listingFormat === "AUCTION" ? draft.auctionStartPriceCents : draft.priceCents) > 0 },
     { key: "photo", label: "Front card photo ready", ready: Boolean(card.images?.frontUrl) },
     { key: "seller", label: "eBay location and policies ready", ready: [draft.merchantLocationKey, draft.fulfillmentPolicyId, draft.paymentPolicyId, draft.returnPolicyId].every(Boolean) },
   ];

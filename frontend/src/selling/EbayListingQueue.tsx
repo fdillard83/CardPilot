@@ -5,6 +5,7 @@ type QueueItem = {
   collectionId: string; title: string; priceCents: number; currency: string; status: string;
   updatedAt: string; imageUrl: string; missingAspects: string[];
   checks: { key: string; label: string; ready: boolean }[]; ready: boolean;
+  scheduleStatus?: string; scheduledPublishAt?: string | null; desiredEndAt?: string | null; scheduleError?: string | null;
 };
 type QueuePayload = { environment: string; productionPublishingEnabled: boolean; items: QueueItem[] };
 
@@ -38,7 +39,7 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
             const missing = [...item.checks.filter((check) => !check.ready).map((check) => check.label), ...item.missingAspects];
             return <article key={item.collectionId}>
               <img src={item.imageUrl} alt="" />
-              <div><span className={`ebay-queue-state ${item.ready ? "ready" : "waiting"}`}>{item.status === "published" ? "Published" : item.ready ? "Ready" : "Needs attention"}</span><h3>{item.title}</h3><strong>{item.currency} {(item.priceCents / 100).toFixed(2)}</strong><small>Updated {new Date(item.updatedAt).toLocaleString()}</small>{missing.length > 0 && <p>Still needed: {missing.join(", ")}.</p>}</div>
+              <div><span className={`ebay-queue-state ${item.ready ? "ready" : "waiting"}`}>{item.status === "published" ? "Published" : item.scheduleStatus === "scheduled" ? "Scheduled" : item.scheduleStatus === "failed" ? "Schedule failed" : item.ready ? "Ready" : "Needs attention"}</span><h3>{item.title}</h3><strong>{item.currency} {(item.priceCents / 100).toFixed(2)}</strong><small>Updated {new Date(item.updatedAt).toLocaleString()}</small>{item.scheduleStatus === "scheduled" && item.scheduledPublishAt && <p>Publishes automatically {new Date(item.scheduledPublishAt).toLocaleString()}{item.desiredEndAt ? ` · Expected end ${new Date(item.desiredEndAt).toLocaleString()}` : ""}</p>}{item.scheduleError && <p>{item.scheduleError}</p>}{missing.length > 0 && <p>Still needed: {missing.join(", ")}.</p>}</div>
               <button type="button" disabled={!card} onClick={() => card && onOpenDraft(card)}>{item.status === "published" ? "View listing" : "Review draft"}</button>
             </article>;
           })}</div>}

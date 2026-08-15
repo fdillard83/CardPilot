@@ -56,6 +56,7 @@ export class SupabaseEbaySellingStore {
   async markPublished(userId, collectionId, { offerId, listingId }) {
     const { data, error } = await this.client.from("ebay_listing_drafts").update({
       status: "published", ebay_offer_id: offerId, ebay_listing_id: listingId,
+      schedule_status: "published", schedule_error: null,
       updated_at: new Date().toISOString(),
     }).eq("user_id", userId).eq("collection_id", collectionId).select("*").single();
     if (error) throw dbError("eBay draft publish", error);
@@ -70,9 +71,44 @@ export class SupabaseEbaySellingStore {
     return this.#public(data);
   }
 
+  async schedule(userId, collectionId, { publishAt, endAt }) {
+    const { data, error } = await this.client.from("ebay_listing_drafts").update({
+      scheduled_publish_at: publishAt, desired_end_at: endAt,
+      schedule_status: "scheduled", schedule_error: null, updated_at: new Date().toISOString(),
+    }).eq("user_id", userId).eq("collection_id", collectionId).eq("status", "draft").select("*").single();
+    if (error) throw dbError("eBay schedule save", error);
+    return this.#public(data);
+  }
+
+  async cancelSchedule(userId, collectionId) {
+    const { data, error } = await this.client.from("ebay_listing_drafts").update({
+      scheduled_publish_at: null, desired_end_at: null, schedule_status: "cancelled",
+      schedule_error: null, updated_at: new Date().toISOString(),
+    }).eq("user_id", userId).eq("collection_id", collectionId).eq("schedule_status", "scheduled").select("*").single();
+    if (error) throw dbError("eBay schedule cancellation", error);
+    return this.#public(data);
+  }
+
+  async dueSchedules(now = new Date().toISOString()) {
+    const { data, error } = await this.client.from("ebay_listing_drafts").select("*")
+      .eq("schedule_status", "scheduled").lte("scheduled_publish_at", now).order("scheduled_publish_at", { ascending: true }).limit(20);
+    if (error) throw dbError("due eBay schedules read", error);
+    return (data ?? []).map((row) => ({ ...this.#public(row), userId: row.user_id }));
+  }
+
+  async scheduleResult(userId, collectionId, { status, errorMessage = null }) {
+    const { data, error } = await this.client.from("ebay_listing_drafts").update({
+      schedule_status: status, schedule_error: errorMessage, updated_at: new Date().toISOString(),
+    }).eq("user_id", userId).eq("collection_id", collectionId).select("*").single();
+    if (error) throw dbError("eBay schedule result", error);
+    return this.#public(data);
+  }
+
   #public(row) {
     return { draftId: row.draft_id, collectionId: row.collection_id, ...row.draft,
       status: row.status, ebayOfferId: row.ebay_offer_id, ebayListingId: row.ebay_listing_id,
-      updatedAt: row.updated_at };
+      updatedAt: row.updated_at, scheduledPublishAt: row.scheduled_publish_at,
+      desiredEndAt: row.desired_end_at, scheduleStatus: row.schedule_status ?? "unscheduled",
+      scheduleError: row.schedule_error };
   }
 }

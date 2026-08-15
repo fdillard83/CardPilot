@@ -2338,6 +2338,23 @@ main {
 .ebay-queue-state { width: max-content; padding: 3px 7px; border-radius: 999px; font-size: 9px; font-weight: 850; text-transform: uppercase; }
 .ebay-queue-state.ready { color: var(--lime); background: rgba(128, 255, 112, .14); }
 .ebay-queue-state.waiting { color: #ffbe68; background: rgba(255, 174, 75, .12); }
+.ebay-photo-manager { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 16px; padding: 15px; border: 1px solid var(--line); border-radius: 14px; }
+.ebay-photo-manager > div { flex: 1 1 100%; }
+.ebay-photo-manager h3, .ebay-photo-manager p { margin: 0 0 5px; }
+.ebay-photo-manager label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.ebay-photo-manager label span { color: var(--lime); font-size: 9px; font-weight: 850; text-transform: uppercase; }
+.ebay-proceeds { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; padding: 15px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-soft); }
+.ebay-proceeds > div { display: grid; gap: 4px; }
+.ebay-proceeds span, .ebay-proceeds p { color: var(--muted); font-size: 11px; }
+.ebay-proceeds p { grid-column: 1 / -1; margin: 4px 0 0; }
+.ebay-auction-schedule { display: grid; gap: 12px; margin-top: 16px; padding: 15px; border: 1px solid var(--line); border-radius: 14px; }
+.ebay-auction-schedule h3, .ebay-auction-schedule p { margin: 0 0 5px; }
+.ebay-schedule-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.ebay-schedule-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: 10px; }
+.ebay-schedule-fields label, .ebay-schedule-fields > div, .ebay-scheduled-summary { display: grid; gap: 5px; }
+.ebay-schedule-fields span, .ebay-scheduled-summary span { color: var(--muted); font-size: 11px; }
+.ebay-schedule-fields button { grid-column: 1 / -1; }
+.ebay-scheduled-summary { padding: 12px; border-radius: 10px; background: rgba(128, 255, 112, .1); }
 .ebay-missing-fields { margin: 16px 0 0; color: #ffd27a; font-size: 12px; line-height: 1.5; }
 .ebay-draft-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 
@@ -2349,6 +2366,10 @@ main {
   .ebay-queue-launch { align-items: stretch; flex-direction: column; }
   .ebay-queue-list article { grid-template-columns: 62px 1fr; }
   .ebay-queue-list article > button { grid-column: 1 / -1; }
+  .ebay-proceeds { grid-template-columns: 1fr; }
+  .ebay-proceeds p { grid-column: auto; }
+  .ebay-schedule-fields { grid-template-columns: 1fr; }
+  .ebay-schedule-fields button { grid-column: auto; }
   .ebay-sandbox-setup-fields { grid-template-columns: 1fr; }
   .ebay-draft-grid .wide { grid-column: auto; }
   .ebay-draft-actions { display: grid; }

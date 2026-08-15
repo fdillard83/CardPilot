@@ -11,6 +11,7 @@ import { EbayImageSearchClient } from "./ebay/image-search.mjs";
 import { EbayApiError, EbayOAuthClient } from "./ebay/oauth-client.mjs";
 import { EbayTaxonomyClient } from "./ebay/taxonomy.mjs";
 import { listingReadiness } from "./ebay/listing-readiness.mjs";
+import { calculateAuctionSchedule } from "./ebay/auction-schedule.mjs";
 import {
   EbayListingDraftSchema,
   EbaySandboxSetupSchema,
@@ -313,6 +314,31 @@ app.post("/api/auth/recovery-session", async (request, response) => {
   }
 });
 
+app.post("/api/internal/ebay/run-schedules", async (request, response) => {
+  const schedulerSecret = process.env.EBAY_SCHEDULER_SECRET?.trim();
+  if (!schedulerSecret || request.headers.authorization !== `Bearer ${schedulerSecret}`) {
+    return response.status(401).json({ error: "Scheduler authorization failed." });
+  }
+  response.json(await runDueEbaySchedules());
+});
+
+async function runDueEbaySchedules() {
+  const due = await cloudServices?.ebaySelling.dueSchedules() ?? [];
+  const results = [];
+  for (const schedule of due) {
+    try {
+      await cloudServices.ebaySelling.scheduleResult(schedule.userId, schedule.collectionId, { status: "processing" });
+      const published = await publishEbayListing(schedule.userId, schedule.collectionId);
+      await cloudServices.ebaySelling.scheduleResult(schedule.userId, schedule.collectionId, { status: "published" });
+      results.push({ collectionId: schedule.collectionId, status: "published", listingId: published.ebayListingId });
+    } catch (error) {
+      await cloudServices.ebaySelling.scheduleResult(schedule.userId, schedule.collectionId, { status: "failed", errorMessage: error.message ?? "Scheduled publication failed." });
+      results.push({ collectionId: schedule.collectionId, status: "failed" });
+    }
+  }
+  return { processed: results.length, results };
+}
+
 if (cloudServices) {
   app.use("/api", requireCloudUser(cloudServices.auth));
 }
@@ -565,14 +591,28 @@ app.post("/api/ebay/selling/setup/sandbox", async (request, response) => {
 
 function ebayDraftFromCard(card, defaults = {}) {
   const fields = card.fields;
-  const identifying = [fields.year, fields.player ?? fields.character, fields.setOrInsert,
+  const identifying = [fields.year, fields.player ?? fields.character, fields.manufacturer, fields.setOrInsert ?? fields.product,
     fields.parallel, fields.cardNumber ? `#${fields.cardNumber}` : null,
-    fields.serialNumber, fields.autograph ? "Autograph" : null, fields.rookieStatus ? "Rookie" : null]
+    fields.serialNumber, fields.autograph ? "Auto" : null, fields.memorabilia ? "Relic" : null,
+    fields.rookieStatus ? "Rookie RC" : null,
+    card.grading?.isGraded ? `${card.grading.company ?? "Graded"} ${card.grading.grade ?? ""}` : null]
     .filter(Boolean).join(" ");
   const priceCents = card.confirmedValuation?.amountCents ?? 100;
+  const detailLines = [
+    `Card: ${fields.player ?? fields.character ?? card.title}`,
+    fields.year && `Year: ${fields.year}`,
+    (fields.setOrInsert ?? fields.product) && `Set: ${fields.setOrInsert ?? fields.product}`,
+    fields.cardNumber && `Card number: ${fields.cardNumber}`,
+    fields.parallel && `Parallel / variant: ${fields.parallel}`,
+    fields.serialNumber && `Serial numbering: ${fields.serialNumber}`,
+    fields.autograph && "Autograph: Yes",
+    fields.memorabilia && "Memorabilia / relic: Yes",
+    fields.rookieStatus && "Rookie card: Yes",
+    card.grading?.isGraded && `Grade: ${card.grading.company ?? ""} ${card.grading.grade ?? ""}`.trim(),
+  ].filter(Boolean);
   return {
     title: identifying.slice(0, 80) || card.title.slice(0, 80),
-    description: `${identifying || card.title}\n\nPlease review the photographs for the exact card and condition.`,
+    description: `${detailLines.join("\n")}\n\nYou will receive the exact card shown. Please review the photographs carefully for condition and included details.`,
     priceCents,
     currency: card.confirmedValuation?.currency ?? "USD",
     condition: "USED_EXCELLENT",
@@ -595,6 +635,10 @@ function ebayDraftFromCard(card, defaults = {}) {
     paymentPolicyId: defaults.paymentPolicyId ?? "",
     returnPolicyId: defaults.returnPolicyId ?? "",
     listingFormat: "FIXED_PRICE",
+    listingImages: ["front"],
+    auctionDurationDays: 7,
+    auctionStartPriceCents: Math.max(99, Math.round(priceCents * 0.6)),
+    auctionReservePriceCents: 0,
   };
 }
 
@@ -629,6 +673,10 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
         priceCents: draft.priceCents,
         currency: draft.currency,
         status: draft.status,
+        scheduleStatus: draft.scheduleStatus,
+        scheduledPublishAt: draft.scheduledPublishAt,
+        desiredEndAt: draft.desiredEndAt,
+        scheduleError: draft.scheduleError,
         updatedAt: draft.updatedAt,
         imageUrl: card.images.frontUrl,
         missingAspects: requirements.missingAspects,
@@ -675,23 +723,18 @@ async function ebaySellerAccessToken(userId) {
   return (await ebaySelling.refresh(refreshToken)).access_token;
 }
 
-app.post("/api/collection/:collectionId/ebay-publish", async (request, response) => {
-  if (request.body?.confirmation !== "PUBLISH") {
-    return response.status(400).json({ error: "Explicit publication confirmation is required." });
-  }
-  try {
-    const userId = request.cardPilotUser.id;
-    const card = await collectionStore.get(userId, request.params.collectionId);
+async function publishEbayListing(userId, collectionId) {
+    const card = await collectionStore.get(userId, collectionId);
     const saved = card && await cloudServices.ebaySelling.draft(userId, card.collectionId);
-    if (!card || !saved) return response.status(404).json({ error: "Save the listing draft first." });
+    if (!card || !saved) throw new Error("Save the listing draft first.");
     const draft = EbayListingDraftSchema.parse((({ draftId, collectionId, status, ebayOfferId, ebayListingId, updatedAt, ...value }) => value)(saved));
     if ([draft.categoryId, draft.merchantLocationKey, draft.fulfillmentPolicyId, draft.paymentPolicyId, draft.returnPolicyId].some((value) => !value)) {
-      return response.status(400).json({ error: "Category, location, and all three eBay policies are required." });
+      throw new Error("Category, location, and all three eBay policies are required.");
     }
     if (ebayTaxonomy) {
       const requirements = listingReadiness(card, draft, await ebayTaxonomy.itemAspects(draft.categoryId));
       if (requirements.missingAspects.length) {
-        return response.status(400).json({ error: `Complete the required eBay item specifics: ${requirements.missingAspects.join(", ")}.` });
+        throw new Error(`Complete the required eBay item specifics: ${requirements.missingAspects.join(", ")}.`);
       }
     }
     const token = await ebaySellerAccessToken(userId);
@@ -700,33 +743,75 @@ app.post("/api/collection/:collectionId/ebay-publish", async (request, response)
       collectionStore.image(userId, card.collectionId, "front"),
       collectionStore.image(userId, card.collectionId, "back"),
     ]);
+    const availableImages = { front: front?.signedUrl, back: back?.signedUrl };
+    const imageUrls = draft.listingImages.map((side) => availableImages[side]).filter(Boolean);
     await ebaySelling.request(token, `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
       method: "PUT",
       body: {
         availability: { shipToLocationAvailability: { quantity: 1 } },
         condition: draft.condition,
         conditionDescription: draft.conditionDescription,
-        product: { title: draft.title, description: draft.description, aspects: draft.aspects,
-          imageUrls: [front?.signedUrl, back?.signedUrl].filter(Boolean) },
+        product: { title: draft.title, description: draft.description, aspects: draft.aspects, imageUrls },
       },
     });
     const offer = await ebaySelling.request(token, "/sell/inventory/v1/offer", {
       method: "POST",
       body: { sku, marketplaceId: ebayMarketplaceId, format: draft.listingFormat,
         availableQuantity: 1, categoryId: draft.categoryId,
-        merchantLocationKey: draft.merchantLocationKey, listingDuration: "GTC",
+        merchantLocationKey: draft.merchantLocationKey,
+        listingDuration: draft.listingFormat === "AUCTION" ? `DAYS_${draft.auctionDurationDays}` : "GTC",
         listingPolicies: { fulfillmentPolicyId: draft.fulfillmentPolicyId,
           paymentPolicyId: draft.paymentPolicyId, returnPolicyId: draft.returnPolicyId },
-        pricingSummary: { price: { value: (draft.priceCents / 100).toFixed(2), currency: draft.currency } } },
+        pricingSummary: draft.listingFormat === "AUCTION" ? {
+          auctionStartPrice: { value: (draft.auctionStartPriceCents / 100).toFixed(2), currency: draft.currency },
+          ...(draft.auctionReservePriceCents > 0 ? { auctionReservePrice: { value: (draft.auctionReservePriceCents / 100).toFixed(2), currency: draft.currency } } : {}),
+        } : { price: { value: (draft.priceCents / 100).toFixed(2), currency: draft.currency } } },
     });
     const published = await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(offer.offerId)}/publish`, { method: "POST" });
     const result = await cloudServices.ebaySelling.markPublished(userId, card.collectionId, {
       offerId: offer.offerId, listingId: published.listingId,
     });
-    response.json({ draft: result });
+    return result;
+}
+
+app.post("/api/collection/:collectionId/ebay-publish", async (request, response) => {
+  if (request.body?.confirmation !== "PUBLISH") {
+    return response.status(400).json({ error: "Explicit publication confirmation is required." });
+  }
+  try {
+    response.json({ draft: await publishEbayListing(request.cardPilotUser.id, request.params.collectionId) });
   } catch (error) {
     console.error("eBay listing publication failed", { status: error?.status, code: error?.code });
     response.status(error instanceof ZodError ? 400 : 502).json({ error: error.message ?? "eBay could not publish this listing." });
+  }
+});
+
+const EbayScheduleSchema = z.object({
+  confirmation: z.literal("SCHEDULE"),
+  desiredEndAt: z.string().datetime(),
+}).strict();
+
+app.post("/api/collection/:collectionId/ebay-schedule", async (request, response) => {
+  try {
+    const input = EbayScheduleSchema.parse(request.body);
+    const userId = request.cardPilotUser.id;
+    const draft = await cloudServices.ebaySelling.draft(userId, request.params.collectionId);
+    if (!draft) return response.status(404).json({ error: "Save the auction draft before scheduling it." });
+    const parsed = EbayListingDraftSchema.parse((({ draftId, collectionId, status, ebayOfferId, ebayListingId, updatedAt, scheduledPublishAt, desiredEndAt, scheduleStatus, scheduleError, ...value }) => value)(draft));
+    if (parsed.listingFormat !== "AUCTION") return response.status(400).json({ error: "Only auction listings can be scheduled by ending time." });
+    const schedule = calculateAuctionSchedule({ desiredEndAt: input.desiredEndAt, durationDays: parsed.auctionDurationDays });
+    const scheduled = await cloudServices.ebaySelling.schedule(userId, request.params.collectionId, schedule);
+    response.json({ draft: scheduled, ...schedule });
+  } catch (error) {
+    response.status(error instanceof ZodError ? 400 : 500).json({ error: error instanceof ZodError ? error.issues[0]?.message : error.message ?? "CardPilot could not schedule this auction." });
+  }
+});
+
+app.delete("/api/collection/:collectionId/ebay-schedule", async (request, response) => {
+  try {
+    response.json({ draft: await cloudServices.ebaySelling.cancelSchedule(request.cardPilotUser.id, request.params.collectionId) });
+  } catch (error) {
+    response.status(409).json({ error: error.message ?? "CardPilot could not cancel this schedule." });
   }
 });
 
@@ -766,21 +851,26 @@ app.post("/api/collection/:collectionId/ebay-revise", async (request, response) 
       collectionStore.image(userId, card.collectionId, "front"),
       collectionStore.image(userId, card.collectionId, "back"),
     ]);
+    const availableImages = { front: front?.signedUrl, back: back?.signedUrl };
+    const imageUrls = draft.listingImages.map((side) => availableImages[side]).filter(Boolean);
     await ebaySelling.request(token, `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
       method: "PUT",
       body: { availability: { shipToLocationAvailability: { quantity: 1 } }, condition: draft.condition,
         conditionDescription: draft.conditionDescription,
-        product: { title: draft.title, description: draft.description, aspects: draft.aspects,
-          imageUrls: [front?.signedUrl, back?.signedUrl].filter(Boolean) } },
+        product: { title: draft.title, description: draft.description, aspects: draft.aspects, imageUrls } },
     });
     await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(saved.ebayOfferId)}`, {
       method: "PUT",
       body: { sku, marketplaceId: ebayMarketplaceId, format: draft.listingFormat,
         availableQuantity: 1, categoryId: draft.categoryId,
-        merchantLocationKey: draft.merchantLocationKey, listingDuration: "GTC",
+        merchantLocationKey: draft.merchantLocationKey,
+        listingDuration: draft.listingFormat === "AUCTION" ? `DAYS_${draft.auctionDurationDays}` : "GTC",
         listingPolicies: { fulfillmentPolicyId: draft.fulfillmentPolicyId,
           paymentPolicyId: draft.paymentPolicyId, returnPolicyId: draft.returnPolicyId },
-        pricingSummary: { price: { value: (draft.priceCents / 100).toFixed(2), currency: draft.currency } } },
+        pricingSummary: draft.listingFormat === "AUCTION" ? {
+          auctionStartPrice: { value: (draft.auctionStartPriceCents / 100).toFixed(2), currency: draft.currency },
+          ...(draft.auctionReservePriceCents > 0 ? { auctionReservePrice: { value: (draft.auctionReservePriceCents / 100).toFixed(2), currency: draft.currency } } : {}),
+        } : { price: { value: (draft.priceCents / 100).toFixed(2), currency: draft.currency } } },
     });
     response.json({ draft: saved });
   } catch (error) {
@@ -1577,6 +1667,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === serverFile) {
       console.log(
         "POKEMON_TCG_API_KEY is not set; Pokémon catalog search will use reduced unauthenticated limits.",
       );
+    }
+    if (process.env.EBAY_SCHEDULER_SECRET && cloudServices) {
+      const scheduler = setInterval(() => void runDueEbaySchedules().catch((error) => console.error("Scheduled eBay worker failed", error)), 60_000);
+      scheduler.unref();
     }
   });
 }

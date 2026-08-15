@@ -16,7 +16,15 @@ export const EbayListingDraftSchema = z.object({
   paymentPolicyId: z.string().trim().max(64),
   returnPolicyId: z.string().trim().max(64),
   listingFormat: z.enum(["FIXED_PRICE", "AUCTION"]).default("FIXED_PRICE"),
-}).strict();
+  listingImages: z.array(z.enum(["front", "back"])).min(1).max(2).default(["front"]),
+  auctionDurationDays: z.union([z.literal(1), z.literal(3), z.literal(5), z.literal(7), z.literal(10)]).default(7),
+  auctionStartPriceCents: z.number().int().min(1).max(100_000_000).default(99),
+  auctionReservePriceCents: z.number().int().min(0).max(100_000_000).default(0),
+}).strict().superRefine((draft, context) => {
+  if (draft.listingFormat === "AUCTION" && draft.auctionReservePriceCents > 0 && draft.auctionReservePriceCents <= draft.auctionStartPriceCents) {
+    context.addIssue({ code: "custom", path: ["auctionReservePriceCents"], message: "The reserve price must be higher than the starting bid." });
+  }
+});
 
 export const EbaySandboxSetupSchema = z.object({
   postalCode: z.string().trim().regex(/^\d{5}(?:-\d{4})?$/, "Enter a valid US ZIP code."),

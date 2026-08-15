@@ -47,6 +47,10 @@ test("listing drafts require an editable title and positive price", () => {
   };
   assert.equal(EbayListingDraftSchema.safeParse(base).success, true);
   assert.equal(EbayListingDraftSchema.safeParse({ ...base, priceCents: 0 }).success, false);
+  const auction = EbayListingDraftSchema.parse({ ...base, listingFormat: "AUCTION", auctionStartPriceCents: 500, auctionReservePriceCents: 1000 });
+  assert.deepEqual(auction.listingImages, ["front"]);
+  assert.equal(auction.auctionDurationDays, 7);
+  assert.equal(EbayListingDraftSchema.safeParse({ ...base, listingFormat: "AUCTION", auctionStartPriceCents: 1000, auctionReservePriceCents: 500 }).success, false);
 });
 
 test("Sandbox setup validates a US ZIP code and builds safe test defaults", () => {
