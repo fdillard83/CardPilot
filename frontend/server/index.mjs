@@ -9,6 +9,7 @@ import OpenAI from "openai";
 import { z, ZodError } from "zod";
 import { EbayImageSearchClient } from "./ebay/image-search.mjs";
 import { EbayApiError, EbayOAuthClient } from "./ebay/oauth-client.mjs";
+import { EbayTaxonomyClient } from "./ebay/taxonomy.mjs";
 import {
   EbayListingDraftSchema,
   EbaySandboxSetupSchema,
@@ -86,6 +87,12 @@ const ebayImageSearch = ebayConfigured
         clientId: ebayClientId,
         clientSecret: ebayClientSecret,
       }),
+      marketplaceId: ebayMarketplaceId,
+    })
+  : null;
+const ebayTaxonomy = ebayConfigured
+  ? new EbayTaxonomyClient({
+      oauthClient: new EbayOAuthClient({ clientId: ebayClientId, clientSecret: ebayClientSecret }),
       marketplaceId: ebayMarketplaceId,
     })
   : null;
@@ -472,6 +479,24 @@ app.get("/api/ebay/selling/setup", async (request, response) => {
     response.json(await loadEbaySellerSetup(token));
   } catch (error) {
     response.status(502).json({ error: error.message ?? "CardPilot could not load eBay seller policies." });
+  }
+});
+
+app.get("/api/collection/:collectionId/ebay-categories", async (request, response) => {
+  if (!ebayTaxonomy) return response.status(503).json({ error: "eBay category recommendations are not configured." });
+  try {
+    const card = await collectionStore.get(collectionUserId(request), request.params.collectionId);
+    if (!card) return response.status(404).json({ error: "That saved card was not found." });
+    const fields = card.fields;
+    const category = String(fields.category ?? "").toLowerCase();
+    const pokemon = category.includes("pokemon") || category.includes("pokémon") || fields.character;
+    const query = pokemon
+      ? `${fields.character ?? "Pokemon"} Pokemon individual trading card`
+      : [fields.year, fields.player, fields.sport, "sports trading card"].filter(Boolean).join(" ");
+    const suggestions = await ebayTaxonomy.suggestCategories(query);
+    response.json({ query, suggestions, recommended: suggestions[0] ?? null });
+  } catch (error) {
+    response.status(502).json({ error: error.message ?? "CardPilot could not recommend an eBay category." });
   }
 });
 

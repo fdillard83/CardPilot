@@ -2301,6 +2301,7 @@ main {
 .ebay-sandbox-setup-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .ebay-sandbox-setup-fields label { display: grid; gap: 7px; color: var(--soft-ink); font-size: 11px; }
 .ebay-sandbox-setup-fields input { width: 100%; }
+.ebay-setup-feedback { margin: 0 0 16px; }
 .ebay-draft-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .ebay-draft-grid label { display: grid; gap: 7px; color: var(--soft-ink); font-size: 11px; }
 .ebay-draft-grid .wide { grid-column: 1 / -1; }
