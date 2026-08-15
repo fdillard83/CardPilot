@@ -14,7 +14,7 @@ type Draft = {
   scheduleError?: string | null;
 };
 
-type SellingStatus = { configured: boolean; connected: boolean; environment: string };
+type SellingStatus = { configured: boolean; connected: boolean; environment: "sandbox" | "production" };
 type SellerSetup = {
   locations: { id: string; name: string }[];
   fulfillmentPolicies: { id: string; name: string }[];
@@ -84,13 +84,15 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error);
       if (current) setSetup(payload);
-    }).catch(() => {
+    }).catch((caught) => {
       if (!current) return;
       setSetup(emptySellerSetup());
-      setMessage("This new Sandbox seller needs its first inventory location and listing policies.");
+      setError(caught instanceof Error
+        ? caught.message
+        : `CardPilot could not load the eBay ${status.environment} inventory location and listing policies.`);
     });
     return () => { current = false; };
-  }, [status?.connected]);
+  }, [status?.connected, status?.environment]);
 
   useEffect(() => {
     let current = true;
@@ -290,7 +292,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
   return (
     <div className="ebay-draft-backdrop" role="presentation">
       <section className="ebay-draft-panel" role="dialog" aria-modal="true" aria-labelledby="ebay-draft-title">
-        <header><div><span>Sandbox-first selling</span><h2 id="ebay-draft-title">Sell {card.title} on eBay</h2></div><button type="button" onClick={onClose}>Close</button></header>
+        <header><div><span>{status?.environment === "production" ? "Live eBay selling" : "Sandbox-first selling"}</span><h2 id="ebay-draft-title">Sell {card.title} on eBay</h2></div><button type="button" onClick={onClose}>Close</button></header>
         {!draft || !status ? <div className="collection-empty"><span className="spinner" /> Preparing draft...</div> : (
           <>
             <div className={`ebay-connection-status ${status.connected ? "connected" : ""}`}>
