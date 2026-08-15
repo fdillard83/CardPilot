@@ -16,6 +16,9 @@ type SellerSetup = {
   paymentPolicies: { id: string; name: string }[];
   returnPolicies: { id: string; name: string }[];
 };
+const emptySellerSetup = (): SellerSetup => ({
+  locations: [], fulfillmentPolicies: [], paymentPolicies: [], returnPolicies: [],
+});
 
 export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard; onClose: () => void }) {
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -45,7 +48,11 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error);
       if (current) setSetup(payload);
-    }).catch((caught) => current && setError(caught instanceof Error ? caught.message : "Seller policies could not be loaded."));
+    }).catch(() => {
+      if (!current) return;
+      setSetup(emptySellerSetup());
+      setMessage("This new Sandbox seller needs its first inventory location and listing policies.");
+    });
     return () => { current = false; };
   }, [status?.connected]);
 
@@ -172,6 +179,14 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
     finally { setBusy(false); }
   };
 
+  const missingPublishingFields = draft ? [
+    !draft.categoryId && "eBay category",
+    !draft.merchantLocationKey && "inventory location",
+    !draft.fulfillmentPolicyId && "shipping policy",
+    !draft.paymentPolicyId && "payment policy",
+    !draft.returnPolicyId && "return policy",
+  ].filter(Boolean) as string[] : [];
+
   return (
     <div className="ebay-draft-backdrop" role="presentation">
       <section className="ebay-draft-panel" role="dialog" aria-modal="true" aria-labelledby="ebay-draft-title">
@@ -212,7 +227,8 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
             </div>
             {error && <div className="error-banner" role="alert">{error}</div>}
             {message && <div className="collection-status-banner" role="status">{message}</div>}
-            <div className="ebay-draft-actions"><button type="button" disabled={busy} onClick={() => void save()}>{busy ? "Working..." : "Save draft"}</button>{draft.status === "published" ? <><button className="primary-action" type="button" disabled={busy} onClick={() => void reviseListing()}>Save and revise eBay</button><button className="account-delete-button" type="button" disabled={busy} onClick={() => void endListing()}>End eBay listing</button></> : <button className="primary-action" type="button" disabled={busy || !status.connected || draft.status === "ended"} onClick={() => void publish()}>{draft.status === "ended" ? "Listing ended" : `Review and publish to ${status.environment}`}</button>}</div>
+            {draft.status !== "published" && missingPublishingFields.length > 0 && <p className="ebay-missing-fields">Before publishing, complete: {missingPublishingFields.join(", ")}.</p>}
+            <div className="ebay-draft-actions"><button type="button" disabled={busy} onClick={() => void save()}>{busy ? "Working..." : "Save draft"}</button>{draft.status === "published" ? <><button className="primary-action" type="button" disabled={busy} onClick={() => void reviseListing()}>Save and revise eBay</button><button className="account-delete-button" type="button" disabled={busy} onClick={() => void endListing()}>End eBay listing</button></> : <button className="primary-action" type="button" disabled={busy || !status.connected || draft.status === "ended" || missingPublishingFields.length > 0} onClick={() => void publish()}>{draft.status === "ended" ? "Listing ended" : `Review and publish to ${status.environment}`}</button>}</div>
             <p className="valuation-disclaimer">CardPilot never publishes from this screen without a separate confirmation. Verify condition, category, policies, price, and photographs first.</p>
           </>
         )}
