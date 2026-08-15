@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AccountPreferences } from "../accounts/preferences";
+import { EbayListingDraft } from "../selling/EbayListingDraft";
 import {
   cardCategoryLabel,
   cardKindFromFields,
@@ -1017,6 +1018,7 @@ export function CollectionView({
   const [automaticValueStatus, setAutomaticValueStatus] = useState<string | null>(null);
   const [expandedImageCard, setExpandedImageCard] =
     useState<SavedCollectionCard | null>(null);
+  const [sellingCard, setSellingCard] = useState<SavedCollectionCard | null>(null);
   const [marketCardId, setMarketCardId] = useState<string | null>(null);
   const [marketSnapshot, setMarketSnapshot] =
     useState<ActiveMarketSnapshot | null>(null);
@@ -2508,6 +2510,13 @@ export function CollectionView({
                     <div className="collection-card-actions">
                       <button
                         type="button"
+                        disabled={marketBusy || soldBusy || valuationBusy || valuationSaving || bulkRefreshing || bulkApplying}
+                        onClick={() => setSellingCard(card)}
+                      >
+                        Sell on eBay
+                      </button>
+                      <button
+                        type="button"
                         disabled={
                           marketBusy ||
                           soldBusy ||
@@ -2687,6 +2696,7 @@ export function CollectionView({
           </section>
         </div>
       )}
+      {sellingCard && <EbayListingDraft card={sellingCard} onClose={() => setSellingCard(null)} />}
     </section>
   );
 }

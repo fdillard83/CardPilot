@@ -63,3 +63,21 @@ http://localhost:5173/account/reset-password
    CardPilot address.
 
 Account deletion should be tested only with a temporary account.
+
+## eBay Sandbox selling
+
+CardPilot keeps Browse/search credentials separate from per-seller authorization.
+Before testing listing publication:
+
+1. Run `frontend/supabase/migrations/202608140003_ebay_selling.sql` in the Supabase SQL Editor.
+2. In the eBay Developer portal, create or select Sandbox application keys.
+3. Create a Sandbox OAuth redirect (RuName) whose accepted URL is
+   `https://cardpilot-aizd.onrender.com/api/ebay/selling/callback`.
+4. Add these server-only Render variables: `EBAY_SELL_ENVIRONMENT=sandbox`,
+   `EBAY_SELL_CLIENT_ID`, `EBAY_SELL_CLIENT_SECRET`,
+   `EBAY_REDIRECT_URI_NAME`, and `EBAY_TOKEN_ENCRYPTION_KEY`.
+5. Use a Sandbox seller account that has business policies and an inventory
+   location plus payment, fulfillment, and return policies.
+
+Never switch `EBAY_SELL_ENVIRONMENT` to `production` until Sandbox publishing,
+revision, and ending have all been deliberately tested.

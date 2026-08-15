@@ -3,12 +3,24 @@ import { z } from "zod";
 export const DEFAULT_ACCOUNT_PREFERENCES = Object.freeze({
   autoValueEnabled: false,
   autoValueMaxCents: null,
+  ebaySellingDefaults: {
+    merchantLocationKey: "",
+    fulfillmentPolicyId: "",
+    paymentPolicyId: "",
+    returnPolicyId: "",
+  },
 });
 
 export const AccountPreferencesSchema = z
   .object({
     autoValueEnabled: z.boolean(),
     autoValueMaxCents: z.number().int().min(1).max(100_000_000).nullable(),
+    ebaySellingDefaults: z.object({
+      merchantLocationKey: z.string().max(50),
+      fulfillmentPolicyId: z.string().max(64),
+      paymentPolicyId: z.string().max(64),
+      returnPolicyId: z.string().max(64),
+    }).strict(),
   })
   .strict()
   .refine(
@@ -30,7 +42,7 @@ export class SupabaseAccountPreferencesRepository {
   async get(userId) {
     const { data, error } = await this.client
       .from("account_preferences")
-      .select("auto_value_enabled, auto_value_max_cents")
+      .select("auto_value_enabled, auto_value_max_cents, ebay_selling_defaults")
       .eq("user_id", userId)
       .maybeSingle();
     if (error) throw databaseError("account preferences read", error);
@@ -41,6 +53,10 @@ export class SupabaseAccountPreferencesRepository {
         data.auto_value_max_cents === null
           ? null
           : Number(data.auto_value_max_cents),
+      ebaySellingDefaults: {
+        ...DEFAULT_ACCOUNT_PREFERENCES.ebaySellingDefaults,
+        ...(data.ebay_selling_defaults ?? {}),
+      },
     };
   }
 
@@ -53,11 +69,12 @@ export class SupabaseAccountPreferencesRepository {
           user_id: userId,
           auto_value_enabled: preferences.autoValueEnabled,
           auto_value_max_cents: preferences.autoValueMaxCents,
+          ebay_selling_defaults: preferences.ebaySellingDefaults,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "user_id" },
       )
-      .select("auto_value_enabled, auto_value_max_cents")
+      .select("auto_value_enabled, auto_value_max_cents, ebay_selling_defaults")
       .single();
     if (error) throw databaseError("account preferences update", error);
     return {
@@ -66,6 +83,10 @@ export class SupabaseAccountPreferencesRepository {
         data.auto_value_max_cents === null
           ? null
           : Number(data.auto_value_max_cents),
+      ebaySellingDefaults: {
+        ...DEFAULT_ACCOUNT_PREFERENCES.ebaySellingDefaults,
+        ...(data.ebay_selling_defaults ?? {}),
+      },
     };
   }
 }

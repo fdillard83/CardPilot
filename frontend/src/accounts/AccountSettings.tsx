@@ -59,6 +59,7 @@ export function AccountSettings({
         body: JSON.stringify({
           autoValueEnabled,
           autoValueMaxCents: autoValueEnabled ? Math.round(dollars * 100) : null,
+          ebaySellingDefaults: preferences.ebaySellingDefaults,
         }),
       });
       const payload = (await response.json().catch(() => null)) as

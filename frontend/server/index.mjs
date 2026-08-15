@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -8,6 +9,12 @@ import OpenAI from "openai";
 import { z, ZodError } from "zod";
 import { EbayImageSearchClient } from "./ebay/image-search.mjs";
 import { EbayApiError, EbayOAuthClient } from "./ebay/oauth-client.mjs";
+import {
+  EbayListingDraftSchema,
+  EbaySellingClient,
+  decryptSellerToken,
+  encryptSellerToken,
+} from "./ebay/selling.mjs";
 import { CatalogCandidateGenerator } from "./identification/candidate-generator.mjs";
 import { OpenAIEvidenceEngine } from "./identification/evidence-engine.mjs";
 import { IdentificationEngine } from "./identification/identification-engine.mjs";
@@ -54,6 +61,23 @@ const ebayClientSecret = process.env.EBAY_CLIENT_SECRET?.trim();
 const ebayConfigured = Boolean(ebayClientId && ebayClientSecret);
 const ebayMarketplaceId =
   process.env.EBAY_MARKETPLACE_ID?.trim() || "EBAY_US";
+const ebaySellEnvironment = process.env.EBAY_SELL_ENVIRONMENT?.trim() === "production"
+  ? "production"
+  : "sandbox";
+const ebaySellConfigured = Boolean(
+  process.env.EBAY_SELL_CLIENT_ID?.trim() &&
+  process.env.EBAY_SELL_CLIENT_SECRET?.trim() &&
+  process.env.EBAY_REDIRECT_URI_NAME?.trim() &&
+  process.env.EBAY_TOKEN_ENCRYPTION_KEY?.trim(),
+);
+const ebaySelling = ebaySellConfigured
+  ? new EbaySellingClient({
+      clientId: process.env.EBAY_SELL_CLIENT_ID.trim(),
+      clientSecret: process.env.EBAY_SELL_CLIENT_SECRET.trim(),
+      redirectUriName: process.env.EBAY_REDIRECT_URI_NAME.trim(),
+      environment: ebaySellEnvironment,
+    })
+  : null;
 const ebayImageSearch = ebayConfigured
   ? new EbayImageSearchClient({
       oauthClient: new EbayOAuthClient({
@@ -125,6 +149,8 @@ app.get("/api/health", (_request, response) => {
     services: {
       openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
       ebayConfigured,
+      ebaySellingConfigured: ebaySellConfigured,
+      ebaySellingEnvironment: ebaySellEnvironment,
       activeMarketConfigured: ebayConfigured,
       soldCompsConfigured: Boolean(soldComps),
       pokemonCatalogAvailable: true,
@@ -341,6 +367,276 @@ app.put("/api/account/preferences", async (request, response) => {
     response.status(400).json({
       error: "Choose a valid automatic-value limit, or turn the rule off.",
     });
+  }
+});
+
+const EBAY_STATE_COOKIE = "cardpilot_ebay_state";
+
+function requestCookie(request, name) {
+  return Object.fromEntries(
+    (request.headers.cookie ?? "").split(";").map((part) => {
+      const separator = part.indexOf("=");
+      return separator < 0
+        ? [part.trim(), ""]
+        : [part.slice(0, separator).trim(), decodeURIComponent(part.slice(separator + 1))];
+    }),
+  )[name];
+}
+
+app.get("/api/ebay/selling/status", async (request, response) => {
+  const connection = cloudServices && ebaySellConfigured
+    ? await cloudServices.ebaySelling.connection(request.cardPilotUser.id)
+    : null;
+  response.json({
+    configured: ebaySellConfigured,
+    environment: ebaySellEnvironment,
+    connected: Boolean(connection),
+    connectedAt: connection?.connected_at ?? null,
+  });
+});
+
+app.post("/api/ebay/selling/authorize", (request, response) => {
+  if (!ebaySelling || !cloudServices) {
+    response.status(409).json({ error: "eBay Sandbox selling is not configured yet." });
+    return;
+  }
+  const state = randomUUID();
+  response.append(
+    "Set-Cookie",
+    `${EBAY_STATE_COOKIE}=${encodeURIComponent(state)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${cloudConfiguration.secureCookies ? "; Secure" : ""}`,
+  );
+  response.json({ authorizationUrl: ebaySelling.authorizationUrl(state) });
+});
+
+app.get("/api/ebay/selling/callback", async (request, response) => {
+  const expectedState = requestCookie(request, EBAY_STATE_COOKIE);
+  if (!ebaySelling || !expectedState || request.query.state !== expectedState || typeof request.query.code !== "string") {
+    response.redirect(`${cloudConfiguration.appOrigin ?? "/"}?ebay=connection-error`);
+    return;
+  }
+  try {
+    const token = await ebaySelling.exchangeCode(request.query.code);
+    await cloudServices.ebaySelling.saveConnection(request.cardPilotUser.id, {
+      environment: ebaySellEnvironment,
+      encryptedRefreshToken: encryptSellerToken(
+        token.refresh_token,
+        process.env.EBAY_TOKEN_ENCRYPTION_KEY,
+      ),
+      scopes: token.scope ?? "",
+    });
+    response.append("Set-Cookie", `${EBAY_STATE_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+    response.redirect(`${cloudConfiguration.appOrigin ?? "/"}?ebay=connected`);
+  } catch (error) {
+    console.error("eBay seller connection failed", { status: error?.status, code: error?.code });
+    response.redirect(`${cloudConfiguration.appOrigin ?? "/"}?ebay=connection-error`);
+  }
+});
+
+app.delete("/api/ebay/selling/connection", async (request, response) => {
+  if (!cloudServices) return response.status(409).json({ error: "Cloud accounts are required." });
+  await cloudServices.ebaySelling.disconnect(request.cardPilotUser.id);
+  response.status(204).end();
+});
+
+app.get("/api/ebay/selling/setup", async (request, response) => {
+  try {
+    const token = await ebaySellerAccessToken(request.cardPilotUser.id);
+    const [locations, fulfillment, payment, returns] = await Promise.all([
+      ebaySelling.request(token, "/sell/inventory/v1/location?limit=100"),
+      ebaySelling.request(token, `/sell/account/v1/fulfillment_policy?marketplace_id=${ebayMarketplaceId}`),
+      ebaySelling.request(token, `/sell/account/v1/payment_policy?marketplace_id=${ebayMarketplaceId}`),
+      ebaySelling.request(token, `/sell/account/v1/return_policy?marketplace_id=${ebayMarketplaceId}`),
+    ]);
+    response.json({
+      locations: (locations?.locations ?? []).map((item) => ({ id: item.merchantLocationKey, name: item.name })),
+      fulfillmentPolicies: (fulfillment?.fulfillmentPolicies ?? []).map((item) => ({ id: item.fulfillmentPolicyId, name: item.name })),
+      paymentPolicies: (payment?.paymentPolicies ?? []).map((item) => ({ id: item.paymentPolicyId, name: item.name })),
+      returnPolicies: (returns?.returnPolicies ?? []).map((item) => ({ id: item.returnPolicyId, name: item.name })),
+    });
+  } catch (error) {
+    response.status(502).json({ error: error.message ?? "CardPilot could not load eBay seller policies." });
+  }
+});
+
+function ebayDraftFromCard(card, defaults = {}) {
+  const fields = card.fields;
+  const identifying = [fields.year, fields.player ?? fields.character, fields.setOrInsert,
+    fields.parallel, fields.cardNumber ? `#${fields.cardNumber}` : null,
+    fields.serialNumber, fields.autograph ? "Autograph" : null, fields.rookieStatus ? "Rookie" : null]
+    .filter(Boolean).join(" ");
+  const priceCents = card.confirmedValuation?.amountCents ?? 100;
+  return {
+    title: identifying.slice(0, 80) || card.title.slice(0, 80),
+    description: `${identifying || card.title}\n\nPlease review the photographs for the exact card and condition.`,
+    priceCents,
+    currency: card.confirmedValuation?.currency ?? "USD",
+    condition: "USED_EXCELLENT",
+    conditionDescription: "Ungraded trading card. Please review photographs for condition.",
+    categoryId: "",
+    aspects: Object.fromEntries([
+      [fields.player ? "Player/Athlete" : "Character", fields.player ?? fields.character],
+      ["Sport", fields.sport],
+      ["Team", fields.team],
+      ["Set", fields.setOrInsert],
+      ["Year Manufactured", fields.year],
+      ["Card Number", fields.cardNumber],
+      ["Parallel/Variety", fields.parallel],
+      ["Manufacturer", fields.manufacturer],
+    ].filter(([, value]) => typeof value === "string" && value.trim()).map(([name, value]) => [name, [value]])),
+    merchantLocationKey: defaults.merchantLocationKey ?? "",
+    fulfillmentPolicyId: defaults.fulfillmentPolicyId ?? "",
+    paymentPolicyId: defaults.paymentPolicyId ?? "",
+    returnPolicyId: defaults.returnPolicyId ?? "",
+    listingFormat: "FIXED_PRICE",
+  };
+}
+
+app.get("/api/collection/:collectionId/ebay-draft", async (request, response) => {
+  if (!cloudServices) return response.status(409).json({ error: "Cloud accounts are required." });
+  const card = await collectionStore.get(collectionUserId(request), request.params.collectionId);
+  if (!card) return response.status(404).json({ error: "That saved card was not found." });
+  const saved = await cloudServices.ebaySelling.draft(request.cardPilotUser.id, card.collectionId);
+  const preferences = await cloudServices.preferences.get(request.cardPilotUser.id);
+  response.json({ draft: saved ?? ebayDraftFromCard(card, preferences.ebaySellingDefaults), generated: !saved });
+});
+
+app.put("/api/collection/:collectionId/ebay-draft", async (request, response) => {
+  try {
+    const card = await collectionStore.get(collectionUserId(request), request.params.collectionId);
+    if (!card) return response.status(404).json({ error: "That saved card was not found." });
+    const draft = await cloudServices.ebaySelling.saveDraft(
+      request.cardPilotUser.id,
+      card.collectionId,
+      request.body,
+    );
+    const preferences = await cloudServices.preferences.get(request.cardPilotUser.id);
+    await cloudServices.preferences.update(request.cardPilotUser.id, {
+      ...preferences,
+      ebaySellingDefaults: {
+        merchantLocationKey: draft.merchantLocationKey,
+        fulfillmentPolicyId: draft.fulfillmentPolicyId,
+        paymentPolicyId: draft.paymentPolicyId,
+        returnPolicyId: draft.returnPolicyId,
+      },
+    });
+    response.json({ draft });
+  } catch (error) {
+    response.status(error instanceof ZodError ? 400 : 500).json({ error: "CardPilot could not save this eBay draft." });
+  }
+});
+
+async function ebaySellerAccessToken(userId) {
+  if (!ebaySelling || !cloudServices) throw new Error("eBay selling is not configured.");
+  const connection = await cloudServices.ebaySelling.connection(userId);
+  if (!connection) throw new Error("Connect an eBay seller account first.");
+  const refreshToken = decryptSellerToken(connection.encrypted_refresh_token, process.env.EBAY_TOKEN_ENCRYPTION_KEY);
+  return (await ebaySelling.refresh(refreshToken)).access_token;
+}
+
+app.post("/api/collection/:collectionId/ebay-publish", async (request, response) => {
+  if (request.body?.confirmation !== "PUBLISH") {
+    return response.status(400).json({ error: "Explicit publication confirmation is required." });
+  }
+  try {
+    const userId = request.cardPilotUser.id;
+    const card = await collectionStore.get(userId, request.params.collectionId);
+    const saved = card && await cloudServices.ebaySelling.draft(userId, card.collectionId);
+    if (!card || !saved) return response.status(404).json({ error: "Save the listing draft first." });
+    const draft = EbayListingDraftSchema.parse((({ draftId, collectionId, status, ebayOfferId, ebayListingId, updatedAt, ...value }) => value)(saved));
+    if ([draft.categoryId, draft.merchantLocationKey, draft.fulfillmentPolicyId, draft.paymentPolicyId, draft.returnPolicyId].some((value) => !value)) {
+      return response.status(400).json({ error: "Category, location, and all three eBay policies are required." });
+    }
+    const token = await ebaySellerAccessToken(userId);
+    const sku = `cardpilot-${card.collectionId}`;
+    const [front, back] = await Promise.all([
+      collectionStore.image(userId, card.collectionId, "front"),
+      collectionStore.image(userId, card.collectionId, "back"),
+    ]);
+    await ebaySelling.request(token, `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
+      method: "PUT",
+      body: {
+        availability: { shipToLocationAvailability: { quantity: 1 } },
+        condition: draft.condition,
+        conditionDescription: draft.conditionDescription,
+        product: { title: draft.title, description: draft.description, aspects: draft.aspects,
+          imageUrls: [front?.signedUrl, back?.signedUrl].filter(Boolean) },
+      },
+    });
+    const offer = await ebaySelling.request(token, "/sell/inventory/v1/offer", {
+      method: "POST",
+      body: { sku, marketplaceId: ebayMarketplaceId, format: draft.listingFormat,
+        availableQuantity: 1, categoryId: draft.categoryId,
+        merchantLocationKey: draft.merchantLocationKey, listingDuration: "GTC",
+        listingPolicies: { fulfillmentPolicyId: draft.fulfillmentPolicyId,
+          paymentPolicyId: draft.paymentPolicyId, returnPolicyId: draft.returnPolicyId },
+        pricingSummary: { price: { value: (draft.priceCents / 100).toFixed(2), currency: draft.currency } } },
+    });
+    const published = await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(offer.offerId)}/publish`, { method: "POST" });
+    const result = await cloudServices.ebaySelling.markPublished(userId, card.collectionId, {
+      offerId: offer.offerId, listingId: published.listingId,
+    });
+    response.json({ draft: result });
+  } catch (error) {
+    console.error("eBay listing publication failed", { status: error?.status, code: error?.code });
+    response.status(error instanceof ZodError ? 400 : 502).json({ error: error.message ?? "eBay could not publish this listing." });
+  }
+});
+
+app.post("/api/collection/:collectionId/ebay-end", async (request, response) => {
+  if (request.body?.confirmation !== "END") {
+    return response.status(400).json({ error: "Explicit end-listing confirmation is required." });
+  }
+  try {
+    const userId = request.cardPilotUser.id;
+    const draft = await cloudServices.ebaySelling.draft(userId, request.params.collectionId);
+    if (!draft?.ebayOfferId || draft.status !== "published") {
+      return response.status(404).json({ error: "No active CardPilot eBay listing was found." });
+    }
+    const token = await ebaySellerAccessToken(userId);
+    await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(draft.ebayOfferId)}/withdraw`, { method: "POST" });
+    response.json({ draft: await cloudServices.ebaySelling.markEnded(userId, request.params.collectionId) });
+  } catch (error) {
+    response.status(502).json({ error: error.message ?? "eBay could not end this listing." });
+  }
+});
+
+app.post("/api/collection/:collectionId/ebay-revise", async (request, response) => {
+  if (request.body?.confirmation !== "REVISE") {
+    return response.status(400).json({ error: "Explicit revision confirmation is required." });
+  }
+  try {
+    const userId = request.cardPilotUser.id;
+    const card = await collectionStore.get(userId, request.params.collectionId);
+    const saved = card && await cloudServices.ebaySelling.draft(userId, card.collectionId);
+    if (!card || !saved?.ebayOfferId || saved.status !== "published") {
+      return response.status(404).json({ error: "No active CardPilot eBay listing was found." });
+    }
+    const draft = EbayListingDraftSchema.parse((({ draftId, collectionId, status, ebayOfferId, ebayListingId, updatedAt, ...value }) => value)(saved));
+    const token = await ebaySellerAccessToken(userId);
+    const sku = `cardpilot-${card.collectionId}`;
+    const [front, back] = await Promise.all([
+      collectionStore.image(userId, card.collectionId, "front"),
+      collectionStore.image(userId, card.collectionId, "back"),
+    ]);
+    await ebaySelling.request(token, `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
+      method: "PUT",
+      body: { availability: { shipToLocationAvailability: { quantity: 1 } }, condition: draft.condition,
+        conditionDescription: draft.conditionDescription,
+        product: { title: draft.title, description: draft.description, aspects: draft.aspects,
+          imageUrls: [front?.signedUrl, back?.signedUrl].filter(Boolean) } },
+    });
+    await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(saved.ebayOfferId)}`, {
+      method: "PUT",
+      body: { sku, marketplaceId: ebayMarketplaceId, format: draft.listingFormat,
+        availableQuantity: 1, categoryId: draft.categoryId,
+        merchantLocationKey: draft.merchantLocationKey, listingDuration: "GTC",
+        listingPolicies: { fulfillmentPolicyId: draft.fulfillmentPolicyId,
+          paymentPolicyId: draft.paymentPolicyId, returnPolicyId: draft.returnPolicyId },
+        pricingSummary: { price: { value: (draft.priceCents / 100).toFixed(2), currency: draft.currency } } },
+    });
+    response.json({ draft: saved });
+  } catch (error) {
+    response.status(502).json({ error: error.message ?? "eBay could not revise this listing." });
   }
 });
 
