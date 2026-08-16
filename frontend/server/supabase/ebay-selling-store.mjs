@@ -167,6 +167,26 @@ export class SupabaseEbaySellingStore {
     return data ?? [];
   }
 
+  async sale(userId, saleId) {
+    const { data, error } = await this.client.from("ebay_order_sales").select("*")
+      .eq("user_id", userId).eq("sale_id", saleId).maybeSingle();
+    if (error) throw dbError("eBay sale read", error);
+    return data;
+  }
+
+  async markSaleShipped(userId, saleId, { shippingCarrierCode, trackingNumber, shippedAt }) {
+    const { data, error } = await this.client.from("ebay_order_sales").update({
+      order_status: "SHIPPED",
+      shipping_carrier_code: shippingCarrierCode,
+      tracking_number: trackingNumber,
+      shipped_at: shippedAt,
+      shipment_error: null,
+      last_synced_at: new Date().toISOString(),
+    }).eq("user_id", userId).eq("sale_id", saleId).select("*").single();
+    if (error) throw dbError("eBay shipment save", error);
+    return data;
+  }
+
   #public(row) {
     return { draftId: row.draft_id, collectionId: row.collection_id, ...row.draft,
       status: row.status, ebayOfferId: row.ebay_offer_id, ebayListingId: row.ebay_listing_id,

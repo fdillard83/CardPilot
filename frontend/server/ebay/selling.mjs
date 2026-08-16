@@ -130,6 +130,7 @@ const SELL_SCOPES = [
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
   "https://api.ebay.com/oauth/api_scope/sell.account",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
+  "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
 ];
 
 function tokenKey(secret) {
@@ -181,8 +182,8 @@ export class EbaySellingClient {
     return this.#token({ grant_type: "authorization_code", code, redirect_uri: this.redirectUriName });
   }
 
-  async refresh(refreshToken) {
-    return this.#token({ grant_type: "refresh_token", refresh_token: refreshToken, scope: SELL_SCOPES.join(" ") });
+  async refresh(refreshToken, scopes = SELL_SCOPES.join(" ")) {
+    return this.#token({ grant_type: "refresh_token", refresh_token: refreshToken, scope: scopes });
   }
 
   async #token(fields) {

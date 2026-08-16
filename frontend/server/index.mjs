@@ -780,10 +780,11 @@ app.delete("/api/collection/:collectionId/ebay-draft", async (request, response)
 app.get("/api/ebay/listing-queue", async (request, response) => {
   try {
     const userId = request.cardPilotUser.id;
-    const [drafts, cards, sales] = await Promise.all([
+    const [drafts, cards, sales, connection] = await Promise.all([
       cloudServices.ebaySelling.drafts(userId),
       collectionStore.list(userId),
       cloudServices.ebaySelling.sales(userId),
+      cloudServices.ebaySelling.connection(userId),
     ]);
     const saleByCollectionId = new Map(sales.map((sale) => [sale.collection_id, sale]));
     const cardById = new Map(cards.map((card) => [card.collectionId, card]));
@@ -815,6 +816,10 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
         soldCurrency: draft.soldCurrency,
         paymentStatus: sale ? "PAID" : null,
         fulfillmentStatus: sale?.order_status ?? null,
+        saleId: sale?.sale_id ?? null,
+        shippingCarrierCode: sale?.shipping_carrier_code ?? null,
+        trackingNumber: sale?.tracking_number ?? null,
+        shippedAt: sale?.shipped_at ?? null,
         updatedAt: draft.updatedAt,
         imageUrl: card.images.frontUrl,
         missingAspects: requirements.missingAspects,
@@ -822,7 +827,12 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
         ready: requirements.ready,
       };
     }));
-    response.json({ environment: ebaySellEnvironment, productionPublishingEnabled: ebaySellEnvironment === "production", items: items.filter(Boolean) });
+    response.json({
+      environment: ebaySellEnvironment,
+      productionPublishingEnabled: ebaySellEnvironment === "production",
+      fulfillmentWriteAuthorized: String(connection?.scopes ?? "").split(/\s+/).includes("https://api.ebay.com/oauth/api_scope/sell.fulfillment"),
+      items: items.filter(Boolean),
+    });
   } catch (error) {
     response.status(500).json({ error: error.message ?? "CardPilot could not load the listing queue." });
   }
@@ -860,7 +870,7 @@ async function ebaySellerAccessToken(userId) {
   if (!connection) throw new Error("Connect an eBay seller account first.");
   if (connection.environment !== ebaySellEnvironment) throw new Error(`Reconnect your eBay ${ebaySellEnvironment} seller account before continuing.`);
   const refreshToken = decryptSellerToken(connection.encrypted_refresh_token, process.env.EBAY_TOKEN_ENCRYPTION_KEY);
-  return (await ebaySelling.refresh(refreshToken)).access_token;
+  return (await ebaySelling.refresh(refreshToken, connection.scopes || undefined)).access_token;
 }
 
 function ebayListingImageUrls(userId, card, draft, availableImages) {
@@ -1153,6 +1163,83 @@ app.get("/api/ebay/sales", async (request, response) => {
     const sales = await cloudServices.ebaySelling.sales(request.cardPilotUser.id);
     response.json({ sales, totalAmountCents: sales.reduce((sum, sale) => sum + sale.amount_cents, 0), currency: sales[0]?.currency ?? "USD" });
   } catch (error) { response.status(500).json({ error: error.message ?? "CardPilot could not load eBay sales." }); }
+});
+
+const EbayShipmentSchema = z.object({
+  confirmation: z.literal("SHIP"),
+  shippingCarrierCode: z.enum(["USPS", "UPS", "FedEx", "DHL"]),
+  trackingNumber: z.string().trim().min(3).max(100),
+}).strict();
+
+app.post("/api/ebay/sales/:saleId/ship", async (request, response) => {
+  try {
+    const input = EbayShipmentSchema.parse(request.body);
+    const userId = request.cardPilotUser.id;
+    const sale = await cloudServices.ebaySelling.sale(userId, request.params.saleId);
+    if (!sale) return response.status(404).json({ error: "That paid eBay sale was not found." });
+    if (String(sale.order_status).toUpperCase() === "FULFILLED") {
+      return response.status(409).json({ error: "eBay already marks this sale as shipped." });
+    }
+    const connection = await cloudServices.ebaySelling.connection(userId);
+    const hasWriteScope = String(connection?.scopes ?? "").split(/\s+/)
+      .includes("https://api.ebay.com/oauth/api_scope/sell.fulfillment");
+    if (!hasWriteScope) {
+      return response.status(409).json({ error: "Reconnect eBay permissions before sending shipment tracking." });
+    }
+    const token = await ebaySellerAccessToken(userId);
+    const shippedAt = new Date().toISOString();
+    await ebaySelling.request(token, `/sell/fulfillment/v1/order/${encodeURIComponent(sale.order_id)}/shipping_fulfillment`, {
+      method: "POST",
+      body: {
+        lineItems: [{ lineItemId: sale.line_item_id, quantity: sale.quantity }],
+        shippedDate: shippedAt,
+        shippingCarrierCode: input.shippingCarrierCode,
+        trackingNumber: input.trackingNumber,
+      },
+    });
+    const updated = await cloudServices.ebaySelling.markSaleShipped(userId, sale.sale_id, {
+      shippingCarrierCode: input.shippingCarrierCode,
+      trackingNumber: input.trackingNumber,
+      shippedAt,
+    });
+    response.json({ sale: updated });
+  } catch (error) {
+    response.status(error instanceof ZodError ? 400 : 502).json({
+      error: error instanceof ZodError ? error.issues[0]?.message : error.message ?? "eBay could not confirm this shipment.",
+    });
+  }
+});
+
+function csvCell(value) {
+  let text = String(value ?? "");
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+app.get("/api/ebay/sales/export.csv", async (request, response) => {
+  try {
+    const userId = request.cardPilotUser.id;
+    const [sales, drafts] = await Promise.all([
+      cloudServices.ebaySelling.sales(userId),
+      cloudServices.ebaySelling.drafts(userId),
+    ]);
+    const titleByCollection = new Map(drafts.map((draft) => [draft.collectionId, draft.title]));
+    const rows = [["Sold date", "Card", "Listing ID", "Amount", "Currency", "Quantity", "Shipment status", "Carrier", "Tracking number"]];
+    for (const sale of sales) rows.push([
+      sale.sold_at, titleByCollection.get(sale.collection_id) ?? "Saved card", sale.listing_id,
+      (sale.amount_cents / 100).toFixed(2), sale.currency, sale.quantity,
+      sale.order_status, sale.shipping_carrier_code, sale.tracking_number,
+    ]);
+    const csv = `${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}\r\n`;
+    response.set({
+      "Cache-Control": "private, no-store",
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="cardpilot-ebay-sales-${new Date().toISOString().slice(0, 10)}.csv"`,
+    });
+    response.send(csv);
+  } catch (error) {
+    response.status(500).json({ error: error.message ?? "CardPilot could not export eBay sales." });
+  }
 });
 
 app.get("/api/account/export", async (request, response) => {
