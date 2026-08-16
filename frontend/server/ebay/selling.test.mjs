@@ -9,6 +9,7 @@ import {
   ebaySandboxSetupResources,
   ebaySellerSetupResources,
   encryptSellerToken,
+  inventoryConditionForCard,
 } from "./selling.mjs";
 
 test("seller refresh tokens are encrypted and authenticated", () => {
@@ -83,6 +84,18 @@ test("Production seller setup uses distinct real-account resource names", () => 
   assert.equal(resources.returnPolicy.name, "CardPilot Returns");
 });
 
+test("raw trading cards use eBay's required structured condition", () => {
+  assert.deepEqual(inventoryConditionForCard({
+    categoryId: "261328", isGraded: false, condition: "USED_EXCELLENT",
+  }), {
+    condition: "USED_VERY_GOOD",
+    conditionDescriptors: [{ name: "40001", values: ["400012"] }],
+  });
+  assert.throws(() => inventoryConditionForCard({
+    categoryId: "261328", isGraded: true, condition: "LIKE_NEW",
+  }), /grader and grade descriptors/);
+});
+
 test("selling requests preserve useful eBay validation details", async () => {
   let requestHeaders;
   const client = new EbaySellingClient({
@@ -101,7 +114,7 @@ test("selling requests preserve useful eBay validation details", async () => {
   });
   await assert.rejects(
     client.request("access-token", "/sell/account/v1/fulfillment_policy"),
-    /shipping service is not valid.*shippingServiceCode: Example/,
+    /shipping service is not valid.*shippingServiceCode: Example.*eBay error 20403/,
   );
   assert.equal(requestHeaders.Accept, "application/json");
   assert.equal(requestHeaders["Accept-Language"], "en-US");

@@ -20,6 +20,7 @@ import {
   editableEbayDraft,
   ebaySellerSetupResources,
   encryptSellerToken,
+  inventoryConditionForCard,
 } from "./ebay/selling.mjs";
 import { CatalogCandidateGenerator } from "./identification/candidate-generator.mjs";
 import { OpenAIEvidenceEngine } from "./identification/evidence-engine.mjs";
@@ -640,7 +641,7 @@ function ebayDraftFromCard(card, defaults = {}) {
     description: `${detailLines.join("\n")}\n\nYou will receive the exact card shown. Please review the photographs carefully for condition and included details.`,
     priceCents,
     currency: card.confirmedValuation?.currency ?? "USD",
-    condition: "USED_EXCELLENT",
+    condition: card.grading?.isGraded ? "LIKE_NEW" : "USED_VERY_GOOD",
     conditionDescription: card.grading?.isGraded
       ? `Professionally graded ${card.grading.company ?? ""} ${card.grading.grade ?? ""}. Certification: ${card.grading.certificationNumber ?? "see photographs"}.`.replace(/\s+/g, " ")
       : "Raw / ungraded trading card. Please review photographs for the exact condition.",
@@ -771,11 +772,16 @@ async function publishEbayListing(userId, collectionId) {
     ]);
     const availableImages = { front: front?.signedUrl, back: back?.signedUrl };
     const imageUrls = draft.listingImages.map((side) => availableImages[side]).filter(Boolean);
+    const inventoryCondition = inventoryConditionForCard({
+      categoryId: draft.categoryId,
+      isGraded: card.grading?.isGraded,
+      condition: draft.condition,
+    });
     await ebaySelling.request(token, `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
       method: "PUT",
       body: {
         availability: { shipToLocationAvailability: { quantity: 1 } },
-        condition: draft.condition,
+        ...inventoryCondition,
         conditionDescription: draft.conditionDescription,
         product: { title: draft.title, description: draft.description, aspects: draft.aspects, imageUrls },
       },
@@ -879,9 +885,14 @@ app.post("/api/collection/:collectionId/ebay-revise", async (request, response) 
     ]);
     const availableImages = { front: front?.signedUrl, back: back?.signedUrl };
     const imageUrls = draft.listingImages.map((side) => availableImages[side]).filter(Boolean);
+    const inventoryCondition = inventoryConditionForCard({
+      categoryId: draft.categoryId,
+      isGraded: card.grading?.isGraded,
+      condition: draft.condition,
+    });
     await ebaySelling.request(token, `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
       method: "PUT",
-      body: { availability: { shipToLocationAvailability: { quantity: 1 } }, condition: draft.condition,
+      body: { availability: { shipToLocationAvailability: { quantity: 1 } }, ...inventoryCondition,
         conditionDescription: draft.conditionDescription,
         product: { title: draft.title, description: draft.description, aspects: draft.aspects, imageUrls } },
     });

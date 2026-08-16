@@ -37,6 +37,19 @@ export function editableEbayDraft(saved) {
   return EbayListingDraftSchema.parse(value);
 }
 
+const tradingCardCategoryIds = new Set(["261328", "183050", "183454"]);
+
+export function inventoryConditionForCard({ categoryId, isGraded, condition }) {
+  if (!tradingCardCategoryIds.has(String(categoryId))) return { condition };
+  if (isGraded) {
+    throw new Error("Graded trading cards require eBay grader and grade descriptors before they can be published.");
+  }
+  return {
+    condition: "USED_VERY_GOOD",
+    conditionDescriptors: [{ name: "40001", values: ["400012"] }],
+  };
+}
+
 export const EbaySandboxSetupSchema = z.object({
   postalCode: z.string().trim().regex(/^\d{5}(?:-\d{4})?$/, "Enter a valid US ZIP code."),
   shippingCostCents: z.number().int().min(0).max(10_000),
@@ -192,7 +205,9 @@ export class EbaySellingClient {
         .filter((value, index, values) => value && values.indexOf(value) === index)
         .join(" ");
       const code = ebayError?.errorId?.toString();
-      const message = details || `eBay rejected the selling request${code ? ` (error ${code})` : ""}.`;
+      const message = details
+        ? `${details}${code ? ` (eBay error ${code})` : ""}`
+        : `eBay rejected the selling request${code ? ` (error ${code})` : ""}.`;
       throw new EbayApiError(message, { service: "selling", status: response.status, code });
     }
     return payload;
