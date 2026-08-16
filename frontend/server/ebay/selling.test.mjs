@@ -17,6 +17,15 @@ test("seller refresh tokens are encrypted and authenticated", () => {
   assert.notEqual(encrypted, "private-refresh-token");
   assert.equal(decryptSellerToken(encrypted, "test-only-secret"), "private-refresh-token");
   assert.throws(() => decryptSellerToken(encrypted, "wrong-secret"));
+  const imageReference = JSON.stringify({
+    userId: "11111111-1111-4111-8111-111111111111",
+    collectionId: "22222222-2222-4222-8222-222222222222",
+    side: "front",
+  });
+  const imageToken = encryptSellerToken(imageReference, "test-only-secret");
+  const imageUrl = `https://cardpilot-aizd.onrender.com/api/ebay/listing-image/${imageToken}`;
+  assert.ok(imageUrl.length < 500);
+  assert.equal(decryptSellerToken(imageToken, "test-only-secret"), imageReference);
 });
 
 test("sandbox seller authorization uses the configured RuName and CSRF state", () => {

@@ -341,6 +341,32 @@ async function runDueEbaySchedules() {
   return { processed: results.length, results };
 }
 
+const EbayListingImageReferenceSchema = z.object({
+  userId: z.string().min(1).max(100),
+  collectionId: z.string().min(1).max(100),
+  side: z.enum(["front", "back"]),
+}).strict();
+
+app.get("/api/ebay/listing-image/:token", async (request, response) => {
+  try {
+    if (!cloudServices || !process.env.EBAY_TOKEN_ENCRYPTION_KEY) throw new Error("Unavailable");
+    const reference = EbayListingImageReferenceSchema.parse(JSON.parse(
+      decryptSellerToken(request.params.token, process.env.EBAY_TOKEN_ENCRYPTION_KEY),
+    ));
+    const draft = await cloudServices.ebaySelling.draft(reference.userId, reference.collectionId);
+    if (!draft || draft.status === "ended" || !draft.listingImages?.includes(reference.side)) throw new Error("Unavailable");
+    const image = await collectionStore.image(reference.userId, reference.collectionId, reference.side);
+    if (!image?.signedUrl) throw new Error("Unavailable");
+    const upstream = await fetch(image.signedUrl);
+    if (!upstream.ok) throw new Error("Unavailable");
+    response.set("Content-Type", upstream.headers.get("content-type") ?? "image/jpeg");
+    response.set("Cache-Control", "public, max-age=3600");
+    response.send(Buffer.from(await upstream.arrayBuffer()));
+  } catch {
+    response.status(404).end();
+  }
+});
+
 if (cloudServices) {
   app.use("/api", requireCloudUser(cloudServices.auth));
 }
@@ -750,6 +776,21 @@ async function ebaySellerAccessToken(userId) {
   return (await ebaySelling.refresh(refreshToken)).access_token;
 }
 
+function ebayListingImageUrls(userId, card, draft, availableImages) {
+  if (ebaySellEnvironment !== "production") {
+    return draft.listingImages.map((side) => availableImages[side]?.signedUrl).filter(Boolean);
+  }
+  if (!cloudConfiguration.appOrigin?.startsWith("https://")) {
+    throw new Error("APP_ORIGIN must be an HTTPS address before publishing to eBay Production.");
+  }
+  return draft.listingImages.filter((side) => availableImages[side]?.signedUrl).map((side) => {
+    const token = encryptSellerToken(JSON.stringify({ userId, collectionId: card.collectionId, side }), process.env.EBAY_TOKEN_ENCRYPTION_KEY);
+    const url = new URL(`/api/ebay/listing-image/${token}`, cloudConfiguration.appOrigin).toString();
+    if (url.length > 500) throw new Error("CardPilot could not create an eBay-compatible picture URL.");
+    return url;
+  });
+}
+
 async function publishEbayListing(userId, collectionId) {
     const card = await collectionStore.get(userId, collectionId);
     const saved = card && await cloudServices.ebaySelling.draft(userId, card.collectionId);
@@ -770,8 +811,8 @@ async function publishEbayListing(userId, collectionId) {
       collectionStore.image(userId, card.collectionId, "front"),
       collectionStore.image(userId, card.collectionId, "back"),
     ]);
-    const availableImages = { front: front?.signedUrl, back: back?.signedUrl };
-    const imageUrls = draft.listingImages.map((side) => availableImages[side]).filter(Boolean);
+    const availableImages = { front, back };
+    const imageUrls = ebayListingImageUrls(userId, card, draft, availableImages);
     const inventoryCondition = inventoryConditionForCard({
       categoryId: draft.categoryId,
       isGraded: card.grading?.isGraded,
@@ -883,8 +924,8 @@ app.post("/api/collection/:collectionId/ebay-revise", async (request, response) 
       collectionStore.image(userId, card.collectionId, "front"),
       collectionStore.image(userId, card.collectionId, "back"),
     ]);
-    const availableImages = { front: front?.signedUrl, back: back?.signedUrl };
-    const imageUrls = draft.listingImages.map((side) => availableImages[side]).filter(Boolean);
+    const availableImages = { front, back };
+    const imageUrls = ebayListingImageUrls(userId, card, draft, availableImages);
     const inventoryCondition = inventoryConditionForCard({
       categoryId: draft.categoryId,
       isGraded: card.grading?.isGraded,
