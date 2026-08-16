@@ -6,6 +6,7 @@ import {
   EbaySellingClient,
   decryptSellerToken,
   ebaySandboxSetupResources,
+  ebaySellerSetupResources,
   encryptSellerToken,
 } from "./selling.mjs";
 
@@ -61,6 +62,14 @@ test("Sandbox setup validates a US ZIP code and builds safe test defaults", () =
   assert.equal(resources.fulfillmentPolicy.shippingOptions[0].shippingServices[0].shippingCost.value, "4.99");
   assert.equal(resources.paymentPolicy.immediatePay, true);
   assert.equal(resources.returnPolicy.returnPeriod.value, 30);
+});
+
+test("Production seller setup uses distinct real-account resource names", () => {
+  const resources = ebaySellerSetupResources({ postalCode: "27514", shippingCostCents: 499 }, "EBAY_US", "production");
+  assert.equal(resources.merchantLocationKey, "cardpilot-primary");
+  assert.equal(resources.location.name, "CardPilot Inventory");
+  assert.equal(resources.fulfillmentPolicy.name, "CardPilot Shipping");
+  assert.equal(resources.returnPolicy.name, "CardPilot Returns");
 });
 
 test("selling requests preserve useful eBay validation details", async () => {

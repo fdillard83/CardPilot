@@ -160,19 +160,23 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
     window.location.assign(payload.authorizationUrl);
   };
 
-  const createSandboxSetup = async () => {
-    if (!draft) return;
+  const createSellerSetup = async () => {
+    if (!draft || !status) return;
+    if (status.environment === "production" && !window.confirm(
+      "Create a real eBay inventory location plus CardPilot shipping, immediate-payment, and 30-day buyer-paid return policies? These settings will be added to your Production seller account.",
+    )) return;
     setBusy(true); setError(null); setMessage(null);
     try {
       const shippingCost = Number(sandboxShippingCost);
       if (!/^\d{5}(?:-\d{4})?$/.test(sandboxPostalCode.trim())) throw new Error("Enter a valid US ZIP code.");
       if (!Number.isFinite(shippingCost) || shippingCost < 0) throw new Error("Enter a valid shipping charge.");
-      const response = await fetch("/api/ebay/selling/setup/sandbox", {
+      const response = await fetch(`/api/ebay/selling/setup/${status.environment}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           postalCode: sandboxPostalCode.trim(),
           shippingCostCents: Math.round(shippingCost * 100),
+          ...(status.environment === "production" ? { confirmation: "CREATE_PRODUCTION_DEFAULTS" } : {}),
         }),
       });
       const payload = await responsePayload(response);
@@ -186,10 +190,10 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
         paymentPolicyId: current.paymentPolicyId || next.paymentPolicies[0]?.id || "",
         returnPolicyId: current.returnPolicyId || next.returnPolicies[0]?.id || "",
       } : current);
-      setMessage("Sandbox seller settings created and selected. Save the draft to remember them.");
+      setMessage(`${status.environment === "production" ? "Production" : "Sandbox"} seller settings created and selected. Save the draft to remember them.`);
     } catch (caught) {
-      const detail = caught instanceof Error ? caught.message : "Sandbox seller settings could not be created.";
-      setError(/system error|fulfillment policy/i.test(detail)
+      const detail = caught instanceof Error ? caught.message : "eBay seller settings could not be created.";
+      setError(status.environment === "sandbox" && /system error|fulfillment policy/i.test(detail)
         ? "eBay Sandbox is currently reporting a known seller-policy service outage. Your CardPilot draft is safe; retry this setup after eBay restores the Sandbox Account API."
         : detail);
     } finally { setBusy(false); }
@@ -300,19 +304,21 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
               <span>Environment: {status.environment}. Production publishing remains separate.</span>
               {status.configured && !status.connected && <button type="button" onClick={() => void connect()}>Connect eBay</button>}
             </div>
-            {status.connected && status.environment === "sandbox" && setup && (
+            {status.connected && setup && (
               !setup.locations.length || !setup.fulfillmentPolicies.length || !setup.paymentPolicies.length || !setup.returnPolicies.length
             ) && <section className="ebay-sandbox-setup" aria-labelledby="ebay-sandbox-setup-title">
               <div>
-                <strong id="ebay-sandbox-setup-title">Finish setting up this test seller</strong>
-                <p>This new Sandbox account has no listing policies or inventory location. CardPilot can create test-only defaults; this cannot affect real eBay.</p>
+                <strong id="ebay-sandbox-setup-title">Finish setting up this {status.environment === "production" ? "eBay seller" : "test seller"}</strong>
+                <p>{status.environment === "production"
+                  ? "Your Production account has no available listing policies or inventory location. CardPilot can create real defaults after you review and confirm them."
+                  : "This new Sandbox account has no listing policies or inventory location. CardPilot can create test-only defaults; this cannot affect real eBay."}</p>
               </div>
               <div className="ebay-sandbox-setup-fields">
                 <label>Ship-from ZIP code <input inputMode="numeric" autoComplete="postal-code" placeholder="12345" value={sandboxPostalCode} onChange={(event) => setSandboxPostalCode(event.target.value)} /></label>
                 <label>Buyer shipping charge <input type="number" min="0" step="0.01" value={sandboxShippingCost} onChange={(event) => setSandboxShippingCost(event.target.value)} /></label>
               </div>
-              <small>Creates a one-business-day USPS test shipping policy, immediate payment, 30-day buyer-paid returns, and a ZIP-level warehouse location.</small>
-              <button className="primary-action" type="button" disabled={busy} onClick={() => void createSandboxSetup()}>{busy ? "Creating test settings..." : "Create Sandbox seller settings"}</button>
+              <small>Creates a one-business-day USPS shipping policy, immediate payment, 30-day buyer-paid returns, and a ZIP-level inventory location. Review the shipping charge before continuing.</small>
+              <button className="primary-action" type="button" disabled={busy} onClick={() => void createSellerSetup()}>{busy ? "Creating seller settings..." : `Review and create ${status.environment === "production" ? "Production" : "Sandbox"} settings`}</button>
             </section>}
             {error && <div className="error-banner ebay-setup-feedback" role="alert">{error}</div>}
             {message && <div className="collection-status-banner ebay-setup-feedback" role="status">{message}</div>}

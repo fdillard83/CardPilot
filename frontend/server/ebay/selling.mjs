@@ -32,17 +32,23 @@ export const EbaySandboxSetupSchema = z.object({
 }).strict();
 
 export function ebaySandboxSetupResources(input, marketplaceId = "EBAY_US") {
+  return ebaySellerSetupResources(input, marketplaceId, "sandbox");
+}
+
+export function ebaySellerSetupResources(input, marketplaceId = "EBAY_US", environment = "sandbox") {
   const setup = EbaySandboxSetupSchema.parse(input);
   const shippingCost = (setup.shippingCostCents / 100).toFixed(2);
+  const production = environment === "production";
+  const label = production ? "CardPilot" : "CardPilot Sandbox";
   return {
-    merchantLocationKey: "cardpilot-sandbox-primary",
+    merchantLocationKey: production ? "cardpilot-primary" : "cardpilot-sandbox-primary",
     location: {
-      name: "CardPilot Sandbox Inventory",
+      name: `${label} Inventory`,
       merchantLocationStatus: "ENABLED",
       location: { address: { postalCode: setup.postalCode, country: "US" } },
     },
     fulfillmentPolicy: {
-      name: "CardPilot Sandbox Shipping",
+      name: `${label} Shipping`,
       marketplaceId,
       categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }],
       handlingTime: { value: 1, unit: "DAY" },
@@ -60,13 +66,13 @@ export function ebaySandboxSetupResources(input, marketplaceId = "EBAY_US") {
       }],
     },
     paymentPolicy: {
-      name: "CardPilot Sandbox Payment",
+      name: `${label} Payment`,
       marketplaceId,
       categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }],
       immediatePay: true,
     },
     returnPolicy: {
-      name: "CardPilot Sandbox Returns",
+      name: `${label} Returns`,
       marketplaceId,
       categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }],
       returnsAccepted: true,

@@ -17,7 +17,7 @@ import {
   EbaySandboxSetupSchema,
   EbaySellingClient,
   decryptSellerToken,
-  ebaySandboxSetupResources,
+  ebaySellerSetupResources,
   encryptSellerToken,
 } from "./ebay/selling.mjs";
 import { CatalogCandidateGenerator } from "./identification/candidate-generator.mjs";
@@ -502,6 +502,40 @@ async function createEbaySandboxResource(label, operation) {
   }
 }
 
+async function createEbaySellerDefaults(userId, input) {
+  const token = await ebaySellerAccessToken(userId);
+  const resources = ebaySellerSetupResources(input, ebayMarketplaceId, ebaySellEnvironment);
+  const programs = await ebaySelling.request(token, "/sell/account/v1/program/get_opted_in_programs");
+  const optedIn = (programs?.programs ?? []).some((program) => program.programType === "SELLING_POLICY_MANAGEMENT");
+  if (!optedIn) {
+    await createEbaySandboxResource("Business-policy enrollment", () => ebaySelling.request(token, "/sell/account/v1/program/opt_in", {
+      method: "POST", body: { programType: "SELLING_POLICY_MANAGEMENT" },
+    }));
+  }
+  const existing = await loadEbaySellerSetup(token);
+  if (!existing.locations.length) {
+    await createEbaySandboxResource("Inventory location", () => ebaySelling.request(token, `/sell/inventory/v1/location/${encodeURIComponent(resources.merchantLocationKey)}`, {
+      method: "POST", body: resources.location,
+    }));
+  }
+  if (!existing.fulfillmentPolicies.length) {
+    await createEbaySandboxResource("Shipping policy", () => ebaySelling.request(token, "/sell/account/v1/fulfillment_policy", {
+      method: "POST", body: resources.fulfillmentPolicy,
+    }));
+  }
+  if (!existing.paymentPolicies.length) {
+    await createEbaySandboxResource("Payment policy", () => ebaySelling.request(token, "/sell/account/v1/payment_policy", {
+      method: "POST", body: resources.paymentPolicy,
+    }));
+  }
+  if (!existing.returnPolicies.length) {
+    await createEbaySandboxResource("Return policy", () => ebaySelling.request(token, "/sell/account/v1/return_policy", {
+      method: "POST", body: resources.returnPolicy,
+    }));
+  }
+  return loadEbaySellerSetup(token);
+}
+
 app.get("/api/ebay/selling/setup", async (request, response) => {
   try {
     const token = await ebaySellerAccessToken(request.cardPilotUser.id);
@@ -551,42 +585,30 @@ app.post("/api/ebay/selling/setup/sandbox", async (request, response) => {
   }
   try {
     const input = EbaySandboxSetupSchema.parse(request.body);
-    const token = await ebaySellerAccessToken(request.cardPilotUser.id);
-    const resources = ebaySandboxSetupResources(input, ebayMarketplaceId);
-    const programs = await ebaySelling.request(token, "/sell/account/v1/program/get_opted_in_programs");
-    const optedIn = (programs?.programs ?? []).some((program) => program.programType === "SELLING_POLICY_MANAGEMENT");
-    if (!optedIn) {
-      await createEbaySandboxResource("Business-policy enrollment", () => ebaySelling.request(token, "/sell/account/v1/program/opt_in", {
-        method: "POST",
-        body: { programType: "SELLING_POLICY_MANAGEMENT" },
-      }));
-    }
-    const existing = await loadEbaySellerSetup(token);
-    if (!existing.locations.length) {
-      await createEbaySandboxResource("Inventory location", () => ebaySelling.request(token, `/sell/inventory/v1/location/${encodeURIComponent(resources.merchantLocationKey)}`, {
-        method: "POST", body: resources.location,
-      }));
-    }
-    if (!existing.fulfillmentPolicies.length) {
-      await createEbaySandboxResource("Shipping policy", () => ebaySelling.request(token, "/sell/account/v1/fulfillment_policy", {
-        method: "POST", body: resources.fulfillmentPolicy,
-      }));
-    }
-    if (!existing.paymentPolicies.length) {
-      await createEbaySandboxResource("Payment policy", () => ebaySelling.request(token, "/sell/account/v1/payment_policy", {
-        method: "POST", body: resources.paymentPolicy,
-      }));
-    }
-    if (!existing.returnPolicies.length) {
-      await createEbaySandboxResource("Return policy", () => ebaySelling.request(token, "/sell/account/v1/return_policy", {
-        method: "POST", body: resources.returnPolicy,
-      }));
-    }
-    response.json(await loadEbaySellerSetup(token));
+    response.json(await createEbaySellerDefaults(request.cardPilotUser.id, input));
   } catch (error) {
     console.error("eBay Sandbox seller setup failed", { status: error?.status, code: error?.code });
     response.status(error instanceof ZodError ? 400 : 502).json({
       error: error instanceof ZodError ? error.issues[0]?.message : error.message ?? "CardPilot could not prepare the Sandbox seller account.",
+    });
+  }
+});
+
+const EbayProductionSetupSchema = EbaySandboxSetupSchema.extend({
+  confirmation: z.literal("CREATE_PRODUCTION_DEFAULTS"),
+}).strict();
+
+app.post("/api/ebay/selling/setup/production", async (request, response) => {
+  if (ebaySellEnvironment !== "production") {
+    return response.status(403).json({ error: "Production seller setup is available only when eBay Production is enabled." });
+  }
+  try {
+    const { confirmation: _confirmation, ...input } = EbayProductionSetupSchema.parse(request.body);
+    response.json(await createEbaySellerDefaults(request.cardPilotUser.id, input));
+  } catch (error) {
+    console.error("eBay Production seller setup failed", { status: error?.status, code: error?.code });
+    response.status(error instanceof ZodError ? 400 : 502).json({
+      error: error instanceof ZodError ? error.issues[0]?.message : error.message ?? "CardPilot could not prepare the Production seller account.",
     });
   }
 });
