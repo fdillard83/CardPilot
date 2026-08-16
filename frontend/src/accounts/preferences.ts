@@ -1,6 +1,7 @@
 export type AccountPreferences = {
   autoValueEnabled: boolean;
   autoValueMaxCents: number | null;
+  ebayConnectPromptDismissed: boolean;
   ebaySellingDefaults: {
     merchantLocationKey: string;
     fulfillmentPolicyId: string;
@@ -12,6 +13,7 @@ export type AccountPreferences = {
 export const defaultAccountPreferences: AccountPreferences = {
   autoValueEnabled: false,
   autoValueMaxCents: null,
+  ebayConnectPromptDismissed: false,
   ebaySellingDefaults: {
     merchantLocationKey: "",
     fulfillmentPolicyId: "",

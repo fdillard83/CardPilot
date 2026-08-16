@@ -433,7 +433,14 @@ app.put("/api/account/password", async (request, response) => {
 
 app.get("/api/account/preferences", async (request, response) => {
   if (!cloudServices) {
-    response.json({ autoValueEnabled: false, autoValueMaxCents: null });
+    response.json({
+      autoValueEnabled: false,
+      autoValueMaxCents: null,
+      ebayConnectPromptDismissed: true,
+      ebaySellingDefaults: {
+        merchantLocationKey: "", fulfillmentPolicyId: "", paymentPolicyId: "", returnPolicyId: "",
+      },
+    });
     return;
   }
   try {

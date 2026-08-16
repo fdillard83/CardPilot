@@ -574,6 +574,9 @@ function App() {
   const [accountPreferences, setAccountPreferences] = useState<AccountPreferences>(
     defaultAccountPreferences,
   );
+  const [isEbayWelcomeOpen, setIsEbayWelcomeOpen] = useState(false);
+  const [isSavingEbayWelcome, setIsSavingEbayWelcome] = useState(false);
+  const [ebayWelcomeError, setEbayWelcomeError] = useState<string | null>(null);
 
   const originalFrontPreview = usePreviewUrl(frontFile);
   const originalBackPreview = usePreviewUrl(backFile);
@@ -660,7 +663,16 @@ function App() {
         if (!response.ok || !payload) {
           throw new Error(payload?.error ?? "CardPilot could not load account preferences.");
         }
-        if (isCurrent) setAccountPreferences(payload);
+        if (isCurrent) {
+          setAccountPreferences(payload);
+          if (!payload.ebayConnectPromptDismissed) {
+            void fetch("/api/ebay/selling/status").then(async (statusResponse) => {
+              const statusPayload = await statusResponse.json();
+              if (!statusResponse.ok) throw new Error(statusPayload.error);
+              if (isCurrent && !statusPayload.connected) setIsEbayWelcomeOpen(true);
+            }).catch(() => { /* The optional welcome prompt stays hidden if eBay status is unavailable. */ });
+          }
+        }
       })
       .catch((caughtError) => {
         if (isCurrent) {
@@ -675,6 +687,32 @@ function App() {
       isCurrent = false;
     };
   }, [accountSession?.user]);
+
+  const answerEbayWelcome = async (connect: boolean) => {
+    setIsSavingEbayWelcome(true);
+    setEbayWelcomeError(null);
+    try {
+      const nextPreferences = { ...accountPreferences, ebayConnectPromptDismissed: true };
+      const response = await fetch("/api/account/preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nextPreferences),
+      });
+      const saved = (await response.json().catch(() => null)) as (AccountPreferences & { error?: string }) | null;
+      if (!response.ok || !saved) throw new Error(saved?.error ?? "CardPilot could not save your choice.");
+      setAccountPreferences(saved);
+      setIsEbayWelcomeOpen(false);
+      if (connect) {
+        const authorizeResponse = await fetch("/api/ebay/selling/authorize", { method: "POST" });
+        const authorize = await authorizeResponse.json();
+        if (!authorizeResponse.ok || !authorize.authorizationUrl) throw new Error(authorize.error ?? "CardPilot could not open eBay sign-in.");
+        window.location.assign(authorize.authorizationUrl);
+      }
+    } catch (caught) {
+      setEbayWelcomeError(caught instanceof Error ? caught.message : "CardPilot could not save your choice.");
+      setIsEbayWelcomeOpen(true);
+    } finally { setIsSavingEbayWelcome(false); }
+  };
 
   useEffect(() => {
     if (accountSession?.mode !== "supabase" || !accountSession.user) return;
@@ -2270,6 +2308,21 @@ function App() {
           preferences={accountPreferences}
           onPreferencesChange={setAccountPreferences}
         />
+      )}
+      {accountSession.user && isEbayWelcomeOpen && !isAccountSettingsOpen && (
+        <div className="account-settings-backdrop" role="presentation">
+          <section className="account-settings-panel account-welcome-panel" role="dialog" aria-modal="true" aria-labelledby="ebay-welcome-title">
+            <header className="account-settings-heading"><div><span className="account-eyebrow">Optional seller setup</span><h2 id="ebay-welcome-title">Connect eBay to CardPilot?</h2></div></header>
+            <section className="account-settings-section">
+              <p>If you plan to sell on eBay, you can connect your account now. You can also skip for now and connect later under Account Settings.</p>
+              {ebayWelcomeError && <small className="account-inline-error">{ebayWelcomeError}</small>}
+              <div className="review-actions">
+                <button className="primary-action" type="button" disabled={isSavingEbayWelcome} onClick={() => void answerEbayWelcome(true)}>{isSavingEbayWelcome ? "Saving..." : "Connect eBay account"}</button>
+                <button type="button" disabled={isSavingEbayWelcome} onClick={() => void answerEbayWelcome(false)}>Skip for now</button>
+              </div>
+            </section>
+          </section>
+        </div>
       )}
     </div>
   );

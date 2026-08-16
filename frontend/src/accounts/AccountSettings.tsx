@@ -1,6 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AccountUser } from "./AccountGate";
 import type { AccountPreferences } from "./preferences";
+
+type EbayConnectionStatus = {
+  configured: boolean;
+  connected: boolean;
+  environment: "sandbox" | "production";
+  reconnectRequired?: boolean;
+};
 
 export function AccountSettings({
   user,
@@ -42,6 +49,42 @@ export function AccountSettings({
   const [preferenceStatus, setPreferenceStatus] = useState<string | null>(null);
   const [preferenceError, setPreferenceError] = useState<string | null>(null);
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
+  const [ebayStatus, setEbayStatus] = useState<EbayConnectionStatus | null>(null);
+  const [ebayBusy, setEbayBusy] = useState(false);
+  const [ebayError, setEbayError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (recoveryMode) return;
+    void fetch("/api/ebay/selling/status").then(async (response) => {
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error);
+      setEbayStatus(payload);
+    }).catch((caught) => setEbayError(caught instanceof Error ? caught.message : "CardPilot could not check the eBay connection."));
+  }, [recoveryMode]);
+
+  const connectEbay = async () => {
+    setEbayBusy(true); setEbayError(null);
+    try {
+      const response = await fetch("/api/ebay/selling/authorize", { method: "POST" });
+      const payload = await response.json();
+      if (!response.ok || !payload.authorizationUrl) throw new Error(payload.error ?? "CardPilot could not start eBay sign-in.");
+      window.location.assign(payload.authorizationUrl);
+    } catch (caught) {
+      setEbayError(caught instanceof Error ? caught.message : "CardPilot could not start eBay sign-in.");
+      setEbayBusy(false);
+    }
+  };
+
+  const disconnectEbay = async () => {
+    if (!window.confirm("Disconnect eBay from CardPilot? Existing listings and drafts will not be deleted.")) return;
+    setEbayBusy(true); setEbayError(null);
+    try {
+      const response = await fetch("/api/ebay/selling/connection", { method: "DELETE" });
+      if (!response.ok) throw new Error("CardPilot could not disconnect eBay.");
+      setEbayStatus((current) => current ? { ...current, connected: false } : current);
+    } catch (caught) { setEbayError(caught instanceof Error ? caught.message : "CardPilot could not disconnect eBay."); }
+    finally { setEbayBusy(false); }
+  };
 
   const savePreferences = async () => {
     const dollars = Number(autoValueLimit);
@@ -59,6 +102,7 @@ export function AccountSettings({
         body: JSON.stringify({
           autoValueEnabled,
           autoValueMaxCents: autoValueEnabled ? Math.round(dollars * 100) : null,
+          ebayConnectPromptDismissed: preferences.ebayConnectPromptDismissed,
           ebaySellingDefaults: preferences.ebaySellingDefaults,
         }),
       });
@@ -212,6 +256,18 @@ export function AccountSettings({
             <div><span>Session</span><strong>Signed in</strong></div>
             <div><span>Storage</span><strong>Private Supabase cloud</strong></div>
           </div>
+        )}
+
+        {!recoveryMode && (
+          <section className="account-settings-section">
+            <h3>eBay seller account</h3>
+            <p>Connect eBay to create and manage listings, synchronize paid sales, and update shipment tracking. Connecting eBay is optional.</p>
+            {ebayError && <small className="account-inline-error">{ebayError}</small>}
+            {ebayStatus?.connected ? <>
+              <small className="account-inline-success">Connected to eBay {ebayStatus.environment}.</small>
+              <button type="button" disabled={ebayBusy} onClick={() => void disconnectEbay()}>{ebayBusy ? "Working..." : "Disconnect eBay"}</button>
+            </> : <button className="primary-action" type="button" disabled={ebayBusy || ebayStatus?.configured === false} onClick={() => void connectEbay()}>{ebayBusy ? "Opening eBay..." : "Connect eBay account"}</button>}
+          </section>
         )}
 
         <section className="account-settings-section">

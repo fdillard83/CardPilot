@@ -9,6 +9,7 @@ test("automatic card values are off by default", () => {
   assert.deepEqual(DEFAULT_ACCOUNT_PREFERENCES, {
     autoValueEnabled: false,
     autoValueMaxCents: null,
+    ebayConnectPromptDismissed: false,
     ebaySellingDefaults: {
       merchantLocationKey: "",
       fulfillmentPolicyId: "",
@@ -23,6 +24,7 @@ test("an enabled automatic-value rule requires a positive dollar limit", () => {
     AccountPreferencesSchema.safeParse({
       autoValueEnabled: true,
       autoValueMaxCents: null,
+      ebayConnectPromptDismissed: false,
       ebaySellingDefaults: DEFAULT_ACCOUNT_PREFERENCES.ebaySellingDefaults,
     }).success,
     false,
@@ -31,8 +33,9 @@ test("an enabled automatic-value rule requires a positive dollar limit", () => {
     AccountPreferencesSchema.parse({
       autoValueEnabled: true,
       autoValueMaxCents: 2500,
+      ebayConnectPromptDismissed: false,
       ebaySellingDefaults: DEFAULT_ACCOUNT_PREFERENCES.ebaySellingDefaults,
     }),
-    { autoValueEnabled: true, autoValueMaxCents: 2500, ebaySellingDefaults: DEFAULT_ACCOUNT_PREFERENCES.ebaySellingDefaults },
+    { autoValueEnabled: true, autoValueMaxCents: 2500, ebayConnectPromptDismissed: false, ebaySellingDefaults: DEFAULT_ACCOUNT_PREFERENCES.ebaySellingDefaults },
   );
 });
