@@ -734,14 +734,17 @@ app.get("/api/collection/:collectionId/ebay-draft", async (request, response) =>
 app.get("/api/ebay/listing-queue", async (request, response) => {
   try {
     const userId = request.cardPilotUser.id;
-    const [drafts, cards] = await Promise.all([
+    const [drafts, cards, sales] = await Promise.all([
       cloudServices.ebaySelling.drafts(userId),
       collectionStore.list(userId),
+      cloudServices.ebaySelling.sales(userId),
     ]);
+    const saleByCollectionId = new Map(sales.map((sale) => [sale.collection_id, sale]));
     const cardById = new Map(cards.map((card) => [card.collectionId, card]));
     const items = await Promise.all(drafts.map(async (draft) => {
       const card = cardById.get(draft.collectionId);
       if (!card) return null;
+      const sale = saleByCollectionId.get(draft.collectionId);
       let requirements = { missingAspects: [], checks: [], ready: false };
       if (/^\d+$/.test(draft.categoryId) && ebayTaxonomy) {
         try { requirements = listingReadiness(card, draft, await ebayTaxonomy.itemAspects(draft.categoryId)); }
@@ -764,6 +767,8 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
         soldAt: draft.soldAt,
         soldAmountCents: draft.soldAmountCents,
         soldCurrency: draft.soldCurrency,
+        paymentStatus: sale ? "PAID" : null,
+        fulfillmentStatus: sale?.order_status ?? null,
         updatedAt: draft.updatedAt,
         imageUrl: card.images.frontUrl,
         missingAspects: requirements.missingAspects,
@@ -831,6 +836,8 @@ async function publishEbayListing(userId, collectionId) {
     const card = await collectionStore.get(userId, collectionId);
     const saved = card && await cloudServices.ebaySelling.draft(userId, card.collectionId);
     if (!card || !saved) throw new Error("Save the listing draft first.");
+    if (saved.status === "sold") throw new Error("This card is marked sold. Create a separate collection record before intentionally listing another copy.");
+    if (saved.status === "ended") throw new Error("This listing has ended. Create a new eBay draft before relisting the card.");
     const draft = editableEbayDraft(saved);
     if ([draft.categoryId, draft.merchantLocationKey, draft.fulfillmentPolicyId, draft.paymentPolicyId, draft.returnPolicyId].some((value) => !value)) {
       throw new Error("Category, location, and all three eBay policies are required.");
@@ -1053,6 +1060,7 @@ async function syncEbaySalesForUser(userId) {
   let saved = 0;
   for (const order of payload?.orders ?? []) {
     for (const item of order.lineItems ?? []) {
+      if (String(order.orderPaymentStatus ?? "").toUpperCase() !== "PAID") continue;
       const listingId = String(item.legacyItemId ?? item.itemId ?? "");
       const draft = byListingId.get(listingId);
       if (!draft) continue;

@@ -2330,6 +2330,9 @@ main {
 .ebay-environment-guard.production { background: rgba(255, 174, 75, .12); border: 1px solid rgba(255, 174, 75, .4); }
 .ebay-environment-guard span { color: var(--muted); font-size: 12px; }
 .ebay-queue-list { display: grid; gap: 10px; }
+.ebay-queue-tabs { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0; }
+.ebay-queue-tabs button { padding: 7px 10px; border-radius: 999px; }
+.ebay-queue-tabs button.active { color: var(--panel); background: var(--lime); border-color: var(--lime); }
 .ebay-queue-list article { display: grid; grid-template-columns: 72px 1fr auto; align-items: center; gap: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; }
 .ebay-queue-list img { width: 72px; height: 96px; object-fit: contain; border-radius: 7px; background: #fff; }
 .ebay-queue-list article > div { display: grid; gap: 4px; min-width: 0; }

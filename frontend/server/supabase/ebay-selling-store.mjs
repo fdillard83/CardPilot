@@ -121,8 +121,11 @@ export class SupabaseEbaySellingStore {
   }
 
   async saveSale(userId, sale) {
+    const { data: existing, error: existingError } = await this.client.from("ebay_order_sales")
+      .select("sale_id").eq("user_id", userId).eq("order_id", sale.orderId).eq("line_item_id", sale.lineItemId).maybeSingle();
+    if (existingError) throw dbError("existing eBay sale read", existingError);
     const { error } = await this.client.from("ebay_order_sales").upsert({
-      sale_id: sale.saleId, user_id: userId, collection_id: sale.collectionId,
+      sale_id: existing?.sale_id ?? sale.saleId, user_id: userId, collection_id: sale.collectionId,
       order_id: sale.orderId, line_item_id: sale.lineItemId, listing_id: sale.listingId,
       order_status: sale.orderStatus, amount_cents: sale.amountCents,
       currency: sale.currency, quantity: sale.quantity, sold_at: sale.soldAt,
