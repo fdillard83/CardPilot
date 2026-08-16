@@ -174,6 +174,8 @@ export class EbaySellingClient {
       method,
       headers: {
         Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+        "Accept-Language": "en-US",
         "Content-Type": "application/json",
         "Content-Language": "en-US",
       },

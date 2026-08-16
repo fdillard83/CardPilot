@@ -84,19 +84,26 @@ test("Production seller setup uses distinct real-account resource names", () => 
 });
 
 test("selling requests preserve useful eBay validation details", async () => {
+  let requestHeaders;
   const client = new EbaySellingClient({
     clientId: "sandbox-id",
     clientSecret: "sandbox-secret",
     redirectUriName: "sandbox-runame",
-    fetchImpl: async () => new Response(JSON.stringify({ errors: [{
+    fetchImpl: async (_url, options) => {
+      requestHeaders = options.headers;
+      return new Response(JSON.stringify({ errors: [{
       errorId: 20403,
       message: "Invalid request.",
       longMessage: "The shipping service is not valid.",
       parameters: [{ name: "shippingServiceCode", value: "Example" }],
-    }] }), { status: 400, headers: { "Content-Type": "application/json" } }),
+      }] }), { status: 400, headers: { "Content-Type": "application/json" } });
+    },
   });
   await assert.rejects(
     client.request("access-token", "/sell/account/v1/fulfillment_policy"),
     /shipping service is not valid.*shippingServiceCode: Example/,
   );
+  assert.equal(requestHeaders.Accept, "application/json");
+  assert.equal(requestHeaders["Accept-Language"], "en-US");
+  assert.equal(requestHeaders["Content-Language"], "en-US");
 });
