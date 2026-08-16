@@ -5,6 +5,7 @@ import {
   EbaySandboxSetupSchema,
   EbaySellingClient,
   decryptSellerToken,
+  editableEbayDraft,
   ebaySandboxSetupResources,
   ebaySellerSetupResources,
   encryptSellerToken,
@@ -52,6 +53,16 @@ test("listing drafts require an editable title and positive price", () => {
   assert.deepEqual(auction.listingImages, ["front"]);
   assert.equal(auction.auctionDurationDays, 7);
   assert.equal(EbayListingDraftSchema.safeParse({ ...base, listingFormat: "AUCTION", auctionStartPriceCents: 1000, auctionReservePriceCents: 500 }).success, false);
+  assert.equal(editableEbayDraft({
+    ...base,
+    draftId: "draft-1",
+    collectionId: "card-1",
+    status: "draft",
+    scheduledPublishAt: null,
+    desiredEndAt: null,
+    scheduleStatus: "unscheduled",
+    scheduleError: null,
+  }).title, base.title);
 });
 
 test("Sandbox setup validates a US ZIP code and builds safe test defaults", () => {

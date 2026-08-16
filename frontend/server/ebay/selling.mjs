@@ -26,6 +26,17 @@ export const EbayListingDraftSchema = z.object({
   }
 });
 
+const ebayDraftMetadataKeys = [
+  "draftId", "collectionId", "status", "ebayOfferId", "ebayListingId", "updatedAt",
+  "scheduledPublishAt", "desiredEndAt", "scheduleStatus", "scheduleError",
+];
+
+export function editableEbayDraft(saved) {
+  const value = { ...saved };
+  for (const key of ebayDraftMetadataKeys) delete value[key];
+  return EbayListingDraftSchema.parse(value);
+}
+
 export const EbaySandboxSetupSchema = z.object({
   postalCode: z.string().trim().regex(/^\d{5}(?:-\d{4})?$/, "Enter a valid US ZIP code."),
   shippingCostCents: z.number().int().min(0).max(10_000),

@@ -17,6 +17,7 @@ import {
   EbaySandboxSetupSchema,
   EbaySellingClient,
   decryptSellerToken,
+  editableEbayDraft,
   ebaySellerSetupResources,
   encryptSellerToken,
 } from "./ebay/selling.mjs";
@@ -752,7 +753,7 @@ async function publishEbayListing(userId, collectionId) {
     const card = await collectionStore.get(userId, collectionId);
     const saved = card && await cloudServices.ebaySelling.draft(userId, card.collectionId);
     if (!card || !saved) throw new Error("Save the listing draft first.");
-    const draft = EbayListingDraftSchema.parse((({ draftId, collectionId, status, ebayOfferId, ebayListingId, updatedAt, ...value }) => value)(saved));
+    const draft = editableEbayDraft(saved);
     if ([draft.categoryId, draft.merchantLocationKey, draft.fulfillmentPolicyId, draft.paymentPolicyId, draft.returnPolicyId].some((value) => !value)) {
       throw new Error("Category, location, and all three eBay policies are required.");
     }
@@ -822,7 +823,7 @@ app.post("/api/collection/:collectionId/ebay-schedule", async (request, response
     const userId = request.cardPilotUser.id;
     const draft = await cloudServices.ebaySelling.draft(userId, request.params.collectionId);
     if (!draft) return response.status(404).json({ error: "Save the auction draft before scheduling it." });
-    const parsed = EbayListingDraftSchema.parse((({ draftId, collectionId, status, ebayOfferId, ebayListingId, updatedAt, scheduledPublishAt, desiredEndAt, scheduleStatus, scheduleError, ...value }) => value)(draft));
+    const parsed = editableEbayDraft(draft);
     if (parsed.listingFormat !== "AUCTION") return response.status(400).json({ error: "Only auction listings can be scheduled by ending time." });
     const schedule = calculateAuctionSchedule({ desiredEndAt: input.desiredEndAt, durationDays: parsed.auctionDurationDays });
     const scheduled = await cloudServices.ebaySelling.schedule(userId, request.params.collectionId, schedule);
@@ -869,7 +870,7 @@ app.post("/api/collection/:collectionId/ebay-revise", async (request, response) 
     if (!card || !saved?.ebayOfferId || saved.status !== "published") {
       return response.status(404).json({ error: "No active CardPilot eBay listing was found." });
     }
-    const draft = EbayListingDraftSchema.parse((({ draftId, collectionId, status, ebayOfferId, ebayListingId, updatedAt, ...value }) => value)(saved));
+    const draft = editableEbayDraft(saved);
     const token = await ebaySellerAccessToken(userId);
     const sku = `cardpilot-${card.collectionId}`;
     const [front, back] = await Promise.all([
