@@ -43,6 +43,8 @@ type CollectionFilter =
   | "numbered"
   | "autograph"
   | "rookie"
+  | "listed"
+  | "sold"
   | "unvalued"
   | "stale";
 
@@ -56,6 +58,8 @@ function matchesFilter(card: SavedCollectionCard, filter: CollectionFilter) {
   if (filter === "numbered") return Boolean(card.fields.serialNumber);
   if (filter === "autograph") return card.fields.autograph === true;
   if (filter === "rookie") return card.fields.rookieStatus === true;
+  if (filter === "listed") return card.selling?.status === "published";
+  if (filter === "sold") return card.selling?.status === "sold";
   if (filter === "unvalued") return card.confirmedValuation === null;
   if (filter === "stale") return valuationIsStale(card);
   return true;
@@ -1102,6 +1106,9 @@ export function CollectionView({
       valuedCount: valuedCards.length,
       unvaluedCount: cards.length - valuedCards.length,
       staleCount: cards.filter((card) => valuationIsStale(card)).length,
+      listedCount: cards.filter((card) => card.selling?.status === "published").length,
+      soldCount: cards.filter((card) => card.selling?.status === "sold").length,
+      soldTotalLabel: formatPrice(cards.reduce((total, card) => total + (card.selling?.soldAmountCents ?? 0), 0), "USD"),
       totalLabel:
         valuedCards.length === 0
           ? formatPrice(0, "USD")
@@ -2101,6 +2108,8 @@ export function CollectionView({
         <div><strong>{collectionValuation.valuedCount}</strong><span>Valued</span></div>
         <div><strong>{collectionValuation.unvaluedCount}</strong><span>Need a value</span></div>
         <div><strong>{collectionValuation.staleCount}</strong><span>Pricing out of date</span></div>
+        <div><strong>{collectionValuation.listedCount}</strong><span>Listed on eBay</span></div>
+        <div><strong>{collectionValuation.soldTotalLabel}</strong><span>Total sold value</span></div>
       </div>
       <div className="ebay-queue-launch"><div><strong>eBay listing drafts</strong><span>Prepare cards now and publish them individually after final review.</span></div><button type="button" onClick={() => setListingQueueOpen(true)}>Open Ready to List queue</button></div>
 
@@ -2146,6 +2155,8 @@ export function CollectionView({
             <option value="numbered">Numbered cards</option>
             <option value="autograph">Autographs</option>
             <option value="rookie">Rookies</option>
+            <option value="listed">Listed on eBay</option>
+            <option value="sold">Sold on eBay</option>
             <option value="unvalued">Needs a value</option>
             <option value="stale">Pricing out of date</option>
           </select>
@@ -2510,6 +2521,14 @@ export function CollectionView({
                       {card.fields.memorabilia === true && <span>Memorabilia</span>}
                     </div>
                     <small>Updated {new Date(card.updatedAt).toLocaleDateString()}</small>
+                    {card.selling && card.selling.status !== "draft" && (
+                      <div className="collection-card-value">
+                        <div><span>eBay status</span><strong>{card.selling.status === "published" ? "Active" : card.selling.status[0].toUpperCase() + card.selling.status.slice(1)}</strong></div>
+                        {card.selling.status === "published" && card.selling.publishedAt && <small>Active since {new Date(card.selling.publishedAt).toLocaleString()}</small>}
+                        {card.selling.status === "sold" && card.selling.soldAmountCents !== null && <small>Sold for {formatPrice(card.selling.soldAmountCents, card.selling.soldCurrency ?? "USD")}</small>}
+                        {card.selling.listingUrl && <a href={card.selling.listingUrl} target="_blank" rel="noreferrer">View on eBay</a>}
+                      </div>
+                    )}
                     <div className="collection-card-actions">
                       <button
                         type="button"
@@ -2547,8 +2566,8 @@ export function CollectionView({
                         {isValuationOpen
                           ? "Close value"
                           : card.confirmedValuation
-                            ? "Refresh estimate"
-                            : "Estimate value"}
+                            ? "Set / revise value"
+                            : "Estimate or set value"}
                       </button>
                       <button
                         type="button"

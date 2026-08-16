@@ -650,11 +650,23 @@ export type SavedCollectionCard = {
   } | null;
   createdAt: string;
   updatedAt: string;
-  images: {
-    frontUrl: string;
-    backUrl: string | null;
+    images: {
+      frontUrl: string;
+      backUrl: string | null;
+    };
+    selling?: {
+      status: "draft" | "published" | "sold" | "ended";
+      listingId: string | null;
+      listingUrl: string | null;
+      priceCents: number;
+      currency: string;
+      publishedAt: string | null;
+      endedAt: string | null;
+      soldAt: string | null;
+      soldAmountCents: number | null;
+      soldCurrency: string | null;
+    };
   };
-};
 
 export function formatFieldValue(value: FieldValue) {
   if (value === null || value === "") return "Unknown";

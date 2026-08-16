@@ -29,6 +29,8 @@ export const EbayListingDraftSchema = z.object({
 const ebayDraftMetadataKeys = [
   "draftId", "collectionId", "status", "ebayOfferId", "ebayListingId", "updatedAt",
   "scheduledPublishAt", "desiredEndAt", "scheduleStatus", "scheduleError",
+  "environment", "publishedAt", "endedAt", "soldAt", "soldAmountCents",
+  "soldCurrency", "lastSyncedAt",
 ];
 
 export function editableEbayDraft(saved) {
@@ -116,6 +118,7 @@ const SELL_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
   "https://api.ebay.com/oauth/api_scope/sell.account",
+  "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
 ];
 
 function tokenKey(secret) {

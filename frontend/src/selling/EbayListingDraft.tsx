@@ -215,7 +215,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
   };
 
   const endListing = async () => {
-    if (!draft || !window.confirm(`End eBay listing ${draft.ebayListingId}? Buyers will no longer be able to purchase it.`)) return;
+    if (!draft || !window.confirm(`Cancel/end eBay listing ${draft.ebayListingId}? Buyers will no longer be able to purchase it.`)) return;
     setBusy(true); setError(null);
     try {
       const response = await fetch(`/api/collection/${encodeURIComponent(card.collectionId)}/ebay-end`, {

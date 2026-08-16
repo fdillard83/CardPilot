@@ -6,6 +6,7 @@ type QueueItem = {
   updatedAt: string; imageUrl: string; missingAspects: string[];
   checks: { key: string; label: string; ready: boolean }[]; ready: boolean;
   scheduleStatus?: string; scheduledPublishAt?: string | null; desiredEndAt?: string | null; scheduleError?: string | null;
+  listingUrl?: string | null; publishedAt?: string | null; endedAt?: string | null; soldAt?: string | null; soldAmountCents?: number | null; soldCurrency?: string | null;
 };
 type QueuePayload = { environment: string; productionPublishingEnabled: boolean; items: QueueItem[] };
 
@@ -14,6 +15,7 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
 }) {
   const [payload, setPayload] = useState<QueuePayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     void fetch("/api/ebay/listing-queue").then(async (response) => {
@@ -25,7 +27,7 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
 
   return <div className="ebay-draft-backdrop" role="presentation">
     <section className="ebay-draft-panel ebay-queue-panel" role="dialog" aria-modal="true" aria-labelledby="ebay-queue-title">
-      <header><div><span>eBay selling</span><h2 id="ebay-queue-title">Ready to List queue</h2></div><button type="button" onClick={onClose}>Close</button></header>
+      <header><div><span>eBay selling</span><h2 id="ebay-queue-title">Listings and drafts</h2></div><div><button type="button" disabled={syncing} onClick={() => { setSyncing(true); setError(null); void fetch("/api/ebay/sales/sync", { method: "POST" }).then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(body.error); window.location.reload(); }).catch((caught) => setError(caught instanceof Error ? caught.message : "Sales sync failed.")).finally(() => setSyncing(false)); }}>{syncing ? "Syncing..." : "Sync eBay sales"}</button><button type="button" onClick={onClose}>Close</button></div></header>
       {!payload && !error && <div className="collection-empty"><span className="spinner" /> Loading saved drafts...</div>}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {payload && <>
@@ -39,7 +41,7 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
             const missing = [...item.checks.filter((check) => !check.ready).map((check) => check.label), ...item.missingAspects];
             return <article key={item.collectionId}>
               <img src={item.imageUrl} alt="" />
-              <div><span className={`ebay-queue-state ${item.ready ? "ready" : "waiting"}`}>{item.status === "published" ? "Published" : item.scheduleStatus === "scheduled" ? "Scheduled" : item.scheduleStatus === "failed" ? "Schedule failed" : item.ready ? "Ready" : "Needs attention"}</span><h3>{item.title}</h3><strong>{item.currency} {(item.priceCents / 100).toFixed(2)}</strong><small>Updated {new Date(item.updatedAt).toLocaleString()}</small>{item.scheduleStatus === "scheduled" && item.scheduledPublishAt && <p>Publishes automatically {new Date(item.scheduledPublishAt).toLocaleString()}{item.desiredEndAt ? ` · Expected end ${new Date(item.desiredEndAt).toLocaleString()}` : ""}</p>}{item.scheduleError && <p>{item.scheduleError}</p>}{missing.length > 0 && <p>Still needed: {missing.join(", ")}.</p>}</div>
+              <div><span className={`ebay-queue-state ${item.ready ? "ready" : "waiting"}`}>{item.status === "published" ? "Active" : item.status === "sold" ? "Sold" : item.status === "ended" ? "Ended" : item.scheduleStatus === "scheduled" ? "Scheduled" : item.scheduleStatus === "failed" ? "Schedule failed" : item.ready ? "Ready" : "Needs attention"}</span><h3>{item.title}</h3><strong>{item.currency} {(item.priceCents / 100).toFixed(2)}</strong><small>Updated {new Date(item.updatedAt).toLocaleString()}</small>{item.publishedAt && item.status === "published" && <p>Active since {new Date(item.publishedAt).toLocaleString()}</p>}{item.soldAt && <p>Sold {new Date(item.soldAt).toLocaleString()}{item.soldAmountCents != null ? ` for ${item.soldCurrency ?? "USD"} ${(item.soldAmountCents / 100).toFixed(2)}` : ""}</p>}{item.listingUrl && <a href={item.listingUrl} target="_blank" rel="noreferrer">View on eBay</a>}{item.scheduleStatus === "scheduled" && item.scheduledPublishAt && <p>Publishes automatically {new Date(item.scheduledPublishAt).toLocaleString()}{item.desiredEndAt ? ` · Expected end ${new Date(item.desiredEndAt).toLocaleString()}` : ""}</p>}{item.scheduleError && <p>{item.scheduleError}</p>}{missing.length > 0 && item.status === "draft" && <p>Still needed: {missing.join(", ")}.</p>}</div>
               <button type="button" disabled={!card} onClick={() => card && onOpenDraft(card)}>{item.status === "published" ? "View listing" : "Review draft"}</button>
             </article>;
           })}</div>}

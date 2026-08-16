@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 export type AccountUser = {
   id: string;
   email: string | null;
+  isAdmin?: boolean;
 };
 
 export type AccountSession = {

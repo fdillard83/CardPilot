@@ -18,3 +18,12 @@ jobs:
             --request POST \
             --header "Authorization: Bearer $SCHEDULER_SECRET" \
             https://cardpilot-aizd.onrender.com/api/internal/ebay/run-schedules
+      - name: Synchronize eBay sales and listing status
+        env:
+          SCHEDULER_SECRET: ${{ secrets.EBAY_SCHEDULER_SECRET }}
+        run: |
+          test -n "$SCHEDULER_SECRET"
+          curl --fail-with-body --retry 3 --retry-delay 10 \
+            --request POST \
+            --header "Authorization: Bearer $SCHEDULER_SECRET" \
+            https://cardpilot-aizd.onrender.com/api/internal/ebay/sync-sales

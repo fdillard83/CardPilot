@@ -12,6 +12,7 @@ import {
   type AccountPreferences,
 } from "./accounts/preferences";
 import { CollectionView } from "./collection/CollectionView";
+import { AdminDashboard } from "./admin/AdminDashboard";
 import {
   createCardDetailImages,
   prepareCardPhoto,
@@ -553,7 +554,7 @@ function App() {
   const [pokemonCatalogConfirmationError, setPokemonCatalogConfirmationError] =
     useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<"scan" | "collection">("scan");
+  const [view, setView] = useState<"scan" | "collection" | "admin">("scan");
   const [collectionCards, setCollectionCards] = useState<SavedCollectionCard[]>([]);
   const [isLoadingCollection, setIsLoadingCollection] = useState(true);
   const [collectionError, setCollectionError] = useState<string | null>(null);
@@ -1723,6 +1724,7 @@ function App() {
           >
             My Collection <span>{collectionCards.length}</span>
           </button>
+          {accountSession.user?.isAdmin && <button className={view === "admin" ? "active" : ""} type="button" onClick={() => setView("admin")}>Admin</button>}
           {accountSession.user && (
             <div className="account-menu">
               <small>{accountSession.user.email}</small>
@@ -1762,7 +1764,7 @@ function App() {
       )}
 
       <main id="top">
-        {view === "collection" ? (
+        {view === "admin" ? <AdminDashboard /> : view === "collection" ? (
           <CollectionView
             cards={collectionCards}
             isLoading={isLoadingCollection}

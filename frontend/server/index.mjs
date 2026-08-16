@@ -78,6 +78,8 @@ const ebaySellConfigured = Boolean(
   process.env.EBAY_REDIRECT_URI_NAME?.trim() &&
   process.env.EBAY_TOKEN_ENCRYPTION_KEY?.trim(),
 );
+const adminEmails = new Set((process.env.ADMIN_EMAILS ?? "").split(",").map((email) => email.trim().toLowerCase()).filter(Boolean));
+const withAdmin = (user) => user ? { ...user, isAdmin: Boolean(user.email && adminEmails.has(user.email.toLowerCase())) } : null;
 const ebaySelling = ebaySellConfigured
   ? new EbaySellingClient({
       clientId: process.env.EBAY_SELL_CLIENT_ID.trim(),
@@ -183,7 +185,7 @@ app.get("/api/auth/session", async (request, response) => {
   }
   try {
     const user = await cloudServices.auth.userFromRequest(request, response);
-    response.json({ mode: "supabase", user });
+    response.json({ mode: "supabase", user: withAdmin(user) });
   } catch (error) {
     console.error("CardPilot account session failed", error);
     response.status(503).json({
@@ -206,7 +208,7 @@ app.post("/api/auth/signup", async (request, response) => {
       cloudServices.auth.setSessionCookies(response, result.session);
     }
     response.status(201).json({
-      user: result.user,
+      user: withAdmin(result.user),
       confirmationRequired: result.confirmationRequired,
     });
   } catch (error) {
@@ -240,7 +242,7 @@ app.post("/api/auth/login", async (request, response) => {
   try {
     const result = await cloudServices.auth.signIn(request.body);
     cloudServices.auth.setSessionCookies(response, result.session);
-    response.json({ user: result.user });
+    response.json({ user: withAdmin(result.user) });
   } catch (error) {
     if (!(error instanceof ZodError)) {
       console.error("CardPilot sign-in failed", {
@@ -303,7 +305,7 @@ app.post("/api/auth/recovery-session", async (request, response) => {
   try {
     const result = await cloudServices.auth.establishRecoverySession(request.body);
     cloudServices.auth.setSessionCookies(response, result.session);
-    response.json({ user: result.user });
+    response.json({ user: withAdmin(result.user) });
   } catch (error) {
     if (!(error instanceof ZodError)) {
       console.error("CardPilot recovery session failed", {
@@ -325,8 +327,22 @@ app.post("/api/internal/ebay/run-schedules", async (request, response) => {
   response.json(await runDueEbaySchedules());
 });
 
+app.post("/api/internal/ebay/sync-sales", async (request, response) => {
+  const schedulerSecret = process.env.EBAY_SCHEDULER_SECRET?.trim();
+  if (!schedulerSecret || request.headers.authorization !== `Bearer ${schedulerSecret}`) {
+    return response.status(401).json({ error: "Scheduler authorization failed." });
+  }
+  const connections = await cloudServices?.ebaySelling.connections(ebaySellEnvironment) ?? [];
+  const results = [];
+  for (const connection of connections) {
+    try { results.push({ userId: connection.user_id, ok: true, ...(await syncEbaySalesForUser(connection.user_id)) }); }
+    catch (error) { results.push({ userId: connection.user_id, ok: false, error: error.message ?? "Sync failed." }); }
+  }
+  response.json({ processed: results.length, results });
+});
+
 async function runDueEbaySchedules() {
-  const due = await cloudServices?.ebaySelling.dueSchedules() ?? [];
+  const due = await cloudServices?.ebaySelling.dueSchedules(ebaySellEnvironment) ?? [];
   const results = [];
   for (const schedule of due) {
     try {
@@ -372,6 +388,17 @@ if (cloudServices) {
   app.use("/api", requireCloudUser(cloudServices.auth));
 }
 
+app.get("/api/admin/overview", async (request, response) => {
+  if (!request.cardPilotUser?.email || !adminEmails.has(request.cardPilotUser.email.toLowerCase())) {
+    return response.status(403).json({ error: "Administrator access is required." });
+  }
+  try { response.json(await cloudServices.adminOverview.load()); }
+  catch (error) {
+    console.error("Admin overview failed", error);
+    response.status(500).json({ error: "CardPilot could not load the administrator dashboard." });
+  }
+});
+
 app.put("/api/account/password", async (request, response) => {
   if (!cloudServices || !request.cardPilotSession) {
     response.status(409).json({ error: "Cloud accounts are not enabled." });
@@ -383,7 +410,7 @@ app.put("/api/account/password", async (request, response) => {
       request.body,
     );
     if (result.session) cloudServices.auth.setSessionCookies(response, result.session);
-    response.json({ user: result.user });
+    response.json({ user: withAdmin(result.user) });
   } catch (error) {
     if (error instanceof ZodError) {
       response.status(400).json({
@@ -730,6 +757,13 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
         scheduledPublishAt: draft.scheduledPublishAt,
         desiredEndAt: draft.desiredEndAt,
         scheduleError: draft.scheduleError,
+        ebayListingId: draft.ebayListingId,
+        listingUrl: draft.ebayListingId ? `https://www.ebay.com/itm/${encodeURIComponent(draft.ebayListingId)}` : null,
+        publishedAt: draft.publishedAt,
+        endedAt: draft.endedAt,
+        soldAt: draft.soldAt,
+        soldAmountCents: draft.soldAmountCents,
+        soldCurrency: draft.soldCurrency,
         updatedAt: draft.updatedAt,
         imageUrl: card.images.frontUrl,
         missingAspects: requirements.missingAspects,
@@ -751,6 +785,7 @@ app.put("/api/collection/:collectionId/ebay-draft", async (request, response) =>
       request.cardPilotUser.id,
       card.collectionId,
       request.body,
+      ebaySellEnvironment,
     );
     const preferences = await cloudServices.preferences.get(request.cardPilotUser.id);
     await cloudServices.preferences.update(request.cardPilotUser.id, {
@@ -976,6 +1011,52 @@ app.post("/api/collection/:collectionId/ebay-revise", async (request, response) 
   }
 });
 
+async function syncEbaySalesForUser(userId) {
+  const token = await ebaySellerAccessToken(userId);
+  const drafts = await cloudServices.ebaySelling.drafts(userId);
+  const byListingId = new Map(drafts.filter((draft) => draft.ebayListingId).map((draft) => [String(draft.ebayListingId), draft]));
+  const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  const until = new Date().toISOString();
+  const filter = encodeURIComponent(`creationdate:[${since}..${until}]`);
+  const payload = await ebaySelling.request(token, `/sell/fulfillment/v1/order?filter=${filter}&limit=200`);
+  let saved = 0;
+  for (const order of payload?.orders ?? []) {
+    for (const item of order.lineItems ?? []) {
+      const listingId = String(item.legacyItemId ?? item.itemId ?? "");
+      const draft = byListingId.get(listingId);
+      if (!draft) continue;
+      const price = item.lineItemCost ?? item.total ?? {};
+      await cloudServices.ebaySelling.saveSale(userId, {
+        saleId: randomUUID(), collectionId: draft.collectionId,
+        orderId: String(order.orderId), lineItemId: String(item.lineItemId), listingId,
+        orderStatus: String(order.orderFulfillmentStatus ?? order.orderPaymentStatus ?? "UNKNOWN"),
+        amountCents: Math.max(0, Math.round(Number(price.value ?? 0) * 100)),
+        currency: String(price.currency ?? "USD"), quantity: Math.max(1, Number(item.quantity ?? 1)),
+        soldAt: order.creationDate ?? new Date().toISOString(),
+      });
+      saved += 1;
+    }
+  }
+  const refreshedDrafts = await cloudServices.ebaySelling.drafts(userId);
+  for (const draft of refreshedDrafts.filter((item) => item.status === "published" && item.ebayOfferId)) {
+    const offer = await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(draft.ebayOfferId)}`);
+    if (offer?.status !== "PUBLISHED") await cloudServices.ebaySelling.markEnded(userId, draft.collectionId);
+  }
+  return { checked: payload?.total ?? payload?.orders?.length ?? 0, saved };
+}
+
+app.post("/api/ebay/sales/sync", async (request, response) => {
+  try { response.json(await syncEbaySalesForUser(request.cardPilotUser.id)); }
+  catch (error) { response.status(502).json({ error: error.message ?? "CardPilot could not sync eBay sales." }); }
+});
+
+app.get("/api/ebay/sales", async (request, response) => {
+  try {
+    const sales = await cloudServices.ebaySelling.sales(request.cardPilotUser.id);
+    response.json({ sales, totalAmountCents: sales.reduce((sum, sale) => sum + sale.amount_cents, 0), currency: sales[0]?.currency ?? "USD" });
+  } catch (error) { response.status(500).json({ error: error.message ?? "CardPilot could not load eBay sales." }); }
+});
+
 app.get("/api/account/export", async (request, response) => {
   try {
     const cards = await collectionStore.export(collectionUserId(request));
@@ -1037,8 +1118,19 @@ app.delete("/api/account", async (request, response) => {
 
 app.get("/api/collection", async (request, response) => {
   try {
+    const userId = collectionUserId(request);
+    const cards = await collectionStore.list(userId);
+    const drafts = cloudServices ? await cloudServices.ebaySelling.drafts(userId) : [];
+    const sellingByCard = new Map(drafts.map((draft) => [draft.collectionId, {
+      status: draft.status, listingId: draft.ebayListingId ?? null,
+      listingUrl: draft.ebayListingId ? `https://www.ebay.com/itm/${encodeURIComponent(draft.ebayListingId)}` : null,
+      priceCents: draft.priceCents, currency: draft.currency,
+      publishedAt: draft.publishedAt ?? null, endedAt: draft.endedAt ?? null,
+      soldAt: draft.soldAt ?? null, soldAmountCents: draft.soldAmountCents ?? null,
+      soldCurrency: draft.soldCurrency ?? null,
+    }]));
     response.json({
-      cards: await collectionStore.list(collectionUserId(request)),
+      cards: cards.map((card) => ({ ...card, selling: sellingByCard.get(card.collectionId) })),
     });
   } catch (error) {
     console.error("Collection loading failed", error);
