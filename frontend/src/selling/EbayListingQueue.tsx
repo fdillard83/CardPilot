@@ -17,6 +17,7 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
   const [payload, setPayload] = useState<QueuePayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [tab, setTab] = useState<"all" | "draft" | "scheduled" | "active" | "sold" | "ended">("all");
 
   const load = () => fetch("/api/ebay/listing-queue").then(async (response) => {
@@ -32,6 +33,16 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
   const itemState = (item: QueueItem) => item.status === "published" ? "active" : item.status === "sold" ? "sold" : item.status === "ended" ? "ended" : item.scheduleStatus === "scheduled" ? "scheduled" : "draft";
   const counts = useMemo(() => Object.fromEntries(["draft", "scheduled", "active", "sold", "ended"].map((state) => [state, payload?.items.filter((item) => itemState(item) === state).length ?? 0])), [payload]);
   const visibleItems = useMemo(() => payload?.items.filter((item) => tab === "all" || itemState(item) === tab) ?? [], [payload, tab]);
+  const deleteDraft = async (item: QueueItem) => {
+    if (!window.confirm(`Delete the saved eBay draft for “${item.title}”? This cannot be undone.`)) return;
+    setDeletingId(item.collectionId); setError(null);
+    try {
+      const response = await fetch(`/api/collection/${encodeURIComponent(item.collectionId)}/ebay-draft`, { method: "DELETE" });
+      if (!response.ok) { const body = await response.json().catch(() => null); throw new Error(body?.error ?? "Draft could not be deleted."); }
+      setPayload((current) => current ? { ...current, items: current.items.filter((candidate) => candidate.collectionId !== item.collectionId) } : current);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Draft could not be deleted."); }
+    finally { setDeletingId(null); }
+  };
 
   return <div className="ebay-draft-backdrop" role="presentation">
     <section className="ebay-draft-panel ebay-queue-panel" role="dialog" aria-modal="true" aria-labelledby="ebay-queue-title">
@@ -51,7 +62,7 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
             return <article key={item.collectionId}>
               <img src={item.imageUrl} alt="" />
               <div><span className={`ebay-queue-state ${item.ready ? "ready" : "waiting"}`}>{item.status === "published" ? "Active" : item.status === "sold" ? "Sold" : item.status === "ended" ? "Ended" : item.scheduleStatus === "scheduled" ? "Scheduled" : item.scheduleStatus === "failed" ? "Schedule failed" : item.ready ? "Ready" : "Needs attention"}</span><h3>{item.title}</h3><strong>{item.currency} {(item.priceCents / 100).toFixed(2)}</strong><small>Updated {new Date(item.updatedAt).toLocaleString()}</small>{item.publishedAt && item.status === "published" && <p>Active since {new Date(item.publishedAt).toLocaleString()}</p>}{item.soldAt && <p>Sold {new Date(item.soldAt).toLocaleString()}{item.soldAmountCents != null ? ` for ${item.soldCurrency ?? "USD"} ${(item.soldAmountCents / 100).toFixed(2)}` : ""}</p>}{item.status === "sold" && <p>{item.paymentStatus === "PAID" ? "Buyer paid" : `Payment: ${item.paymentStatus ?? "check eBay"}`} · {item.fulfillmentStatus === "FULFILLED" ? "Shipped" : "Needs shipment"}</p>}{item.listingUrl && <a href={item.listingUrl} target="_blank" rel="noreferrer">View on eBay</a>}{item.scheduleStatus === "scheduled" && item.scheduledPublishAt && <p>Publishes automatically {new Date(item.scheduledPublishAt).toLocaleString()}{item.desiredEndAt ? ` · Expected end ${new Date(item.desiredEndAt).toLocaleString()}` : ""}</p>}{item.scheduleError && <p>{item.scheduleError}</p>}{missing.length > 0 && item.status === "draft" && <p>Still needed: {missing.join(", ")}.</p>}</div>
-              <button type="button" disabled={!card} onClick={() => card && onOpenDraft(card)}>{item.status === "published" ? "View listing" : "Review draft"}</button>
+              <div>{item.status === "draft" && item.scheduleStatus !== "scheduled" && <button className="account-delete-button" type="button" disabled={deletingId === item.collectionId} onClick={() => void deleteDraft(item)}>{deletingId === item.collectionId ? "Deleting..." : "Delete draft"}</button>}<button type="button" disabled={!card} onClick={() => card && onOpenDraft(card)}>{item.status === "published" ? "View listing" : "Review draft"}</button></div>
             </article>;
           })}</div>}
         <p className="valuation-disclaimer">CardPilot never bulk-publishes this queue. Every listing requires a final individual review and confirmation.</p>

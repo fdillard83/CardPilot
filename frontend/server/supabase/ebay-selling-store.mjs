@@ -59,6 +59,12 @@ export class SupabaseEbaySellingStore {
     return this.#public(data);
   }
 
+  async deleteDraft(userId, collectionId) {
+    const { error } = await this.client.from("ebay_listing_drafts").delete()
+      .eq("user_id", userId).eq("collection_id", collectionId).eq("status", "draft");
+    if (error) throw dbError("eBay draft delete", error);
+  }
+
   async markPublished(userId, collectionId, { offerId, listingId }) {
     const now = new Date().toISOString();
     const { data, error } = await this.client.from("ebay_listing_drafts").update({
@@ -84,6 +90,19 @@ export class SupabaseEbaySellingStore {
       status: "ended", ended_at: now, updated_at: now,
     }).eq("user_id", userId).eq("collection_id", collectionId).select("*").single();
     if (error) throw dbError("eBay listing end", error);
+    return this.#public(data);
+  }
+
+  async prepareRelist(userId, collectionId) {
+    const { data, error } = await this.client.from("ebay_listing_drafts").update({
+      status: "draft", ebay_offer_id: null, ebay_listing_id: null,
+      published_at: null, ended_at: null, sold_at: null,
+      sold_amount_cents: null, sold_currency: null,
+      scheduled_publish_at: null, desired_end_at: null,
+      schedule_status: "unscheduled", schedule_error: null,
+      updated_at: new Date().toISOString(),
+    }).eq("user_id", userId).eq("collection_id", collectionId).eq("status", "ended").select("*").single();
+    if (error) throw dbError("eBay relist preparation", error);
     return this.#public(data);
   }
 

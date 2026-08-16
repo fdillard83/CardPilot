@@ -20,6 +20,7 @@ import {
   duplicateOfferId,
   editableEbayDraft,
   ebaySellerSetupResources,
+  ebayShippingPolicyResource,
   encryptSellerToken,
   inventoryConditionForCard,
 } from "./ebay/selling.mjs";
@@ -601,6 +602,32 @@ app.get("/api/ebay/selling/setup", async (request, response) => {
   }
 });
 
+const EbayShippingChargeSchema = z.object({
+  shippingCostCents: z.number().int().min(0).max(10_000),
+  confirmation: z.enum(["CREATE_SANDBOX_SHIPPING", "CREATE_PRODUCTION_SHIPPING"]),
+}).strict();
+
+app.post("/api/ebay/selling/shipping-policy", async (request, response) => {
+  try {
+    const input = EbayShippingChargeSchema.parse(request.body);
+    const expected = ebaySellEnvironment === "production" ? "CREATE_PRODUCTION_SHIPPING" : "CREATE_SANDBOX_SHIPPING";
+    if (input.confirmation !== expected) return response.status(400).json({ error: "Explicit shipping-policy confirmation is required." });
+    const token = await ebaySellerAccessToken(request.cardPilotUser.id);
+    const resource = ebayShippingPolicyResource(input.shippingCostCents, ebayMarketplaceId, ebaySellEnvironment);
+    let setup = await loadEbaySellerSetup(token);
+    let policy = setup.fulfillmentPolicies.find((item) => item.name === resource.name);
+    if (!policy) {
+      await createEbaySandboxResource("Shipping policy", () => ebaySelling.request(token, "/sell/account/v1/fulfillment_policy", { method: "POST", body: resource }));
+      setup = await loadEbaySellerSetup(token);
+      policy = setup.fulfillmentPolicies.find((item) => item.name === resource.name);
+    }
+    if (!policy) throw new Error("eBay created the shipping policy but did not return it yet. Wait a moment and retry.");
+    response.json({ ...setup, selectedFulfillmentPolicyId: policy.id });
+  } catch (error) {
+    response.status(error instanceof ZodError ? 400 : 502).json({ error: error.message ?? "CardPilot could not create that shipping charge." });
+  }
+});
+
 app.get("/api/collection/:collectionId/ebay-categories", async (request, response) => {
   if (!ebayTaxonomy) return response.status(503).json({ error: "eBay category recommendations are not configured." });
   try {
@@ -729,6 +756,25 @@ app.get("/api/collection/:collectionId/ebay-draft", async (request, response) =>
   const saved = await cloudServices.ebaySelling.draft(request.cardPilotUser.id, card.collectionId);
   const preferences = await cloudServices.preferences.get(request.cardPilotUser.id);
   response.json({ draft: saved ?? ebayDraftFromCard(card, preferences.ebaySellingDefaults), generated: !saved });
+});
+
+app.delete("/api/collection/:collectionId/ebay-draft", async (request, response) => {
+  try {
+    const userId = request.cardPilotUser.id;
+    const draft = await cloudServices.ebaySelling.draft(userId, request.params.collectionId);
+    if (!draft || draft.status !== "draft") return response.status(404).json({ error: "No removable eBay draft was found." });
+    if (draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "processing") {
+      return response.status(409).json({ error: "Cancel the scheduled publication before deleting this draft." });
+    }
+    if (draft.ebayOfferId) {
+      const token = await ebaySellerAccessToken(userId);
+      await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(draft.ebayOfferId)}`, { method: "DELETE" });
+    }
+    await cloudServices.ebaySelling.deleteDraft(userId, request.params.collectionId);
+    response.status(204).end();
+  } catch (error) {
+    response.status(502).json({ error: error.message ?? "CardPilot could not delete this eBay draft." });
+  }
 });
 
 app.get("/api/ebay/listing-queue", async (request, response) => {
@@ -965,6 +1011,19 @@ app.post("/api/collection/:collectionId/ebay-end", async (request, response) => 
     response.json({ draft: await cloudServices.ebaySelling.markEnded(userId, request.params.collectionId) });
   } catch (error) {
     response.status(502).json({ error: error.message ?? "eBay could not end this listing." });
+  }
+});
+
+app.post("/api/collection/:collectionId/ebay-relist", async (request, response) => {
+  if (request.body?.confirmation !== "RELIST") {
+    return response.status(400).json({ error: "Explicit relisting confirmation is required." });
+  }
+  try {
+    const draft = await cloudServices.ebaySelling.draft(request.cardPilotUser.id, request.params.collectionId);
+    if (!draft || draft.status !== "ended") return response.status(404).json({ error: "No ended CardPilot eBay listing was found." });
+    response.json({ draft: await cloudServices.ebaySelling.prepareRelist(request.cardPilotUser.id, request.params.collectionId) });
+  } catch (error) {
+    response.status(500).json({ error: error.message ?? "CardPilot could not prepare this card for relisting." });
   }
 });
 

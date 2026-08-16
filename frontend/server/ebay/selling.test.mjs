@@ -9,6 +9,7 @@ import {
   editableEbayDraft,
   ebaySandboxSetupResources,
   ebaySellerSetupResources,
+  ebayShippingPolicyResource,
   encryptSellerToken,
   inventoryConditionForCard,
 } from "./selling.mjs";
@@ -92,6 +93,15 @@ test("Production seller setup uses distinct real-account resource names", () => 
   assert.equal(resources.location.name, "CardPilot Inventory");
   assert.equal(resources.fulfillmentPolicy.name, "CardPilot Shipping");
   assert.equal(resources.returnPolicy.name, "CardPilot Returns");
+});
+
+test("custom shipping charges create clearly named reusable policies", () => {
+  const paid = ebayShippingPolicyResource(399, "EBAY_US", "production");
+  const free = ebayShippingPolicyResource(0, "EBAY_US", "production");
+  assert.equal(paid.name, "CardPilot Shipping $3.99");
+  assert.equal(paid.shippingOptions[0].shippingServices[0].shippingCost.value, "3.99");
+  assert.equal(free.name, "CardPilot Free Shipping");
+  assert.equal(free.shippingOptions[0].shippingServices[0].freeShipping, true);
 });
 
 test("raw trading cards use eBay's required structured condition", () => {

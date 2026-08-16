@@ -7,6 +7,7 @@ type Draft = {
   aspects: Record<string, string[]>; merchantLocationKey: string;
   fulfillmentPolicyId: string; paymentPolicyId: string; returnPolicyId: string;
   listingFormat: "FIXED_PRICE" | "AUCTION"; status?: string; ebayListingId?: string | null;
+  draftId?: string;
   listingImages?: ("front" | "back")[]; auctionDurationDays?: 1 | 3 | 5 | 7 | 10;
   auctionStartPriceCents?: number; auctionReservePriceCents?: number;
   scheduledPublishAt?: string | null; desiredEndAt?: string | null;
@@ -227,6 +228,43 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
     } finally { setBusy(false); }
   };
 
+  const createShippingCharge = async () => {
+    if (!draft || !status) return;
+    const shippingCost = Number(sandboxShippingCost);
+    if (!Number.isFinite(shippingCost) || shippingCost < 0 || shippingCost > 100) {
+      setError("Enter a shipping charge from $0.00 through $100.00."); return;
+    }
+    const label = shippingCost === 0 ? "free shipping" : `$${shippingCost.toFixed(2)} shipping`;
+    if (!window.confirm(`Create or select an eBay policy charging ${label} for this listing? This adds a reusable shipping policy to your ${status.environment} seller account.`)) return;
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      const response = await fetch("/api/ebay/selling/shipping-policy", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shippingCostCents: Math.round(shippingCost * 100),
+          confirmation: status.environment === "production" ? "CREATE_PRODUCTION_SHIPPING" : "CREATE_SANDBOX_SHIPPING",
+        }),
+      });
+      const payload = await responsePayload(response);
+      if (!response.ok) throw new Error(payload.error);
+      const next = payload as SellerSetup & { selectedFulfillmentPolicyId: string };
+      setSetup(next);
+      update("fulfillmentPolicyId", next.selectedFulfillmentPolicyId);
+      setMessage(`${label[0].toUpperCase() + label.slice(1)} is selected. Save the draft${draft.status === "published" ? " and revise eBay" : ""} to apply it.`);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "CardPilot could not create that shipping charge."); }
+    finally { setBusy(false); }
+  };
+
+  const deleteDraft = async () => {
+    if (!draft?.draftId || draft.status !== "draft" || !window.confirm(`Delete the saved eBay draft for “${draft.title}”? This cannot be undone.`)) return;
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch(`/api/collection/${encodeURIComponent(card.collectionId)}/ebay-draft`, { method: "DELETE" });
+      if (!response.ok) { const payload = await response.json().catch(() => null); throw new Error(payload?.error ?? "Draft could not be deleted."); }
+      onClose();
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Draft could not be deleted."); setBusy(false); }
+  };
+
   const publish = async () => {
     if (!draft || !window.confirm(`Publish “${draft.title}” to eBay ${status?.environment}? This creates an eBay listing.`)) return;
     if (!(await save())) return;
@@ -253,6 +291,22 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
       if (!response.ok) throw new Error(payload.error);
       setDraft(payload.draft); setMessage("The eBay listing was ended.");
     } catch (caught) { setError(caught instanceof Error ? caught.message : "The listing could not be ended."); }
+    finally { setBusy(false); }
+  };
+
+  const prepareRelist = async () => {
+    if (!draft || draft.status !== "ended" || !window.confirm(`Create a fresh eBay draft for “${draft.title}”? The ended eBay listing will remain ended.`)) return;
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      const response = await fetch(`/api/collection/${encodeURIComponent(card.collectionId)}/ebay-relist`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmation: "RELIST" }),
+      });
+      const payload = await responsePayload(response);
+      if (!response.ok) throw new Error(payload.error);
+      setDraft(payload.draft); setPriceInput((payload.draft.priceCents / 100).toFixed(2));
+      revisionDetailsDirtyRef.current = false;
+      setMessage("A fresh draft is ready. Review it before publishing a new eBay listing.");
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "CardPilot could not prepare this card for relisting."); }
     finally { setBusy(false); }
   };
 
@@ -374,6 +428,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
               {optionalDefinitions.map((definition) => <label key={definition.name}>{definition.name}{definition.values.length ? <select value={draft.aspects[definition.name]?.[0] ?? ""} onChange={(e) => updateAspect(definition.name, e.target.value)}><option value="">Optional</option>{definition.values.map((value) => <option key={value} value={value}>{value}</option>)}</select> : <input value={draft.aspects[definition.name]?.[0] ?? ""} onChange={(e) => updateAspect(definition.name, e.target.value)} />}</label>)}
               <label>Inventory location <select value={draft.merchantLocationKey} onChange={(e) => update("merchantLocationKey", e.target.value)}><option value="">Choose location</option>{setup?.locations.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
               <label>Shipping policy <select value={draft.fulfillmentPolicyId} onChange={(e) => update("fulfillmentPolicyId", e.target.value)}><option value="">Choose shipping policy</option>{setup?.fulfillmentPolicies.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
+              <div className="wide ebay-shipping-charge"><label>Buyer shipping charge <input type="text" inputMode="decimal" placeholder="4.99" value={sandboxShippingCost} onChange={(event) => setSandboxShippingCost(event.target.value)} /><small>Enter 0 for free shipping. CardPilot creates or reuses a matching eBay shipping policy.</small></label><button type="button" disabled={busy || !status.connected} onClick={() => void createShippingCharge()}>Use this shipping charge</button></div>
               <label>Payment policy <select value={draft.paymentPolicyId} onChange={(e) => update("paymentPolicyId", e.target.value)}><option value="">Choose payment policy</option>{setup?.paymentPolicies.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
               <label>Return policy <select value={draft.returnPolicyId} onChange={(e) => update("returnPolicyId", e.target.value)}><option value="">Choose return policy</option>{setup?.returnPolicies.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
             </div>
@@ -381,7 +436,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
             <section className="ebay-photo-manager"><div><h3>Listing photos</h3><p>The front image is used by default. Add the back only when you want buyers to see it.</p></div><label><input type="checkbox" checked readOnly /> Front photo <span>Primary</span></label>{card.images.backUrl ? <label><input type="checkbox" checked={selectedImages.includes("back")} onChange={(e) => update("listingImages", e.target.checked ? ["front", "back"] : ["front"])} /> Include back photo</label> : <small>No back photo was saved for this card. One front image is acceptable.</small>}</section>
             <section className="ebay-proceeds"><div><span>Price reference</span><strong>{draft.currency} {(referencePriceCents / 100).toFixed(2)}</strong></div><div><span>Illustrative eBay fee</span><strong>− {draft.currency} {(estimatedFeeCents / 100).toFixed(2)}</strong></div><div><span>Approximate proceeds</span><strong>{draft.currency} {(estimatedProceedsCents / 100).toFixed(2)}</strong></div><p>Illustrative estimate using 13.25% plus $0.30. Actual fees vary by seller, category, promotions, taxes, shipping, and final auction price.{draft.listingFormat === "AUCTION" ? ` Selected auction currently ends around ${auctionEnd.toLocaleString()}.` : ""}</p></section>
             {draft.status !== "published" && (missingPublishingFields.length > 0 || (readiness?.missingAspects.length ?? 0) > 0) && <p className="ebay-missing-fields">Before publishing, complete: {[...missingPublishingFields, ...(readiness?.missingAspects ?? [])].join(", ")}.</p>}
-            <div className="ebay-draft-actions"><button type="button" disabled={busy || draft.status === "sold"} onClick={() => void save()}>{busy ? "Working..." : "Save draft"}</button>{draft.status === "published" ? <><button className="primary-action" type="button" disabled={busy} onClick={() => void reviseListing()}>Save and revise eBay</button><button className="account-delete-button" type="button" disabled={busy} onClick={() => void endListing()}>End eBay listing</button></> : <button className="primary-action" type="button" disabled={busy || !status.connected || draft.status === "ended" || draft.status === "sold" || missingPublishingFields.length > 0 || (readiness?.missingAspects.length ?? 0) > 0} onClick={() => void publish()}>{draft.status === "sold" ? "Card sold — relisting blocked" : draft.status === "ended" ? "Listing ended" : `Review and publish to ${status.environment}`}</button>}</div>
+            <div className="ebay-draft-actions"><button type="button" disabled={busy || draft.status === "sold" || draft.status === "ended"} onClick={() => void save()}>{busy ? "Working..." : "Save draft"}</button>{draft.draftId && draft.status === "draft" && draft.scheduleStatus !== "scheduled" && <button className="account-delete-button" type="button" disabled={busy} onClick={() => void deleteDraft()}>Delete draft</button>}{draft.status === "ended" && <button className="primary-action" type="button" disabled={busy} onClick={() => void prepareRelist()}>Relist this card</button>}{draft.status === "published" ? <><button className="primary-action" type="button" disabled={busy} onClick={() => void reviseListing()}>Save and revise eBay</button><button className="account-delete-button" type="button" disabled={busy} onClick={() => void endListing()}>End eBay listing</button></> : draft.status !== "ended" && <button className="primary-action" type="button" disabled={busy || !status.connected || draft.status === "sold" || missingPublishingFields.length > 0 || (readiness?.missingAspects.length ?? 0) > 0} onClick={() => void publish()}>{draft.status === "sold" ? "Card sold — relisting blocked" : `Review and publish to ${status.environment}`}</button>}</div>
             <p className="valuation-disclaimer">CardPilot never publishes from this screen without a separate confirmation. Verify condition, category, policies, price, and photographs first.</p>
           </>
         )}

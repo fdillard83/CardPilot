@@ -2307,6 +2307,7 @@ main {
 .ebay-draft-grid .wide { grid-column: 1 / -1; }
 .ebay-draft-grid input, .ebay-draft-grid select, .ebay-draft-grid textarea { width: 100%; }
 .ebay-draft-grid textarea { resize: vertical; }
+.ebay-shipping-charge { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; }
 .ebay-draft-grid small { color: var(--muted); justify-self: end; }
 .ebay-listing-preview { display: grid; grid-template-columns: minmax(150px, 240px) 1fr; gap: 18px; margin: 18px 0; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel-soft); }
 .ebay-preview-images { display: flex; gap: 8px; min-width: 0; }
@@ -2375,6 +2376,7 @@ main {
   .ebay-schedule-fields button { grid-column: auto; }
   .ebay-sandbox-setup-fields { grid-template-columns: 1fr; }
   .ebay-draft-grid .wide { grid-column: auto; }
+  .ebay-shipping-charge { grid-template-columns: 1fr; }
   .ebay-draft-actions { display: grid; }
 }
 

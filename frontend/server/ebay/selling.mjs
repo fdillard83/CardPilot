@@ -114,6 +114,17 @@ export function ebaySellerSetupResources(input, marketplaceId = "EBAY_US", envir
   };
 }
 
+export function ebayShippingPolicyResource(shippingCostCents, marketplaceId = "EBAY_US", environment = "sandbox") {
+  const resources = ebaySellerSetupResources({ postalCode: "00000", shippingCostCents }, marketplaceId, environment);
+  const amount = (shippingCostCents / 100).toFixed(2);
+  return {
+    ...resources.fulfillmentPolicy,
+    name: shippingCostCents === 0
+      ? `CardPilot${environment === "sandbox" ? " Sandbox" : ""} Free Shipping`
+      : `CardPilot${environment === "sandbox" ? " Sandbox" : ""} Shipping $${amount}`,
+  };
+}
+
 const SELL_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
