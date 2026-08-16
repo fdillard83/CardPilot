@@ -160,6 +160,19 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
     window.location.assign(payload.authorizationUrl);
   };
 
+  const reconnect = async () => {
+    if (!window.confirm("Reconnect eBay to grant CardPilot the updated read-only sales permission? Your eBay listings and CardPilot drafts will not be deleted.")) return;
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch("/api/ebay/selling/connection", { method: "DELETE" });
+      if (!response.ok) throw new Error("CardPilot could not restart the eBay connection.");
+      await connect();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "CardPilot could not reconnect eBay.");
+      setBusy(false);
+    }
+  };
+
   const createSellerSetup = async () => {
     if (!draft || !status) return;
     if (status.environment === "production" && !window.confirm(
@@ -303,6 +316,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
               <strong>{status.connected ? "eBay seller connected" : status.configured ? "Connect your eBay seller account" : "eBay selling setup required"}</strong>
               <span>Environment: {status.environment}. Production publishing remains separate.</span>
               {status.configured && !status.connected && <button type="button" onClick={() => void connect()}>Connect eBay</button>}
+              {status.connected && <button type="button" disabled={busy} onClick={() => void reconnect()}>Reconnect eBay permissions</button>}
             </div>
             {status.connected && setup && (
               !setup.locations.length || !setup.fulfillmentPolicies.length || !setup.paymentPolicies.length || !setup.returnPolicies.length
