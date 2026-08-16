@@ -63,6 +63,14 @@ export class SupabaseEbaySellingStore {
     return this.#public(data);
   }
 
+  async markOfferCreated(userId, collectionId, offerId) {
+    const { data, error } = await this.client.from("ebay_listing_drafts").update({
+      ebay_offer_id: offerId, updated_at: new Date().toISOString(),
+    }).eq("user_id", userId).eq("collection_id", collectionId).select("*").single();
+    if (error) throw dbError("eBay offer save", error);
+    return this.#public(data);
+  }
+
   async markEnded(userId, collectionId) {
     const { data, error } = await this.client.from("ebay_listing_drafts").update({
       status: "ended", updated_at: new Date().toISOString(),

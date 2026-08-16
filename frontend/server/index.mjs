@@ -17,6 +17,7 @@ import {
   EbaySandboxSetupSchema,
   EbaySellingClient,
   decryptSellerToken,
+  duplicateOfferId,
   editableEbayDraft,
   ebaySellerSetupResources,
   encryptSellerToken,
@@ -827,9 +828,7 @@ async function publishEbayListing(userId, collectionId) {
         product: { title: draft.title, description: draft.description, aspects: draft.aspects, imageUrls },
       },
     });
-    const offer = await ebaySelling.request(token, "/sell/inventory/v1/offer", {
-      method: "POST",
-      body: { sku, marketplaceId: ebayMarketplaceId, format: draft.listingFormat,
+    const offerBody = { sku, marketplaceId: ebayMarketplaceId, format: draft.listingFormat,
         availableQuantity: 1, categoryId: draft.categoryId,
         merchantLocationKey: draft.merchantLocationKey,
         listingDuration: draft.listingFormat === "AUCTION" ? `DAYS_${draft.auctionDurationDays}` : "GTC",
@@ -838,11 +837,32 @@ async function publishEbayListing(userId, collectionId) {
         pricingSummary: draft.listingFormat === "AUCTION" ? {
           auctionStartPrice: { value: (draft.auctionStartPriceCents / 100).toFixed(2), currency: draft.currency },
           ...(draft.auctionReservePriceCents > 0 ? { auctionReservePrice: { value: (draft.auctionReservePriceCents / 100).toFixed(2), currency: draft.currency } } : {}),
-        } : { price: { value: (draft.priceCents / 100).toFixed(2), currency: draft.currency } } },
+        } : { price: { value: (draft.priceCents / 100).toFixed(2), currency: draft.currency } } };
+    let offerId = saved.ebayOfferId;
+    if (!offerId) {
+      try {
+        offerId = (await ebaySelling.request(token, "/sell/inventory/v1/offer", {
+          method: "POST", body: offerBody,
+        })).offerId;
+      } catch (error) {
+        offerId = duplicateOfferId(error);
+        if (!offerId) throw error;
+      }
+    }
+    const existingOffer = await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(offerId)}`);
+    if (existingOffer.status === "PUBLISHED" && existingOffer.listing?.listingId) {
+      return cloudServices.ebaySelling.markPublished(userId, card.collectionId, {
+        offerId, listingId: existingOffer.listing.listingId,
+      });
+    }
+    if (existingOffer.status !== "UNPUBLISHED") throw new Error(`eBay offer ${offerId} is not available for publication.`);
+    await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(offerId)}`, {
+      method: "PUT", body: offerBody,
     });
-    const published = await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(offer.offerId)}/publish`, { method: "POST" });
+    await cloudServices.ebaySelling.markOfferCreated(userId, card.collectionId, offerId);
+    const published = await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/publish`, { method: "POST" });
     const result = await cloudServices.ebaySelling.markPublished(userId, card.collectionId, {
-      offerId: offer.offerId, listingId: published.listingId,
+      offerId, listingId: published.listingId,
     });
     return result;
 }

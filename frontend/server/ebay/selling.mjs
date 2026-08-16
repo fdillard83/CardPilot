@@ -50,6 +50,11 @@ export function inventoryConditionForCard({ categoryId, isGraded, condition }) {
   };
 }
 
+export function duplicateOfferId(error) {
+  if (String(error?.code ?? "") !== "25002") return null;
+  return error?.message?.match(/offerId:\s*(\d+)/i)?.[1] ?? null;
+}
+
 export const EbaySandboxSetupSchema = z.object({
   postalCode: z.string().trim().regex(/^\d{5}(?:-\d{4})?$/, "Enter a valid US ZIP code."),
   shippingCostCents: z.number().int().min(0).max(10_000),

@@ -5,6 +5,7 @@ import {
   EbaySandboxSetupSchema,
   EbaySellingClient,
   decryptSellerToken,
+  duplicateOfferId,
   editableEbayDraft,
   ebaySandboxSetupResources,
   ebaySellerSetupResources,
@@ -103,6 +104,11 @@ test("raw trading cards use eBay's required structured condition", () => {
   assert.throws(() => inventoryConditionForCard({
     categoryId: "261328", isGraded: true, condition: "LIKE_NEW",
   }), /grader and grade descriptors/);
+});
+
+test("duplicate unpublished eBay offers can be recovered by ID", () => {
+  assert.equal(duplicateOfferId({ code: "25002", message: "Offer entity already exists. offerId: 237115979011" }), "237115979011");
+  assert.equal(duplicateOfferId({ code: "other", message: "offerId: 237115979011" }), null);
 });
 
 test("selling requests preserve useful eBay validation details", async () => {
