@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { SavedCollectionCard } from "../identification/types";
 
 type Draft = {
@@ -51,6 +51,8 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
   const [auctionReferenceTime] = useState(() => Date.now());
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [desiredEndLocal, setDesiredEndLocal] = useState("");
+  const [priceInput, setPriceInput] = useState("");
+  const revisionDetailsDirtyRef = useRef(false);
   const selectedCategoryId = draft?.categoryId ?? "";
 
   useEffect(() => {
@@ -59,7 +61,12 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
       fetch(`/api/collection/${encodeURIComponent(card.collectionId)}/ebay-draft`).then((response) => response.json()),
       fetch("/api/ebay/selling/status").then((response) => response.json()),
     ]).then(([draftPayload, statusPayload]) => {
-      if (current) { setDraft(draftPayload.draft); setStatus(statusPayload); }
+      if (current) {
+        setDraft(draftPayload.draft);
+        revisionDetailsDirtyRef.current = false;
+        setPriceInput((draftPayload.draft.priceCents / 100).toFixed(2));
+        setStatus(statusPayload);
+      }
     }).catch(() => current && setError("CardPilot could not prepare this eBay draft."));
     return () => { current = false; };
   }, [card.collectionId]);
@@ -110,10 +117,14 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
   }, [card.collectionId]);
 
   const update = <K extends keyof Draft>(key: K, value: Draft[K]) => {
-    if (draft) setDraft({ ...draft, [key]: value });
+    if (draft) {
+      revisionDetailsDirtyRef.current = true;
+      setDraft({ ...draft, [key]: value });
+    }
   };
   const updateAspect = (name: string, value: string) => {
     if (!draft) return;
+    revisionDetailsDirtyRef.current = true;
     const aspects = { ...draft.aspects };
     if (value.trim()) aspects[name] = [value];
     else delete aspects[name];
@@ -124,10 +135,14 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
     if (!draft) return false;
     setBusy(true); setError(null); setMessage(null);
     try {
+      const enteredPrice = Number(priceInput);
+      if (draft.listingFormat === "FIXED_PRICE" && (!Number.isFinite(enteredPrice) || enteredPrice < 0.01)) {
+        throw new Error("Enter a valid Buy It Now price of at least $0.01.");
+      }
       const input = {
         title: draft.title,
         description: draft.description,
-        priceCents: draft.priceCents,
+        priceCents: draft.listingFormat === "FIXED_PRICE" ? Math.round(enteredPrice * 100) : draft.priceCents,
         currency: draft.currency,
         condition: draft.condition,
         conditionDescription: draft.conditionDescription,
@@ -148,7 +163,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error);
-      setDraft(payload.draft); setMessage("Draft saved privately in CardPilot."); return true;
+      setDraft(payload.draft); setPriceInput((payload.draft.priceCents / 100).toFixed(2)); setMessage("Draft saved privately in CardPilot."); return true;
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Draft could not be saved."); return false; }
     finally { setBusy(false); }
   };
@@ -246,12 +261,14 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
     if (!(await save())) return;
     setBusy(true); setError(null);
     try {
+      const priceOnly = !revisionDetailsDirtyRef.current;
       const response = await fetch(`/api/collection/${encodeURIComponent(card.collectionId)}/ebay-revise`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmation: "REVISE" }),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmation: "REVISE", revisionScope: priceOnly ? "PRICE_ONLY" : "FULL" }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error);
-      setMessage("The active eBay listing was revised.");
+      setDraft(payload.draft); revisionDetailsDirtyRef.current = false;
+      setMessage(priceOnly ? "The active eBay price was revised." : "The active eBay listing was revised.");
     } catch (caught) { setError(caught instanceof Error ? caught.message : "The listing could not be revised."); }
     finally { setBusy(false); }
   };
@@ -345,7 +362,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
               <label className="wide">Title <input maxLength={80} value={draft.title} onChange={(e) => update("title", e.target.value)} /><small>{draft.title.length}/80</small></label>
               <label className="wide">Description <textarea rows={7} value={draft.description} onChange={(e) => update("description", e.target.value)} /></label>
               <label>Listing format <select disabled={draft.status === "published"} value={draft.listingFormat} onChange={(e) => update("listingFormat", e.target.value as Draft["listingFormat"])}><option value="FIXED_PRICE">Buy It Now (recommended)</option><option value="AUCTION">Auction</option></select>{draft.status === "published" && <small>End and create a new listing to change its format.</small>}</label>
-              {draft.listingFormat === "FIXED_PRICE" ? <label>Buy It Now price <input type="number" min="0.01" step="0.01" value={(draft.priceCents / 100).toFixed(2)} onChange={(e) => update("priceCents", Math.round(Number(e.target.value) * 100))} /></label> : <>
+              {draft.listingFormat === "FIXED_PRICE" ? <label>Buy It Now price <input type="text" inputMode="decimal" placeholder="0.00" value={priceInput} onChange={(e) => setPriceInput(e.target.value)} /><small>Enter dollars and cents, for example 12.95.</small></label> : <>
                 <label>Starting bid <input type="number" min="0.01" step="0.01" value={((draft.auctionStartPriceCents ?? 99) / 100).toFixed(2)} onChange={(e) => update("auctionStartPriceCents", Math.round(Number(e.target.value) * 100))} /></label>
                 <label>Optional reserve price <input type="number" min="0" step="0.01" value={((draft.auctionReservePriceCents ?? 0) / 100).toFixed(2)} onChange={(e) => update("auctionReservePriceCents", Math.round(Number(e.target.value) * 100))} /><small>Reserve fees can apply even if the card does not sell.</small></label>
                 <label>Auction ending day <select value={auctionDays} onChange={(e) => update("auctionDurationDays", Number(e.target.value) as Draft["auctionDurationDays"])}>{([1, 3, 5, 7, 10] as const).map((days) => <option key={days} value={days}>{new Date(auctionReferenceTime + days * 86_400_000).toLocaleString([], { weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} ({days} day{days === 1 ? "" : "s"})</option>)}</select><small>eBay ends the auction at approximately the same time it is published.</small></label>

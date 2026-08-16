@@ -2111,7 +2111,7 @@ export function CollectionView({
         <div><strong>{collectionValuation.listedCount}</strong><span>Listed on eBay</span></div>
         <div><strong>{collectionValuation.soldTotalLabel}</strong><span>Total sold value</span></div>
       </div>
-      <div className="ebay-queue-launch"><div><strong>eBay listing drafts</strong><span>Prepare cards now and publish them individually after final review.</span></div><button type="button" onClick={() => setListingQueueOpen(true)}>Open Ready to List queue</button></div>
+      <div className="ebay-queue-launch"><div><strong>eBay listings and drafts</strong><span>See drafts, scheduled listings, active listings, ended listings, and synchronized sales.</span></div><button type="button" onClick={() => setListingQueueOpen(true)}>Open Listings and drafts</button></div>
 
       {(bulkRefreshing || bulkValuationResults.length > 0) && (
         <BulkValuationReview

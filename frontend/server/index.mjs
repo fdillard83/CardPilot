@@ -962,7 +962,7 @@ app.post("/api/collection/:collectionId/ebay-end", async (request, response) => 
 });
 
 app.post("/api/collection/:collectionId/ebay-revise", async (request, response) => {
-  if (request.body?.confirmation !== "REVISE") {
+  if (request.body?.confirmation !== "REVISE" || !["PRICE_ONLY", "FULL"].includes(request.body?.revisionScope)) {
     return response.status(400).json({ error: "Explicit revision confirmation is required." });
   }
   try {
@@ -975,6 +975,7 @@ app.post("/api/collection/:collectionId/ebay-revise", async (request, response) 
     const draft = editableEbayDraft(saved);
     const token = await ebaySellerAccessToken(userId);
     const sku = `cardpilot-${card.collectionId}`;
+    const existingOffer = await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(saved.ebayOfferId)}`);
     const [front, back] = await Promise.all([
       collectionStore.image(userId, card.collectionId, "front"),
       collectionStore.image(userId, card.collectionId, "back"),
@@ -986,15 +987,44 @@ app.post("/api/collection/:collectionId/ebay-revise", async (request, response) 
       isGraded: card.grading?.isGraded,
       condition: draft.condition,
     });
-    await ebaySelling.request(token, `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
-      method: "PUT",
-      body: { availability: { shipToLocationAvailability: { quantity: 1 } }, ...inventoryCondition,
-        conditionDescription: draft.conditionDescription,
-        product: { title: draft.title, description: draft.description, aspects: draft.aspects, imageUrls } },
-    });
-    await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(saved.ebayOfferId)}`, {
-      method: "PUT",
-      body: { sku, marketplaceId: ebayMarketplaceId, format: draft.listingFormat,
+    const existingInventory = request.body.revisionScope === "FULL"
+      ? await ebaySelling.request(token, `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`)
+      : null;
+    const contentChanged = request.body.revisionScope === "FULL" && (existingInventory?.product?.title !== draft.title ||
+      existingInventory?.product?.description !== draft.description ||
+      existingInventory?.conditionDescription !== draft.conditionDescription ||
+      JSON.stringify(existingInventory?.product?.aspects ?? {}) !== JSON.stringify(draft.aspects ?? {}));
+    if (contentChanged) {
+      await ebaySelling.request(token, `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
+        method: "PUT",
+        body: { availability: { shipToLocationAvailability: { quantity: 1 } }, ...inventoryCondition,
+          conditionDescription: draft.conditionDescription,
+          product: { title: draft.title, description: draft.description, aspects: draft.aspects, imageUrls } },
+      });
+    }
+    const policyChanged = request.body.revisionScope === "FULL" && (String(existingOffer?.categoryId ?? "") !== draft.categoryId ||
+      String(existingOffer?.merchantLocationKey ?? "") !== draft.merchantLocationKey ||
+      String(existingOffer?.listingPolicies?.fulfillmentPolicyId ?? "") !== draft.fulfillmentPolicyId ||
+      String(existingOffer?.listingPolicies?.paymentPolicyId ?? "") !== draft.paymentPolicyId ||
+      String(existingOffer?.listingPolicies?.returnPolicyId ?? "") !== draft.returnPolicyId);
+    if (draft.listingFormat === "FIXED_PRICE" && !policyChanged) {
+      const bulkResult = await ebaySelling.request(token, "/sell/inventory/v1/bulk_update_price_quantity", {
+        method: "POST",
+        body: { requests: [{ sku, shipToLocationAvailability: { quantity: 1 }, offers: [{
+          offerId: saved.ebayOfferId,
+          availableQuantity: 1,
+          price: { value: (draft.priceCents / 100).toFixed(2), currency: draft.currency },
+        }] }] },
+      });
+      const failed = bulkResult?.responses?.find((item) => Number(item.statusCode) >= 300 || item.errors?.length);
+      if (failed) {
+        const detail = failed.errors?.[0];
+        throw new Error(detail?.message ?? detail?.longMessage ?? "eBay could not update the active listing price.");
+      }
+    } else {
+      await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(saved.ebayOfferId)}`, {
+        method: "PUT",
+        body: { sku, marketplaceId: ebayMarketplaceId, format: draft.listingFormat,
         availableQuantity: 1, categoryId: draft.categoryId,
         merchantLocationKey: draft.merchantLocationKey,
         listingDuration: draft.listingFormat === "AUCTION" ? `DAYS_${draft.auctionDurationDays}` : "GTC",
@@ -1004,8 +1034,9 @@ app.post("/api/collection/:collectionId/ebay-revise", async (request, response) 
           auctionStartPrice: { value: (draft.auctionStartPriceCents / 100).toFixed(2), currency: draft.currency },
           ...(draft.auctionReservePriceCents > 0 ? { auctionReservePrice: { value: (draft.auctionReservePriceCents / 100).toFixed(2), currency: draft.currency } } : {}),
         } : { price: { value: (draft.priceCents / 100).toFixed(2), currency: draft.currency } } },
-    });
-    response.json({ draft: saved });
+      });
+    }
+    response.json({ draft: await cloudServices.ebaySelling.draft(userId, card.collectionId) });
   } catch (error) {
     response.status(502).json({ error: error.message ?? "eBay could not revise this listing." });
   }
