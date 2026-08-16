@@ -65,6 +65,14 @@ function matchesFilter(card: SavedCollectionCard, filter: CollectionFilter) {
   return true;
 }
 
+function ebayCardActionLabel(card: SavedCollectionCard) {
+  if (card.selling?.status === "published") return "View / edit eBay listing";
+  if (card.selling?.status === "sold") return "View sold eBay listing";
+  if (card.selling?.status === "ended") return "View ended eBay listing";
+  if (card.selling?.status === "draft") return "Review eBay draft";
+  return "Sell on eBay";
+}
+
 function createDraft(card: SavedCollectionCard) {
   return { ...card.fields };
 }
@@ -1074,6 +1082,17 @@ export function CollectionView({
   const [bulkValuationError, setBulkValuationError] = useState<string | null>(
     null,
   );
+
+  const refreshCollectionAfterSelling = async () => {
+    setSellingCard(null);
+    try {
+      const response = await fetch("/api/collection");
+      const payload = (await response.json().catch(() => null)) as { cards?: SavedCollectionCard[] } | null;
+      if (response.ok && payload?.cards) onCardsChange(payload.cards);
+    } catch {
+      // The next normal collection refresh will reconcile eBay lifecycle labels.
+    }
+  };
 
   useEffect(() => {
     if (!expandedImageCard) return;
@@ -2535,7 +2554,7 @@ export function CollectionView({
                         disabled={marketBusy || soldBusy || valuationBusy || valuationSaving || bulkRefreshing || bulkApplying}
                         onClick={() => setSellingCard(card)}
                       >
-                        Sell on eBay
+                        {ebayCardActionLabel(card)}
                       </button>
                       <button
                         type="button"
@@ -2718,7 +2737,7 @@ export function CollectionView({
           </section>
         </div>
       )}
-      {sellingCard && <EbayListingDraft card={sellingCard} onClose={() => setSellingCard(null)} />}
+      {sellingCard && <EbayListingDraft card={sellingCard} onClose={() => void refreshCollectionAfterSelling()} />}
       {listingQueueOpen && <EbayListingQueue cards={cards} onClose={() => setListingQueueOpen(false)} onOpenDraft={(card) => { setListingQueueOpen(false); setSellingCard(card); }} />}
     </section>
   );
