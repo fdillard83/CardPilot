@@ -1857,8 +1857,8 @@ function App() {
             </div>
 
             <div className="scanner-flow">
-              <input className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" capture="environment" ref={frontInputRef} onChange={(event) => handleFileChange("front", event)} />
-              <input className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" capture="environment" ref={backInputRef} onChange={(event) => handleFileChange("back", event)} />
+              <input className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" ref={frontInputRef} onChange={(event) => handleFileChange("front", event)} />
+              <input className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" ref={backInputRef} onChange={(event) => handleFileChange("back", event)} />
 
               {!frontPreview ? (
                 <button className="capture-zone" type="button" disabled={isIdentifying} onClick={() => openPicker("front")}>

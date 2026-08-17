@@ -373,7 +373,11 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
   const selectedImages = draft?.listingImages ?? ["front"];
   const auctionDays = draft?.auctionDurationDays ?? 7;
   const auctionEnd = new Date(auctionReferenceTime + auctionDays * 86_400_000);
-  const referencePriceCents = draft?.listingFormat === "AUCTION" ? draft.auctionStartPriceCents ?? 99 : draft?.priceCents ?? 0;
+  const enteredFixedPrice = Number(priceInput);
+  const fixedPriceCents = Number.isFinite(enteredFixedPrice) && enteredFixedPrice >= 0
+    ? Math.round(enteredFixedPrice * 100)
+    : 0;
+  const referencePriceCents = draft?.listingFormat === "AUCTION" ? draft.auctionStartPriceCents ?? 99 : fixedPriceCents;
   const estimatedFeeCents = Math.round(referencePriceCents * 0.1325 + 30);
   const estimatedProceedsCents = Math.max(0, referencePriceCents - estimatedFeeCents);
 
@@ -409,7 +413,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
             {message && <div className="collection-status-banner ebay-setup-feedback" role="status">{message}</div>}
             <section className="ebay-listing-preview" aria-labelledby="ebay-preview-title">
               <div className="ebay-preview-images">{selectedImages.includes("front") && <img src={card.images.frontUrl} alt="Front of the card being listed" />}{selectedImages.includes("back") && card.images.backUrl && <img src={card.images.backUrl} alt="Back of the card being listed" />}</div>
-              <div><span>Listing preview</span><h3 id="ebay-preview-title">{draft.title || "Add a listing title"}</h3><strong>{draft.listingFormat === "AUCTION" ? `Starting bid ${draft.currency} ${((draft.auctionStartPriceCents ?? 99) / 100).toFixed(2)}` : `${draft.currency} ${(draft.priceCents / 100).toFixed(2)}`}</strong><p>{draft.description || "Add a description."}</p></div>
+              <div><span>Listing preview</span><h3 id="ebay-preview-title">{draft.title || "Add a listing title"}</h3><strong>{draft.listingFormat === "AUCTION" ? `Starting bid ${draft.currency} ${((draft.auctionStartPriceCents ?? 99) / 100).toFixed(2)}` : `${draft.currency} ${(fixedPriceCents / 100).toFixed(2)}`}</strong><p>{draft.description || "Add a description."}</p></div>
             </section>
             {readiness && <section className="ebay-readiness" aria-labelledby="ebay-readiness-title"><div><h3 id="ebay-readiness-title">Listing readiness</h3><p>CardPilot filled what it could from the confirmed card details. Only items still needing attention are marked below.</p></div><ul>{readiness.checks.map((check) => <li className={check.ready ? "ready" : "missing"} key={check.key}><span>{check.ready ? "✓" : "!"}</span>{check.label}</li>)}</ul></section>}
             <div className="ebay-draft-grid">

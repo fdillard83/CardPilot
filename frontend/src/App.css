@@ -2363,6 +2363,12 @@ main {
 .ebay-draft-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 
 @media (max-width: 620px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
   .ebay-draft-panel { padding: 17px; }
   .ebay-draft-grid { grid-template-columns: 1fr; }
   .ebay-listing-preview { grid-template-columns: 1fr; }
