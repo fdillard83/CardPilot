@@ -35,7 +35,7 @@ services:
       - key: EBAY_CLIENT_SECRET
         sync: false
       - key: EBAY_SELL_ENVIRONMENT
-        value: sandbox
+        value: production
       - key: EBAY_SELL_CLIENT_ID
         sync: false
       - key: EBAY_SELL_CLIENT_SECRET
