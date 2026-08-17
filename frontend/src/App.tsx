@@ -488,6 +488,15 @@ function NumberedCardField({
   );
 }
 
+type AppView = "scan" | "collection" | "admin";
+const ACTIVE_VIEW_KEY = "cardpilot.activeView";
+
+function initialAppView(): AppView {
+  if (typeof window === "undefined") return "scan";
+  const saved = window.sessionStorage.getItem(ACTIVE_VIEW_KEY);
+  return saved === "collection" || saved === "admin" ? saved : "scan";
+}
+
 function App() {
   const frontInputRef = useRef<HTMLInputElement>(null);
   const backInputRef = useRef<HTMLInputElement>(null);
@@ -554,7 +563,7 @@ function App() {
   const [pokemonCatalogConfirmationError, setPokemonCatalogConfirmationError] =
     useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<"scan" | "collection" | "admin">("scan");
+  const [view, setView] = useState<AppView>(initialAppView);
   const [collectionCards, setCollectionCards] = useState<SavedCollectionCard[]>([]);
   const [isLoadingCollection, setIsLoadingCollection] = useState(true);
   const [collectionError, setCollectionError] = useState<string | null>(null);
@@ -582,6 +591,13 @@ function App() {
   const originalBackPreview = usePreviewUrl(backFile);
   const frontPreview = preparedFrontPreview ?? originalFrontPreview;
   const backPreview = preparedBackPreview ?? originalBackPreview;
+  const activeView: AppView = view === "admin" && accountSession?.user && !accountSession.user.isAdmin
+    ? "collection"
+    : view;
+
+  useEffect(() => {
+    window.sessionStorage.setItem(ACTIVE_VIEW_KEY, activeView);
+  }, [activeView]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -1665,6 +1681,7 @@ function App() {
     } finally {
       setCollectionCards([]);
       setAccountSession({ mode: "supabase", user: null });
+      window.sessionStorage.removeItem(ACTIVE_VIEW_KEY);
       setView("scan");
       setIsAccountSettingsOpen(false);
       setIsPasswordRecovery(false);
@@ -1749,20 +1766,20 @@ function App() {
         </button>
         <nav className="topbar-nav" aria-label="CardPilot sections">
           <button
-            className={view === "scan" ? "active" : ""}
+            className={activeView === "scan" ? "active" : ""}
             type="button"
             onClick={startNewScan}
           >
             Identify
           </button>
           <button
-            className={view === "collection" ? "active" : ""}
+            className={activeView === "collection" ? "active" : ""}
             type="button"
             onClick={() => setView("collection")}
           >
             My Collection <span>{collectionCards.length}</span>
           </button>
-          {accountSession.user?.isAdmin && <button className={view === "admin" ? "active" : ""} type="button" onClick={() => setView("admin")}>Admin</button>}
+          {accountSession.user?.isAdmin && <button className={activeView === "admin" ? "active" : ""} type="button" onClick={() => setView("admin")}>Admin</button>}
           {accountSession.user && (
             <div className="account-menu">
               <small>{accountSession.user.email}</small>
@@ -1802,7 +1819,7 @@ function App() {
       )}
 
       <main id="top">
-        {view === "admin" ? <AdminDashboard /> : view === "collection" ? (
+        {activeView === "admin" ? <AdminDashboard /> : activeView === "collection" ? (
           <CollectionView
             cards={collectionCards}
             isLoading={isLoadingCollection}
