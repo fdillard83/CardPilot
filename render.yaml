@@ -2,7 +2,7 @@ services:
   - type: web
     name: cardpilot
     runtime: node
-    plan: free
+    plan: starter
     region: virginia
     rootDir: frontend
     buildCommand: npm ci --include=dev && npm run build
