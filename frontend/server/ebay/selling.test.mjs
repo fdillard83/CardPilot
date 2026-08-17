@@ -83,6 +83,8 @@ test("Sandbox setup validates a US ZIP code and builds safe test defaults", () =
   const resources = ebaySandboxSetupResources({ postalCode: "27514", shippingCostCents: 499 });
   assert.equal(resources.location.location.address.postalCode, "27514");
   assert.equal(resources.fulfillmentPolicy.shippingOptions[0].shippingServices[0].shippingCost.value, "4.99");
+  assert.equal(resources.fulfillmentPolicy.shippingOptions[0].shippingServices[0].shippingServiceCode, "USPSGround");
+  assert.equal(resources.fulfillmentPolicy.localPickup, false);
   assert.equal(resources.paymentPolicy.immediatePay, true);
   assert.equal(resources.returnPolicy.returnPeriod.value, 30);
 });
@@ -91,17 +93,20 @@ test("Production seller setup uses distinct real-account resource names", () => 
   const resources = ebaySellerSetupResources({ postalCode: "27514", shippingCostCents: 499 }, "EBAY_US", "production");
   assert.equal(resources.merchantLocationKey, "cardpilot-primary");
   assert.equal(resources.location.name, "CardPilot Inventory");
-  assert.equal(resources.fulfillmentPolicy.name, "CardPilot Shipping");
+  assert.equal(resources.fulfillmentPolicy.name, "CardPilot USPS Ground Advantage");
   assert.equal(resources.returnPolicy.name, "CardPilot Returns");
 });
 
 test("custom shipping charges create clearly named reusable policies", () => {
-  const paid = ebayShippingPolicyResource(399, "EBAY_US", "production");
-  const free = ebayShippingPolicyResource(0, "EBAY_US", "production");
-  assert.equal(paid.name, "CardPilot Shipping $3.99");
+  const paid = ebayShippingPolicyResource(399, "GROUND", "EBAY_US", "production");
+  const free = ebayShippingPolicyResource(0, "GROUND", "EBAY_US", "production");
+  assert.equal(paid.name, "CardPilot USPS Ground Advantage - Buyer Pays $3.99");
   assert.equal(paid.shippingOptions[0].shippingServices[0].shippingCost.value, "3.99");
-  assert.equal(free.name, "CardPilot Free Shipping");
+  assert.equal(free.name, "CardPilot USPS Ground Advantage - Free Shipping");
   assert.equal(free.shippingOptions[0].shippingServices[0].freeShipping, true);
+  const envelope = ebayShippingPolicyResource(125, "STANDARD_ENVELOPE", "EBAY_US", "production");
+  assert.equal(envelope.shippingOptions[0].shippingServices[0].shippingServiceCode, "US_eBayStandardEnvelope");
+  assert.equal(envelope.localPickup, false);
 });
 
 test("raw trading cards use eBay's required structured condition", () => {

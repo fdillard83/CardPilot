@@ -60,7 +60,14 @@ export function duplicateOfferId(error) {
 export const EbaySandboxSetupSchema = z.object({
   postalCode: z.string().trim().regex(/^\d{5}(?:-\d{4})?$/, "Enter a valid US ZIP code."),
   shippingCostCents: z.number().int().min(0).max(10_000),
+  shippingService: z.enum(["STANDARD_ENVELOPE", "GROUND", "PRIORITY"]).default("GROUND"),
 }).strict();
+
+const ebayShippingServices = {
+  STANDARD_ENVELOPE: { code: "US_eBayStandardEnvelope", label: "eBay Standard Envelope" },
+  GROUND: { code: "USPSGround", label: "USPS Ground Advantage" },
+  PRIORITY: { code: "USPSPriority", label: "USPS Priority Mail" },
+};
 
 export function ebaySandboxSetupResources(input, marketplaceId = "EBAY_US") {
   return ebaySellerSetupResources(input, marketplaceId, "sandbox");
@@ -68,6 +75,7 @@ export function ebaySandboxSetupResources(input, marketplaceId = "EBAY_US") {
 
 export function ebaySellerSetupResources(input, marketplaceId = "EBAY_US", environment = "sandbox") {
   const setup = EbaySandboxSetupSchema.parse(input);
+  const service = ebayShippingServices[setup.shippingService];
   const shippingCost = (setup.shippingCostCents / 100).toFixed(2);
   const production = environment === "production";
   const label = production ? "CardPilot" : "CardPilot Sandbox";
@@ -79,17 +87,20 @@ export function ebaySellerSetupResources(input, marketplaceId = "EBAY_US", envir
       location: { address: { postalCode: setup.postalCode, country: "US" } },
     },
     fulfillmentPolicy: {
-      name: `${label} Shipping`,
+      name: `${label} ${service.label}`,
       marketplaceId,
       categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }],
       handlingTime: { value: 1, unit: "DAY" },
+      localPickup: false,
+      pickupDropOff: false,
+      freightShipping: false,
       shippingOptions: [{
         optionType: "DOMESTIC",
         costType: "FLAT_RATE",
         shippingServices: [{
           sortOrder: 1,
           shippingCarrierCode: "USPS",
-          shippingServiceCode: "USPSPriorityFlatRateBox",
+          shippingServiceCode: service.code,
           shippingCost: { value: shippingCost, currency: "USD" },
           freeShipping: setup.shippingCostCents === 0,
           buyerResponsibleForShipping: setup.shippingCostCents > 0,
@@ -114,14 +125,16 @@ export function ebaySellerSetupResources(input, marketplaceId = "EBAY_US", envir
   };
 }
 
-export function ebayShippingPolicyResource(shippingCostCents, marketplaceId = "EBAY_US", environment = "sandbox") {
-  const resources = ebaySellerSetupResources({ postalCode: "00000", shippingCostCents }, marketplaceId, environment);
+export function ebayShippingPolicyResource(shippingCostCents, shippingService = "GROUND", marketplaceId = "EBAY_US", environment = "sandbox") {
+  const resources = ebaySellerSetupResources({ postalCode: "00000", shippingCostCents, shippingService }, marketplaceId, environment);
   const amount = (shippingCostCents / 100).toFixed(2);
+  const service = ebayShippingServices[shippingService];
+  const prefix = `CardPilot${environment === "sandbox" ? " Sandbox" : ""} ${service.label}`;
   return {
     ...resources.fulfillmentPolicy,
     name: shippingCostCents === 0
-      ? `CardPilot${environment === "sandbox" ? " Sandbox" : ""} Free Shipping`
-      : `CardPilot${environment === "sandbox" ? " Sandbox" : ""} Shipping $${amount}`,
+      ? `${prefix} - Free Shipping`
+      : `${prefix} - Buyer Pays $${amount}`,
   };
 }
 

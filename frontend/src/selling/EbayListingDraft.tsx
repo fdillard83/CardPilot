@@ -47,6 +47,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
   const [setup, setSetup] = useState<SellerSetup | null>(null);
   const [sandboxPostalCode, setSandboxPostalCode] = useState("");
   const [sandboxShippingCost, setSandboxShippingCost] = useState("4.99");
+  const [shippingService, setShippingService] = useState<"STANDARD_ENVELOPE" | "GROUND" | "PRIORITY">("GROUND");
   const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([]);
   const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [auctionReferenceTime] = useState(() => Date.now());
@@ -67,6 +68,11 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
         revisionDetailsDirtyRef.current = false;
         setPriceInput((draftPayload.draft.priceCents / 100).toFixed(2));
         setStatus(statusPayload);
+        const priceCents = Number(draftPayload.draft.priceCents ?? 0);
+        if (priceCents > 0 && priceCents < 2000) {
+          setShippingService("STANDARD_ENVELOPE");
+          setSandboxShippingCost("1.25");
+        }
       }
     }).catch(() => current && setError("CardPilot could not prepare this eBay draft."));
     return () => { current = false; };
@@ -234,14 +240,19 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
     if (!Number.isFinite(shippingCost) || shippingCost < 0 || shippingCost > 100) {
       setError("Enter a shipping charge from $0.00 through $100.00."); return;
     }
-    const label = shippingCost === 0 ? "free shipping" : `$${shippingCost.toFixed(2)} shipping`;
-    if (!window.confirm(`Create or select an eBay policy charging ${label} for this listing? This adds a reusable shipping policy to your ${status.environment} seller account.`)) return;
+    if (shippingService === "STANDARD_ENVELOPE" && draft.priceCents >= 2000) {
+      setError("eBay Standard Envelope is limited to eligible items priced under $20. Choose USPS Ground Advantage for this card."); return;
+    }
+    const serviceLabel = shippingService === "STANDARD_ENVELOPE" ? "eBay Standard Envelope" : shippingService === "GROUND" ? "USPS Ground Advantage" : "USPS Priority Mail";
+    const label = shippingCost === 0 ? "free shipping" : `$${shippingCost.toFixed(2)} buyer-paid shipping`;
+    if (!window.confirm(`Create or select a ${serviceLabel} policy with ${label}? Local pickup will be disabled. This policy can be reused as your account default or changed on an individual listing.`)) return;
     setBusy(true); setError(null); setMessage(null);
     try {
       const response = await fetch("/api/ebay/selling/shipping-policy", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           shippingCostCents: Math.round(shippingCost * 100),
+          shippingService,
           confirmation: status.environment === "production" ? "CREATE_PRODUCTION_SHIPPING" : "CREATE_SANDBOX_SHIPPING",
         }),
       });
@@ -250,7 +261,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
       const next = payload as SellerSetup & { selectedFulfillmentPolicyId: string };
       setSetup(next);
       update("fulfillmentPolicyId", next.selectedFulfillmentPolicyId);
-      setMessage(`${label[0].toUpperCase() + label.slice(1)} is selected. Save the draft${draft.status === "published" ? " and revise eBay" : ""} to apply it.`);
+      setMessage(`${serviceLabel} with ${label} is selected and local pickup is off. Save the draft${draft.status === "published" ? " and revise eBay" : ""} to apply it.`);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "CardPilot could not create that shipping charge."); }
     finally { setBusy(false); }
   };
@@ -432,7 +443,11 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
               {optionalDefinitions.map((definition) => <label key={definition.name}>{definition.name}{definition.values.length ? <select value={draft.aspects[definition.name]?.[0] ?? ""} onChange={(e) => updateAspect(definition.name, e.target.value)}><option value="">Optional</option>{definition.values.map((value) => <option key={value} value={value}>{value}</option>)}</select> : <input value={draft.aspects[definition.name]?.[0] ?? ""} onChange={(e) => updateAspect(definition.name, e.target.value)} />}</label>)}
               <label>Inventory location <select value={draft.merchantLocationKey} onChange={(e) => update("merchantLocationKey", e.target.value)}><option value="">Choose location</option>{setup?.locations.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
               <label>Shipping policy <select value={draft.fulfillmentPolicyId} onChange={(e) => update("fulfillmentPolicyId", e.target.value)}><option value="">Choose shipping policy</option>{setup?.fulfillmentPolicies.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
-              <div className="wide ebay-shipping-charge"><label>Buyer shipping charge <input type="text" inputMode="decimal" placeholder="4.99" value={sandboxShippingCost} onChange={(event) => setSandboxShippingCost(event.target.value)} /><small>Enter 0 for free shipping. CardPilot creates or reuses a matching eBay shipping policy.</small></label><button type="button" disabled={busy || !status.connected} onClick={() => void createShippingCharge()}>Use this shipping charge</button></div>
+              <div className="wide ebay-shipping-charge">
+                <label>Shipping method <select value={shippingService} onChange={(event) => setShippingService(event.target.value as typeof shippingService)}><option value="STANDARD_ENVELOPE">eBay Standard Envelope — lowest-cost tracked option</option><option value="GROUND">USPS Ground Advantage — protected package</option><option value="PRIORITY">USPS Priority Mail — faster, more expensive</option></select><small>CardPilot recommends Standard Envelope only for eligible cards under $20; Ground Advantage is the fallback. Local pickup is always off.</small></label>
+                <label>Buyer shipping charge <input type="text" inputMode="decimal" placeholder="4.99" value={sandboxShippingCost} onChange={(event) => setSandboxShippingCost(event.target.value)} /><small>Enter what the buyer pays, or 0 for free shipping. This is separate from the label price charged to the seller.</small></label>
+                <button type="button" disabled={busy || !status.connected} onClick={() => void createShippingCharge()}>Use this method and charge</button>
+              </div>
               <label>Payment policy <select value={draft.paymentPolicyId} onChange={(e) => update("paymentPolicyId", e.target.value)}><option value="">Choose payment policy</option>{setup?.paymentPolicies.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
               <label>Return policy <select value={draft.returnPolicyId} onChange={(e) => update("returnPolicyId", e.target.value)}><option value="">Choose return policy</option>{setup?.returnPolicies.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
             </div>

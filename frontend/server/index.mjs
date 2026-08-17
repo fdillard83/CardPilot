@@ -611,6 +611,7 @@ app.get("/api/ebay/selling/setup", async (request, response) => {
 
 const EbayShippingChargeSchema = z.object({
   shippingCostCents: z.number().int().min(0).max(10_000),
+  shippingService: z.enum(["STANDARD_ENVELOPE", "GROUND", "PRIORITY"]),
   confirmation: z.enum(["CREATE_SANDBOX_SHIPPING", "CREATE_PRODUCTION_SHIPPING"]),
 }).strict();
 
@@ -620,7 +621,7 @@ app.post("/api/ebay/selling/shipping-policy", async (request, response) => {
     const expected = ebaySellEnvironment === "production" ? "CREATE_PRODUCTION_SHIPPING" : "CREATE_SANDBOX_SHIPPING";
     if (input.confirmation !== expected) return response.status(400).json({ error: "Explicit shipping-policy confirmation is required." });
     const token = await ebaySellerAccessToken(request.cardPilotUser.id);
-    const resource = ebayShippingPolicyResource(input.shippingCostCents, ebayMarketplaceId, ebaySellEnvironment);
+    const resource = ebayShippingPolicyResource(input.shippingCostCents, input.shippingService, ebayMarketplaceId, ebaySellEnvironment);
     let setup = await loadEbaySellerSetup(token);
     let policy = setup.fulfillmentPolicies.find((item) => item.name === resource.name);
     if (!policy) {
