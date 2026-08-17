@@ -26,6 +26,7 @@ import {
 } from "./ebay/selling.mjs";
 import { CatalogCandidateGenerator } from "./identification/candidate-generator.mjs";
 import { OpenAIEvidenceEngine } from "./identification/evidence-engine.mjs";
+import { CachedEvidenceEngine } from "./identification/evidence-cache.mjs";
 import { IdentificationEngine } from "./identification/identification-engine.mjs";
 import {
   ImageIntakeError,
@@ -124,6 +125,16 @@ const valuationRecommendations = new ValuationRecommendationService({
 const correctionLogger = createCorrectionLogger({
   filePath: path.resolve(currentDirectory, "../.data/corrections.jsonl"),
 });
+
+const openaiEvidence = process.env.OPENAI_API_KEY
+  ? new CachedEvidenceEngine({
+      engine: new OpenAIEvidenceEngine({
+        openai: new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 60_000, maxRetries: 0 }),
+        model: accuracyModel,
+        fastModel,
+      }),
+    })
+  : null;
 const localCollectionStore = new CollectionStore({
   recordsFile: path.resolve(currentDirectory, "../.data/collection.json"),
   imagesDirectory: path.resolve(currentDirectory, "../.data/collection-images"),
@@ -1702,17 +1713,8 @@ app.post("/api/identify-card", async (request, response) => {
   }
 
   try {
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-      timeout: 60_000,
-      maxRetries: 0,
-    });
     const identificationEngine = new IdentificationEngine({
-      evidenceEngine: new OpenAIEvidenceEngine({
-        openai,
-        model: accuracyModel,
-        fastModel,
-      }),
+      evidenceEngine: openaiEvidence,
       candidateGenerator: new CatalogCandidateGenerator(),
       model: accuracyModel,
     });
@@ -1725,6 +1727,12 @@ app.post("/api/identify-card", async (request, response) => {
         totalDurationMs: identification.pipeline.totalDurationMs,
         stages: identification.pipeline.stages,
       }),
+    );
+    response.setHeader(
+      "Server-Timing",
+      identification.pipeline.stages
+        .map((stage) => `${stage.name};dur=${stage.durationMs}`)
+        .join(", "),
     );
     response.json({ identification });
   } catch (error) {
@@ -1916,6 +1924,31 @@ app.post("/api/ebay/image-search", async (request, response) => {
     response.status(502).json({
       error: "CardPilot could not reach eBay image search. Please try again.",
     });
+  }
+});
+
+app.post("/api/ebay/identity-search", async (request, response) => {
+  if (!ebayImageSearch) return response.status(503).json({ error: "eBay identity search is not configured." });
+  try {
+    const fields = CandidateValuesSchema.parse(request.body?.fields);
+    const identity = fields.player ?? fields.character;
+    if (!identity) return response.status(422).json({ error: "A player or Pokémon name is needed for identity search." });
+    const serialDenominator = typeof fields.serialNumber === "string"
+      ? fields.serialNumber.replace(/\s/g, "").match(/\/(\d{1,5})/)?.[1]
+      : null;
+    const query = [
+      fields.year, identity, fields.manufacturer ?? fields.brand, fields.product,
+      fields.setOrInsert, fields.cardNumber ? `#${fields.cardNumber}` : null,
+      fields.parallel, serialDenominator ? `/${serialDenominator}` : null,
+      fields.autograph === true ? "autograph" : null,
+      fields.memorabilia === true ? "relic" : null,
+      "trading card",
+    ].filter(Boolean).join(" ");
+    const result = await ebayImageSearch.searchByKeywords({ query, limit: 12 });
+    response.json({ ...result, query });
+  } catch (error) {
+    if (error instanceof ZodError) return response.status(400).json({ error: "The identity-search card details are invalid." });
+    response.status(error instanceof TypeError ? 422 : 502).json({ error: error.message ?? "CardPilot could not search eBay by card identity." });
   }
 });
 

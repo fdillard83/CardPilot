@@ -18,6 +18,7 @@ import {
   prepareCardPhoto,
 } from "./imaging/card-photo";
 import { ConfirmationEditor } from "./identification/ConfirmationEditor";
+import { rankEbayCandidates } from "./identification/ebay-candidate-ranking";
 import {
   cardKindFromFields,
   fieldDefinitions,
@@ -506,6 +507,7 @@ function App() {
     backImage: string | null;
   } | null>(null);
   const ebayRequestIdRef = useRef(0);
+  const ebayIdentityRequestIdRef = useRef(0);
   const ebayItemRequestIdRef = useRef(0);
   const pokemonCatalogRequestIdRef = useRef(0);
   const identificationRequestIdRef = useRef(0);
@@ -527,6 +529,7 @@ function App() {
   const [ebaySearch, setEbaySearch] =
     useState<EbayImageSearchResult | null>(null);
   const [isSearchingEbay, setIsSearchingEbay] = useState(false);
+  const [isSearchingEbayIdentity, setIsSearchingEbayIdentity] = useState(false);
   const [ebayError, setEbayError] = useState<string | null>(null);
   const [selectedEbayCandidateId, setSelectedEbayCandidateId] = useState<
     string | null
@@ -571,6 +574,7 @@ function App() {
   const [isSavingCollection, setIsSavingCollection] = useState(false);
   const [identificationProgress, setIdentificationProgress] = useState("");
   const [identificationElapsedSeconds, setIdentificationElapsedSeconds] = useState(0);
+  const [identificationCompletedMs, setIdentificationCompletedMs] = useState<number | null>(null);
   const [accountSession, setAccountSession] = useState<AccountSession | null>(null);
   const [accountSessionError, setAccountSessionError] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -824,6 +828,7 @@ function App() {
     setSelectedCandidateId(null);
     setApplyingCandidateId(null);
     ebayRequestIdRef.current += 1;
+    ebayIdentityRequestIdRef.current += 1;
     setEbaySearch(null);
     setIsSearchingEbay(false);
     setEbayError(null);
@@ -883,10 +888,10 @@ function App() {
       }
 
       if (requestId !== ebayRequestIdRef.current) return;
-      setEbaySearch({
-        marketplaceId: payload.marketplaceId ?? "EBAY_US",
-        total: payload.total ?? payload.candidates.length,
-        candidates: payload.candidates,
+      setEbaySearch((existing) => {
+        const candidates = [...payload.candidates!, ...(existing?.candidates ?? [])]
+          .filter((candidate, index, all) => all.findIndex((item) => item.itemId === candidate.itemId) === index);
+        return { marketplaceId: payload.marketplaceId ?? existing?.marketplaceId ?? "EBAY_US", total: candidates.length, candidates };
       });
     } catch (caughtError) {
       if (requestId !== ebayRequestIdRef.current) return;
@@ -899,6 +904,29 @@ function App() {
       if (requestId === ebayRequestIdRef.current) {
         setIsSearchingEbay(false);
       }
+    }
+  };
+
+  const loadEbayIdentityCandidates = async (cardIdentification: CardIdentification) => {
+    const requestId = ++ebayIdentityRequestIdRef.current;
+    setIsSearchingEbayIdentity(true);
+    try {
+      const response = await fetch("/api/ebay/identity-search", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: identificationValues(cardIdentification) }),
+      });
+      const payload = (await response.json().catch(() => null)) as (Partial<EbayImageSearchResult> & { error?: string }) | null;
+      if (!response.ok || !Array.isArray(payload?.candidates)) throw new Error(payload?.error ?? "Identity search was unavailable.");
+      if (requestId !== ebayIdentityRequestIdRef.current) return;
+      setEbaySearch((existing) => {
+        const candidates = [...(existing?.candidates ?? []), ...payload.candidates!]
+          .filter((candidate, index, all) => all.findIndex((item) => item.itemId === candidate.itemId) === index);
+        return { marketplaceId: existing?.marketplaceId ?? payload.marketplaceId ?? "EBAY_US", total: candidates.length, candidates };
+      });
+    } catch {
+      // Image matches remain available when the optional keyword corroboration degrades.
+    } finally {
+      if (requestId === ebayIdentityRequestIdRef.current) setIsSearchingEbayIdentity(false);
     }
   };
 
@@ -961,6 +989,7 @@ function App() {
 
     setIdentificationProgress("Preparing card photos");
     setIdentificationElapsedSeconds(0);
+    setIdentificationCompletedMs(null);
     setIsIdentifying(true);
     setError(null);
     setIdentification(null);
@@ -968,6 +997,7 @@ function App() {
     setSelectedCandidateId(null);
     setApplyingCandidateId(null);
     ebayRequestIdRef.current += 1;
+    ebayIdentityRequestIdRef.current += 1;
     setEbaySearch(null);
     setIsSearchingEbay(false);
     setEbayError(null);
@@ -1021,13 +1051,16 @@ function App() {
 
       originalIdentificationRef.current = payload.identification;
       setIdentification(payload.identification);
+      setIdentificationCompletedMs(payload.identification.pipeline.totalDurationMs);
       setResolution(null);
       if (isUnsupportedIdentification(payload.identification)) {
         ebayRequestIdRef.current += 1;
+        ebayIdentityRequestIdRef.current += 1;
         setEbaySearch(null);
         setIsSearchingEbay(false);
         clearPokemonCatalogState();
       } else {
+        void loadEbayIdentityCandidates(payload.identification);
         void loadPokemonCatalogCandidates(payload.identification);
       }
     } catch (caughtError) {
@@ -1058,8 +1091,10 @@ function App() {
     setSelectedCandidateId(null);
     setApplyingCandidateId(null);
     ebayRequestIdRef.current += 1;
+    ebayIdentityRequestIdRef.current += 1;
     setEbaySearch(null);
     setIsSearchingEbay(false);
+    setIsSearchingEbayIdentity(false);
     setEbayError(null);
     ebayItemRequestIdRef.current += 1;
     setSelectedEbayCandidateId(null);
@@ -1075,6 +1110,7 @@ function App() {
     setIsIdentifying(false);
     setIdentificationProgress("");
     setIdentificationElapsedSeconds(0);
+    setIdentificationCompletedMs(null);
     setError(null);
   };
 
@@ -1431,6 +1467,12 @@ function App() {
   const currentFieldValues = identification
     ? identificationValues(identification)
     : null;
+  const rankedEbayCandidates = useMemo(
+    () => currentFieldValues && ebaySearch
+      ? rankEbayCandidates(currentFieldValues, ebaySearch.candidates)
+      : ebaySearch?.candidates ?? [],
+    [currentFieldValues, ebaySearch],
+  );
   const currentCardKind = currentFieldValues
     ? cardKindFromFields(currentFieldValues)
     : "unknown";
@@ -1932,6 +1974,18 @@ function App() {
               </div>
             </div>
 
+            {!isUnsupportedIdentification(identification) && (
+              <div className="collection-status-banner" role="status">
+                {(isSearchingEbay || isSearchingEbayIdentity || isSearchingPokemonCatalog) && <span className="spinner" />}
+                <span>
+                  <strong>Fast identification ready{identificationCompletedMs !== null ? ` in ${(identificationCompletedMs / 1000).toFixed(1)} seconds` : ""}.</strong>{" "}
+                  {isSearchingEbay || isSearchingEbayIdentity || isSearchingPokemonCatalog
+                    ? "CardPilot is still ranking visual and catalog matches in the background."
+                    : "Visual and available catalog matching is complete; review uncertain details before confirming."}
+                </span>
+              </div>
+            )}
+
             {selectedCandidateId && (
               <div className="catalog-selection" role="status">
                 <CheckIcon />
@@ -2192,9 +2246,9 @@ function App() {
                       card, parallel, or variation.
                     </p>
                   </div>
-                  {ebaySearch && ebaySearch.candidates.length > 0 && (
+                  {ebaySearch && rankedEbayCandidates.length > 0 && (
                     <span className="ebay-result-count">
-                      {ebaySearch.candidates.length} visual matches
+                      {rankedEbayCandidates.length} identity-ranked visual matches
                     </span>
                   )}
                 </div>
@@ -2210,10 +2264,10 @@ function App() {
                       Try eBay again
                     </button>
                   </div>
-                ) : ebaySearch?.candidates.length ? (
+                ) : rankedEbayCandidates.length ? (
                   <>
                     <div className="ebay-match-grid">
-                      {ebaySearch.candidates.map((candidate) => (
+                      {rankedEbayCandidates.map((candidate) => (
                         <EbayMatchCard
                           key={candidate.id}
                           candidate={candidate}

@@ -15,6 +15,9 @@ Rules:
 - Treat pixels as the primary source of truth. Transcribe useful words and digits exactly as printed and say where each observation appears.
 - Before assigning semantic fields, list literal visibleMarks and classify each mark by its printed role. A commemorative or anniversary logo is not an issue year, product, set, insert, or card number.
 - Record visualFeatures such as border color, foil pattern, frame layout, and reflective finish without naming a parallel unless the evidence supports that name.
+- Describe the dominant border/frame color, secondary accent color, and repeatable surface pattern separately. Use normalized color names such as red, blue, green, gold, silver, black, orange, purple, pink, aqua, teal, or rainbow.
+- Distinguish stable printed color from glare: a color covering symmetric borders or a repeated design is stronger evidence than a bright reflection in one area. Note uncertainty caused by sleeves, white balance, reflections, or viewing angle.
+- Treat the combination of exact serial denominator, border color, foil pattern, and printed parallel text as a visual fingerprint. A denominator that agrees with a known candidate is strong corroboration, but color alone must never name a parallel.
 - Inspect every short numeric mark character by character, especially anniversary logos, years, card numbers, and serial numbering. Record each character independently in numericReadings before interpreting what the number means.
 - When a serial stamp is visible, transcribe the collector's exact numerator and denominator, including leading zeroes (for example, 023/099). If only a print-run denominator such as /99 is supported, preserve it as incomplete and never invent the missing numerator.
 - Compare the full image with every supplied detail crop. The crop is an enlarged view of the same card, not a separate card.
@@ -95,7 +98,7 @@ export class OpenAIEvidenceEngine {
       model: selectedModel,
       store: false,
       reasoning: { effort: intake.backImage ? "medium" : "none" },
-      max_output_tokens: intake.backImage ? 6_000 : 3_500,
+      max_output_tokens: intake.backImage ? 4_800 : 2_800,
       input: [
         { role: "system", content: evidencePrompt },
         { role: "user", content: createUserContent(intake) },

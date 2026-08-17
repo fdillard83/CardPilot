@@ -442,7 +442,7 @@ function straightenCard(
 
 export async function prepareCardPhoto(
   file: File,
-  maxDimension = 2400,
+  maxDimension = 1900,
 ): Promise<PreparedCardPhoto> {
   if (typeof createImageBitmap !== "function" || file.type === "image/gif") {
     return { image: await fileToDataUrl(file), normalized: false };
@@ -462,7 +462,7 @@ export async function prepareCardPhoto(
     context.drawImage(bitmap, 0, 0, source.width, source.height);
     const corners = detectCardQuad(source);
     const normalized = corners
-      ? straightenCard(source, corners, Math.min(maxDimension, 2200))
+      ? straightenCard(source, corners, Math.min(maxDimension, 1900))
       : null;
     if (normalized) {
       return { image: normalized.toDataURL("image/jpeg", 0.92), normalized: true };
@@ -486,20 +486,14 @@ export async function createCardDetailImages(
   try {
     const imageBlob = await (await fetch(imageDataUrl)).blob();
     bitmap = await createImageBitmap(imageBlob);
-    const cropWidth = Math.max(1, Math.round(bitmap.width * 0.55));
-    const cropHeight = Math.max(1, Math.round(bitmap.height * 0.55));
+    const cropWidth = bitmap.width;
+    const cropHeight = Math.max(1, Math.round(bitmap.height * 0.58));
     const zones = [
-      { label: "top-left", x: 0, y: 0 },
-      { label: "top-right", x: bitmap.width - cropWidth, y: 0 },
-      { label: "bottom-left", x: 0, y: bitmap.height - cropHeight },
-      {
-        label: "bottom-right",
-        x: bitmap.width - cropWidth,
-        y: bitmap.height - cropHeight,
-      },
+      { label: "upper detail band", x: 0, y: 0 },
+      { label: "lower detail band", x: 0, y: bitmap.height - cropHeight },
     ];
     return zones.flatMap((zone) => {
-      const scale = Math.min(2, 960 / Math.max(cropWidth, cropHeight));
+      const scale = Math.min(1.5, 1200 / Math.max(cropWidth, cropHeight));
       const canvas = document.createElement("canvas");
       canvas.width = Math.max(1, Math.round(cropWidth * scale));
       canvas.height = Math.max(1, Math.round(cropHeight * scale));
@@ -518,7 +512,7 @@ export async function createCardDetailImages(
         canvas.width,
         canvas.height,
       );
-      return [{ label: zone.label, image: canvas.toDataURL("image/jpeg", 0.88) }];
+      return [{ label: zone.label, image: canvas.toDataURL("image/jpeg", 0.9) }];
     });
   } catch {
     return [];
