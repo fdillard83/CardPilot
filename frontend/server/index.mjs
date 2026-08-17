@@ -24,7 +24,7 @@ import {
   encryptSellerToken,
   inventoryConditionForCard,
 } from "./ebay/selling.mjs";
-import { CatalogCandidateGenerator } from "./identification/candidate-generator.mjs";
+import { CatalogCandidateGenerator, RemoteCatalogCandidateGenerator } from "./identification/candidate-generator.mjs";
 import { OpenAIEvidenceEngine } from "./identification/evidence-engine.mjs";
 import { CachedEvidenceEngine } from "./identification/evidence-cache.mjs";
 import { IdentificationEngine } from "./identification/identification-engine.mjs";
@@ -47,7 +47,9 @@ import {
   PokemonTcgClient,
 } from "./pokemon-tcg/client.mjs";
 import { PokemonCatalogSearchService } from "./pokemon-tcg/catalog-search.mjs";
-import { CandidateValuesSchema } from "./identification/contracts.mjs";
+import { CandidateValuesSchema, CardIdentificationResultSchema } from "./identification/contracts.mjs";
+import { verifyCandidates } from "./identification/verification-engine.mjs";
+import { TheCardCatalogClient } from "./the-card-api/catalog-client.mjs";
 import {
   createSupabaseServices,
   supabaseConfiguration,
@@ -114,6 +116,13 @@ const soldComps = theCardApiKey
       cardApiClient: new TheCardApiClient({ apiKey: theCardApiKey }),
     })
   : null;
+const theCardCatalog = theCardApiKey
+  ? new TheCardCatalogClient({ apiKey: theCardApiKey })
+  : null;
+const remoteCatalogCandidates = new RemoteCatalogCandidateGenerator({
+  client: theCardCatalog,
+  fallback: new CatalogCandidateGenerator(),
+});
 const pokemonTcgApiKey = process.env.POKEMON_TCG_API_KEY?.trim() || null;
 const pokemonCatalog = new PokemonCatalogSearchService({
   client: new PokemonTcgClient({ apiKey: pokemonTcgApiKey }),
@@ -181,6 +190,7 @@ app.get("/api/health", (_request, response) => {
       ebaySellingEnvironment: ebaySellEnvironment,
       activeMarketConfigured: ebayConfigured,
       soldCompsConfigured: Boolean(soldComps),
+      theCardCatalogConfigured: Boolean(theCardCatalog),
       pokemonCatalogAvailable: true,
       pokemonTcgApiKeyConfigured: Boolean(pokemonTcgApiKey),
       accountsConfigured: Boolean(cloudServices),
@@ -1843,6 +1853,19 @@ app.post("/api/pokemon/catalog-search", async (request, response) => {
       error:
         "The Pokémon catalog is temporarily unavailable. CardPilot identification and eBay pricing still work.",
     });
+  }
+});
+
+app.post("/api/card-catalog/candidates", async (request, response) => {
+  if (!theCardCatalog) return response.status(503).json({ error: "The Card API catalog is not configured." });
+  try {
+    const identification = CardIdentificationResultSchema.parse(request.body?.identification);
+    const candidates = await remoteCatalogCandidates.generate(identification);
+    const verification = verifyCandidates(identification, candidates);
+    response.json({ candidateMatches: verification.candidateMatches });
+  } catch (error) {
+    if (error instanceof ZodError) return response.status(400).json({ error: "The catalog candidate request is invalid." });
+    response.status(502).json({ error: error.message ?? "The card catalog is temporarily unavailable." });
   }
 });
 

@@ -508,6 +508,7 @@ function App() {
   } | null>(null);
   const ebayRequestIdRef = useRef(0);
   const ebayIdentityRequestIdRef = useRef(0);
+  const cardCatalogRequestIdRef = useRef(0);
   const ebayItemRequestIdRef = useRef(0);
   const pokemonCatalogRequestIdRef = useRef(0);
   const identificationRequestIdRef = useRef(0);
@@ -530,6 +531,7 @@ function App() {
     useState<EbayImageSearchResult | null>(null);
   const [isSearchingEbay, setIsSearchingEbay] = useState(false);
   const [isSearchingEbayIdentity, setIsSearchingEbayIdentity] = useState(false);
+  const [isSearchingCardCatalog, setIsSearchingCardCatalog] = useState(false);
   const [ebayError, setEbayError] = useState<string | null>(null);
   const [selectedEbayCandidateId, setSelectedEbayCandidateId] = useState<
     string | null
@@ -829,6 +831,7 @@ function App() {
     setApplyingCandidateId(null);
     ebayRequestIdRef.current += 1;
     ebayIdentityRequestIdRef.current += 1;
+    cardCatalogRequestIdRef.current += 1;
     setEbaySearch(null);
     setIsSearchingEbay(false);
     setEbayError(null);
@@ -930,6 +933,32 @@ function App() {
     }
   };
 
+  const loadCardCatalogCandidates = async (cardIdentification: CardIdentification) => {
+    if (cardKindFromFields(identificationValues(cardIdentification)) !== "sports") return;
+    const requestId = ++cardCatalogRequestIdRef.current;
+    setIsSearchingCardCatalog(true);
+    try {
+      const response = await fetch("/api/card-catalog/candidates", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identification: cardIdentification }),
+      });
+      const payload = (await response.json().catch(() => null)) as { candidateMatches?: CardIdentification["candidateMatches"]; error?: string } | null;
+      if (!response.ok || !Array.isArray(payload?.candidateMatches)) throw new Error(payload?.error ?? "Catalog verification was unavailable.");
+      if (requestId !== cardCatalogRequestIdRef.current || !payload.candidateMatches.length) return;
+      setIdentification((current) => current ? {
+        ...current,
+        candidateMatches: [...payload.candidateMatches!, ...current.candidateMatches]
+          .filter((candidate, index, all) => all.findIndex((item) => item.id === candidate.id) === index)
+          .sort((left, right) => right.matchConfidence - left.matchConfidence)
+          .slice(0, 5),
+      } : current);
+    } catch {
+      // The visible-evidence result and other candidate sources remain available.
+    } finally {
+      if (requestId === cardCatalogRequestIdRef.current) setIsSearchingCardCatalog(false);
+    }
+  };
+
   const loadPokemonCatalogCandidates = async (
     cardIdentification: CardIdentification,
   ) => {
@@ -998,6 +1027,7 @@ function App() {
     setApplyingCandidateId(null);
     ebayRequestIdRef.current += 1;
     ebayIdentityRequestIdRef.current += 1;
+    cardCatalogRequestIdRef.current += 1;
     setEbaySearch(null);
     setIsSearchingEbay(false);
     setEbayError(null);
@@ -1056,11 +1086,13 @@ function App() {
       if (isUnsupportedIdentification(payload.identification)) {
         ebayRequestIdRef.current += 1;
         ebayIdentityRequestIdRef.current += 1;
+        cardCatalogRequestIdRef.current += 1;
         setEbaySearch(null);
         setIsSearchingEbay(false);
         clearPokemonCatalogState();
       } else {
         void loadEbayIdentityCandidates(payload.identification);
+        void loadCardCatalogCandidates(payload.identification);
         void loadPokemonCatalogCandidates(payload.identification);
       }
     } catch (caughtError) {
@@ -1092,9 +1124,11 @@ function App() {
     setApplyingCandidateId(null);
     ebayRequestIdRef.current += 1;
     ebayIdentityRequestIdRef.current += 1;
+    cardCatalogRequestIdRef.current += 1;
     setEbaySearch(null);
     setIsSearchingEbay(false);
     setIsSearchingEbayIdentity(false);
+    setIsSearchingCardCatalog(false);
     setEbayError(null);
     ebayItemRequestIdRef.current += 1;
     setSelectedEbayCandidateId(null);
@@ -1976,10 +2010,10 @@ function App() {
 
             {!isUnsupportedIdentification(identification) && (
               <div className="collection-status-banner" role="status">
-                {(isSearchingEbay || isSearchingEbayIdentity || isSearchingPokemonCatalog) && <span className="spinner" />}
+                {(isSearchingEbay || isSearchingEbayIdentity || isSearchingCardCatalog || isSearchingPokemonCatalog) && <span className="spinner" />}
                 <span>
                   <strong>Fast identification ready{identificationCompletedMs !== null ? ` in ${(identificationCompletedMs / 1000).toFixed(1)} seconds` : ""}.</strong>{" "}
-                  {isSearchingEbay || isSearchingEbayIdentity || isSearchingPokemonCatalog
+                  {isSearchingEbay || isSearchingEbayIdentity || isSearchingCardCatalog || isSearchingPokemonCatalog
                     ? "CardPilot is still ranking visual and catalog matches in the background."
                     : "Visual and available catalog matching is complete; review uncertain details before confirming."}
                 </span>

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fieldKeys } from "./contracts.mjs";
-import { CatalogCandidateGenerator } from "./candidate-generator.mjs";
+import { CatalogCandidateGenerator, RemoteCatalogCandidateGenerator } from "./candidate-generator.mjs";
 
 function field(value) {
   return {
@@ -57,4 +57,19 @@ test("unrelated players do not receive the Nolan catalog records", async () => {
     extraction("Shohei Ohtani"),
   );
   assert.deepEqual(candidates, []);
+});
+
+test("remote catalog candidates preserve permanent IDs and print runs", async () => {
+  const observed = extraction("Edgar Martinez");
+  observed.fields.year = field("2025");
+  observed.fields.product = field("Topps Tribute");
+  observed.fields.cardNumber = field("TA-EM");
+  observed.fields.autograph = field(true);
+  const generator = new RemoteCatalogCandidateGenerator({
+    client: { searchCards: async () => ({ cards: [{ ucid: "UC-EDGAR-1", subject: "Edgar Martinez", sport: "Baseball", year: 2025, manufacturer: "Topps", setName: "2025 Topps Tribute Autographs", parentSetName: "2025 Topps Tribute", cardNumber: "TA-EM", parallel: "Orange", isRookie: false, isAuto: true, isRelic: false, printRun: 25 }] }) },
+  });
+  const candidates = await generator.generate(observed);
+  assert.equal(candidates[0].catalogRecordId, "UC-EDGAR-1");
+  assert.equal(candidates[0].values.parallel, "Orange");
+  assert.equal(candidates[0].values.serialNumber, "/25");
 });

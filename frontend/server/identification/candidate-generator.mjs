@@ -107,6 +107,85 @@ export class CatalogCandidateGenerator {
   }
 }
 
+function catalogQuery(extraction) {
+  const fields = extraction.fields;
+  return [
+    fields.player.value,
+    fields.parentSetName?.value,
+    fields.product.value,
+    fields.setOrInsert.value,
+    fields.parallel.value,
+  ].filter(Boolean).join(" ");
+}
+
+function remoteCandidate(card) {
+  const values = Object.fromEntries(fieldKeys.map((field) => [field, null]));
+  Object.assign(values, {
+    category: "Sports",
+    player: card.subject,
+    sport: card.sport,
+    year: card.year === null ? null : String(card.year),
+    manufacturer: card.manufacturer,
+    product: card.parentSetName ?? card.setName,
+    setOrInsert: card.parentSetName ? card.setName : null,
+    cardNumber: card.cardNumber,
+    rookieStatus: card.isRookie,
+    parallel: card.parallel,
+    serialNumber: card.printRun === null ? null : `/${card.printRun}`,
+    autograph: card.isAuto,
+    memorabilia: card.isRelic,
+  });
+  return {
+    id: `the-card-api-${card.ucid}`,
+    label: [card.year, card.setName, card.subject, card.cardNumber ? `#${card.cardNumber}` : null, card.printRun ? `/${card.printRun}` : null].filter(Boolean).join(" "),
+    source: "catalog",
+    catalogRecordId: card.ucid,
+    values,
+    plausibility: 0.84,
+    basis: "The Card API checklist candidate matched from structured player, set, card-number, parallel, and print-run data.",
+  };
+}
+
+export class RemoteCatalogCandidateGenerator {
+  constructor({ client, fallback = new CatalogCandidateGenerator(), now = Date.now, cacheDurationMs = 60 * 60 * 1000 } = {}) {
+    this.client = client;
+    this.fallback = fallback;
+    this.now = now;
+    this.cacheDurationMs = cacheDurationMs;
+    this.cache = new Map();
+  }
+
+  async generate(extraction) {
+    if (!this.client || extraction.fields.character?.value || !extraction.fields.player.value) {
+      return this.fallback.generate(extraction);
+    }
+    const query = catalogQuery(extraction);
+    const year = Number(extraction.fields.year.value);
+    const search = {
+      query,
+      sport: extraction.fields.sport.value,
+      year: Number.isInteger(year) && year >= 1800 && year <= 2200 ? year : null,
+      cardNumber: extraction.fields.cardNumber.value,
+      isAuto: extraction.fields.autograph.value === true ? true : null,
+      isRookie: extraction.fields.rookieStatus.value === true ? true : null,
+      limit: 5,
+    };
+    const key = JSON.stringify(search);
+    const cached = this.cache.get(key);
+    if (cached && cached.expiresAt > this.now()) return structuredClone(cached.candidates);
+    try {
+      const result = await this.client.searchCards(search);
+      const candidates = result.cards.map(remoteCandidate);
+      if (!candidates.length) return this.fallback.generate(extraction);
+      this.cache.set(key, { candidates: structuredClone(candidates), expiresAt: this.now() + this.cacheDurationMs });
+      return candidates;
+    } catch (error) {
+      console.warn("The Card API catalog search degraded; using local candidates.", error?.message ?? error);
+      return this.fallback.generate(extraction);
+    }
+  }
+}
+
 export function createProvisionalCandidate(extraction) {
   const values = Object.fromEntries(
     fieldKeys.map((field) => [field, extraction.fields[field].value]),
