@@ -1940,7 +1940,7 @@ main {
 
 .collection-toolbar {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(150px, 0.25fr) minmax(170px, 0.3fr);
+  grid-template-columns: minmax(240px, 1fr) repeat(3, minmax(150px, 0.28fr));
   gap: 12px;
   margin-top: 22px;
   padding: 15px;
@@ -2550,6 +2550,18 @@ main {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.collection-card-details-toggle {
+  min-height: 38px;
+  border: 1px solid rgba(183, 238, 79, 0.3);
+  border-radius: 10px;
+  color: var(--lime);
+  background: rgba(183, 238, 79, 0.05);
+  font: inherit;
+  font-size: 9px;
+  font-weight: 850;
+  cursor: pointer;
 }
 
 .collection-card-actions button {

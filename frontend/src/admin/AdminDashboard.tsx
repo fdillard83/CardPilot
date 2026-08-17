@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type Overview = {
   totals: { users: number; cards: number; activeListings: number; activeListingValueCents: number; soldCount: number; soldGrossCents: number; currency: string };
@@ -9,9 +9,38 @@ const money = (cents: number) => new Intl.NumberFormat("en-US", { style: "curren
 export function AdminDashboard() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { void fetch("/api/admin/overview").then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(body.error); setOverview(body); }).catch((caught) => setError(caught instanceof Error ? caught.message : "Could not load the dashboard.")); }, []);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
+
+  const loadOverview = useCallback(async (refresh = false) => {
+    if (refresh) setIsRefreshing(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/admin/overview", { cache: "no-store" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error);
+      setOverview(body);
+      setRefreshedAt(new Date());
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not load the dashboard.");
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let current = true;
+    void fetch("/api/admin/overview", { cache: "no-store" }).then(async (response) => {
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error);
+      if (current) { setOverview(body); setRefreshedAt(new Date()); }
+    }).catch((caught) => {
+      if (current) setError(caught instanceof Error ? caught.message : "Could not load the dashboard.");
+    });
+    return () => { current = false; };
+  }, []);
   return <section className="collection-section">
-    <div className="collection-heading"><div><span>Private administration</span><h1>CardPilot activity</h1><p>Account-level totals only. Customer card images and private listing details are not displayed here.</p></div></div>
+    <div className="collection-heading"><div><span>Private administration</span><h1>CardPilot activity</h1><p>Account-level totals only. Customer card images and private listing details are not displayed here.</p>{refreshedAt && <small>Updated {refreshedAt.toLocaleString()}</small>}</div><button type="button" disabled={isRefreshing} onClick={() => void loadOverview(true)}>{isRefreshing ? "Refreshing..." : "Refresh dashboard"}</button></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {!overview && !error && <div className="collection-empty"><span className="spinner" /> Loading account activity...</div>}
     {overview && <>

@@ -47,6 +47,7 @@ type CollectionFilter =
   | "sold"
   | "unvalued"
   | "stale";
+type CollectionSort = "newest" | "oldest" | "value-high" | "value-low" | "title-az" | "title-za";
 
 function searchableText(card: SavedCollectionCard) {
   return Object.values(card.fields)
@@ -1021,6 +1022,8 @@ export function CollectionView({
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
   const [filter, setFilter] = useState<CollectionFilter>("all");
+  const [sort, setSort] = useState<CollectionSort>("newest");
+  const [expandedDetailIds, setExpandedDetailIds] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<FieldKey, FieldValue> | null>(null);
   const [gradingDraft, setGradingDraft] = useState<GradingProfile | null>(null);
@@ -1139,13 +1142,27 @@ export function CollectionView({
 
   const filteredCards = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    return cards.filter(
+    const matching = cards.filter(
       (card) =>
         (!normalizedQuery || searchableText(card).includes(normalizedQuery)) &&
         (category === "all" || cardCategoryLabel(card.fields) === category) &&
         matchesFilter(card, filter),
     );
-  }, [cards, category, filter, query]);
+    return matching.sort((left, right) => {
+      if (sort === "oldest") return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+      if (sort === "title-az") return left.title.localeCompare(right.title);
+      if (sort === "title-za") return right.title.localeCompare(left.title);
+      if (sort === "value-high" || sort === "value-low") {
+        const leftValue = left.confirmedValuation?.amountCents;
+        const rightValue = right.confirmedValuation?.amountCents;
+        if (leftValue == null && rightValue == null) return left.title.localeCompare(right.title);
+        if (leftValue == null) return 1;
+        if (rightValue == null) return -1;
+        return sort === "value-high" ? rightValue - leftValue : leftValue - rightValue;
+      }
+      return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+    });
+  }, [cards, category, filter, query, sort]);
 
   const closeValuationPanel = () => {
     valuationRequestIdRef.current += 1;
@@ -2180,6 +2197,17 @@ export function CollectionView({
             <option value="stale">Pricing out of date</option>
           </select>
         </label>
+        <label>
+          <span>Sort order</span>
+          <select value={sort} onChange={(event) => setSort(event.target.value as CollectionSort)}>
+            <option value="newest">Newest added</option>
+            <option value="oldest">Oldest added</option>
+            <option value="value-high">Value: high to low</option>
+            <option value="value-low">Value: low to high</option>
+            <option value="title-az">Title: A to Z</option>
+            <option value="title-za">Title: Z to A</option>
+          </select>
+        </label>
       </div>
 
       {(error || actionError) && (
@@ -2215,6 +2243,7 @@ export function CollectionView({
             const isMarketOpen = marketCardId === card.collectionId;
             const isSoldOpen = soldCardId === card.collectionId;
             const isValuationOpen = valuationCardId === card.collectionId;
+            const isDetailsExpanded = expandedDetailIds.includes(card.collectionId);
             return (
               <article
                 className={`collection-card${isMarketOpen || isSoldOpen || isValuationOpen ? " collection-card-expanded" : ""}`}
@@ -2473,7 +2502,7 @@ export function CollectionView({
                             )}
                           </strong>
                         </div>
-                        <div>
+                        {isDetailsExpanded && <div>
                           <span
                             className={`market-confidence market-confidence-${card.confirmedValuation.confidence}`}
                           >
@@ -2482,12 +2511,12 @@ export function CollectionView({
                           {valuationIsStale(card) && (
                             <span className="stale-value-badge">Refresh recommended</span>
                           )}
-                        </div>
-                        <small>
+                        </div>}
+                        {isDetailsExpanded && <small>
                           {valuationMethodLabel(card.confirmedValuation.method)}
                           {card.confirmedValuation.userAdjusted ? " · Adjusted by collector" : ""}
                           {` · Saved ${new Date(card.confirmedValuation.valuedAt).toLocaleDateString()}`}
-                        </small>
+                        </small>}
                       </div>
                     ) : (
                       <div className="collection-card-value collection-card-value-empty">
@@ -2495,9 +2524,28 @@ export function CollectionView({
                           <span>Saved value</span>
                           <strong>Not valued yet</strong>
                         </div>
-                        <small>Check current pricing and confirm a value.</small>
+                        {isDetailsExpanded && <small>Check current pricing and confirm a value.</small>}
                       </div>
                     )}
+                    {card.selling && card.selling.status !== "draft" && (
+                      <div className="collection-card-value">
+                        <div><span>eBay status</span><strong>{card.selling.status === "published" ? "Active" : card.selling.status[0].toUpperCase() + card.selling.status.slice(1)}</strong></div>
+                        {isDetailsExpanded && card.selling.status === "published" && card.selling.publishedAt && <small>Active since {new Date(card.selling.publishedAt).toLocaleString()}</small>}
+                        {isDetailsExpanded && card.selling.status === "sold" && card.selling.soldAmountCents !== null && <small>Sold for {formatPrice(card.selling.soldAmountCents, card.selling.soldCurrency ?? "USD")}</small>}
+                        {isDetailsExpanded && card.selling.listingUrl && <a href={card.selling.listingUrl} target="_blank" rel="noreferrer">View on eBay</a>}
+                      </div>
+                    )}
+                    <button
+                      className="collection-card-details-toggle"
+                      type="button"
+                      aria-expanded={isDetailsExpanded}
+                      onClick={() => setExpandedDetailIds((current) => current.includes(card.collectionId)
+                        ? current.filter((id) => id !== card.collectionId)
+                        : [...current, card.collectionId])}
+                    >
+                      {isDetailsExpanded ? "Hide card details" : "View card details and actions"}
+                    </button>
+                    {isDetailsExpanded && <>
                     <dl>
                       {cardKindFromFields(card.fields) === "pokemon" ? (
                         <>
@@ -2540,14 +2588,6 @@ export function CollectionView({
                       {card.fields.memorabilia === true && <span>Memorabilia</span>}
                     </div>
                     <small>Updated {new Date(card.updatedAt).toLocaleDateString()}</small>
-                    {card.selling && card.selling.status !== "draft" && (
-                      <div className="collection-card-value">
-                        <div><span>eBay status</span><strong>{card.selling.status === "published" ? "Active" : card.selling.status[0].toUpperCase() + card.selling.status.slice(1)}</strong></div>
-                        {card.selling.status === "published" && card.selling.publishedAt && <small>Active since {new Date(card.selling.publishedAt).toLocaleString()}</small>}
-                        {card.selling.status === "sold" && card.selling.soldAmountCents !== null && <small>Sold for {formatPrice(card.selling.soldAmountCents, card.selling.soldCurrency ?? "USD")}</small>}
-                        {card.selling.listingUrl && <a href={card.selling.listingUrl} target="_blank" rel="noreferrer">View on eBay</a>}
-                      </div>
-                    )}
                     <div className="collection-card-actions">
                       <button
                         type="button"
@@ -2630,6 +2670,7 @@ export function CollectionView({
                         {busyId === card.collectionId ? "Removing..." : "Remove"}
                       </button>
                     </div>
+                    </>}
                   </div>
                 )}
                 {isMarketOpen && !isEditing && (
