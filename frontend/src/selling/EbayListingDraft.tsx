@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { SavedCollectionCard } from "../identification/types";
+import { cardKindFromFields, type SavedCollectionCard } from "../identification/types";
 
 type Draft = {
   title: string; description: string; priceCents: number; currency: string;
@@ -25,6 +25,19 @@ type SellerSetup = {
 type CategoryOption = { id: string; name: string; breadcrumb: string };
 type AspectDefinition = { name: string; required: boolean; recommended: boolean; multiValue: boolean; values: string[] };
 type Readiness = { definitions: AspectDefinition[]; aspects: Record<string, string[]>; missingAspects: string[]; checks: { key: string; label: string; ready: boolean }[]; ready: boolean };
+type RawCondition = "LIKE_NEW" | "USED_EXCELLENT" | "USED_VERY_GOOD" | "USED_ACCEPTABLE";
+const pokemonConditionOptions: { value: RawCondition; label: string }[] = [
+  { value: "LIKE_NEW", label: "Near Mint or Better" },
+  { value: "USED_EXCELLENT", label: "Lightly Played (Excellent)" },
+  { value: "USED_VERY_GOOD", label: "Moderately Played (Very Good)" },
+  { value: "USED_ACCEPTABLE", label: "Heavily Played (Poor)" },
+];
+const sportsConditionOptions: { value: RawCondition; label: string }[] = [
+  { value: "LIKE_NEW", label: "Near Mint or Better" },
+  { value: "USED_EXCELLENT", label: "Excellent" },
+  { value: "USED_VERY_GOOD", label: "Very Good" },
+  { value: "USED_ACCEPTABLE", label: "Poor" },
+];
 const emptySellerSetup = (): SellerSetup => ({
   locations: [], fulfillmentPolicies: [], paymentPolicies: [], returnPolicies: [],
 });
@@ -56,6 +69,8 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
   const [priceInput, setPriceInput] = useState("");
   const revisionDetailsDirtyRef = useRef(false);
   const selectedCategoryId = draft?.categoryId ?? "";
+  const pokemonCategory = selectedCategoryId === "183454" || (!selectedCategoryId && cardKindFromFields(card.fields) === "pokemon");
+  const rawConditionOptions = pokemonCategory ? pokemonConditionOptions : sportsConditionOptions;
 
   useEffect(() => {
     let current = true;
@@ -136,6 +151,16 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
     if (value.trim()) aspects[name] = [value];
     else delete aspects[name];
     setDraft({ ...draft, aspects });
+  };
+  const updateCondition = (condition: RawCondition) => {
+    if (!draft) return;
+    revisionDetailsDirtyRef.current = true;
+    const label = rawConditionOptions.find((option) => option.value === condition)?.label ?? "Raw / ungraded";
+    setDraft({
+      ...draft,
+      condition,
+      conditionDescription: `Raw / ungraded trading card. Selected condition: ${label}. Please review photographs for the exact condition.`,
+    });
   };
 
   const save = async () => {
@@ -437,6 +462,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
                 <label>Auction ending day <select value={auctionDays} onChange={(e) => update("auctionDurationDays", Number(e.target.value) as Draft["auctionDurationDays"])}>{([1, 3, 5, 7, 10] as const).map((days) => <option key={days} value={days}>{new Date(auctionReferenceTime + days * 86_400_000).toLocaleString([], { weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} ({days} day{days === 1 ? "" : "s"})</option>)}</select><small>eBay ends the auction at approximately the same time it is published.</small></label>
               </>}
               <label>Card type <input value={card.grading.isGraded ? `Professionally graded${card.grading.company ? ` by ${card.grading.company}` : ""}` : "Raw / ungraded"} readOnly /><small>Set automatically from Card Details.</small></label>
+              {!card.grading.isGraded && <label>Card condition <select value={draft.condition} onChange={(event) => updateCondition(event.target.value as RawCondition)}>{rawConditionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>{pokemonCategory ? "Pokémon / CCG condition choices" : "Sports and non-sport condition choices"} required by eBay.</small></label>}
               <label className="wide">Condition details <input value={draft.conditionDescription} onChange={(e) => update("conditionDescription", e.target.value)} /></label>
               <label>eBay category <input list={`ebay-categories-${card.collectionId}`} value={draft.categoryId} onChange={(e) => update("categoryId", e.target.value)} placeholder="Recommended automatically" /><datalist id={`ebay-categories-${card.collectionId}`}>{categoryOptions.map((option) => <option key={option.id} value={option.id}>{option.breadcrumb || option.name}</option>)}</datalist><small>{categoryOptions.find((option) => option.id === draft.categoryId)?.breadcrumb ?? "Numeric eBay leaf category ID; advanced users can override it."}</small></label>
               {requiredDefinitions.map((definition) => <label className={!draft.aspects[definition.name]?.[0] ? "ebay-required-missing" : ""} key={definition.name}>{definition.name} <span>{definition.required ? "Required" : ""}</span>{definition.values.length ? <select value={draft.aspects[definition.name]?.[0] ?? ""} onChange={(e) => updateAspect(definition.name, e.target.value)}><option value="">Choose</option>{definition.values.map((value) => <option key={value} value={value}>{value}</option>)}</select> : <input value={draft.aspects[definition.name]?.[0] ?? ""} onChange={(e) => updateAspect(definition.name, e.target.value)} />}</label>)}

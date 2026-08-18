@@ -109,9 +109,9 @@ test("custom shipping charges create clearly named reusable policies", () => {
   assert.equal(envelope.localPickup, false);
 });
 
-test("raw trading cards use eBay's required structured condition", () => {
+test("raw sports cards use eBay's required structured condition", () => {
   assert.deepEqual(inventoryConditionForCard({
-    categoryId: "261328", isGraded: false, condition: "USED_EXCELLENT",
+    categoryId: "261328", isGraded: false, condition: "USED_VERY_GOOD",
   }), {
     condition: "USED_VERY_GOOD",
     conditionDescriptors: [{ name: "40001", values: ["400012"] }],
@@ -119,6 +119,40 @@ test("raw trading cards use eBay's required structured condition", () => {
   assert.throws(() => inventoryConditionForCard({
     categoryId: "261328", isGraded: true, condition: "LIKE_NEW",
   }), /grader and grade descriptors/);
+});
+
+test("raw CCG cards use the category-specific eBay condition descriptor", () => {
+  const expected = {
+    LIKE_NEW: "400010",
+    USED_EXCELLENT: "400015",
+    USED_VERY_GOOD: "400016",
+    USED_ACCEPTABLE: "400017",
+  };
+  for (const [condition, descriptor] of Object.entries(expected)) {
+    assert.deepEqual(inventoryConditionForCard({
+      categoryId: "183454", isGraded: false, condition,
+    }), {
+      condition: "USED_VERY_GOOD",
+      conditionDescriptors: [{ name: "40001", values: [descriptor] }],
+    });
+  }
+});
+
+test("raw sports cards map every displayed condition to eBay metadata", () => {
+  const expected = {
+    LIKE_NEW: "400010",
+    USED_EXCELLENT: "400011",
+    USED_VERY_GOOD: "400012",
+    USED_ACCEPTABLE: "400013",
+  };
+  for (const [condition, descriptor] of Object.entries(expected)) {
+    assert.deepEqual(inventoryConditionForCard({
+      categoryId: "261328", isGraded: false, condition,
+    }), {
+      condition: "USED_VERY_GOOD",
+      conditionDescriptors: [{ name: "40001", values: [descriptor] }],
+    });
+  }
 });
 
 test("duplicate unpublished eBay offers can be recovered by ID", () => {

@@ -40,15 +40,37 @@ export function editableEbayDraft(saved) {
 }
 
 const tradingCardCategoryIds = new Set(["261328", "183050", "183454"]);
+const rawCardConditionDescriptors = {
+  ccg: {
+    LIKE_NEW: "400010", // Near Mint or Better
+    NEW_OTHER: "400010",
+    USED_EXCELLENT: "400015", // Lightly Played (Excellent)
+    USED_VERY_GOOD: "400016", // Moderately Played (Very Good)
+    USED_GOOD: "400016",
+    USED_ACCEPTABLE: "400017", // Heavily Played (Poor)
+  },
+  other: {
+    LIKE_NEW: "400010", // Near Mint or Better
+    NEW_OTHER: "400010",
+    USED_EXCELLENT: "400011", // Excellent
+    USED_VERY_GOOD: "400012", // Very Good
+    USED_GOOD: "400012",
+    USED_ACCEPTABLE: "400013", // Poor
+  },
+};
 
 export function inventoryConditionForCard({ categoryId, isGraded, condition }) {
-  if (!tradingCardCategoryIds.has(String(categoryId))) return { condition };
+  const normalizedCategoryId = String(categoryId);
+  if (!tradingCardCategoryIds.has(normalizedCategoryId)) return { condition };
   if (isGraded) {
     throw new Error("Graded trading cards require eBay grader and grade descriptors before they can be published.");
   }
   return {
     condition: "USED_VERY_GOOD",
-    conditionDescriptors: [{ name: "40001", values: ["400012"] }],
+    conditionDescriptors: [{
+      name: "40001",
+      values: [rawCardConditionDescriptors[normalizedCategoryId === "183454" ? "ccg" : "other"][condition]],
+    }],
   };
 }
 
