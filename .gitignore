@@ -1,0 +1,3 @@
+# Private Google Cloud service-account credentials must never be committed.
+cardpilot-vision-*.json
+*service-account*.json

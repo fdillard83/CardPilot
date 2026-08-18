@@ -446,9 +446,22 @@ function FieldCard({
   const definition = fieldDefinitions.find(({ key }) => key === fieldKey);
   const field = identification.fields[fieldKey];
   if (!definition) return null;
+  const confidencePercent = Math.round(field.confidence * 100);
+  const confidenceTone = field.confidence >= 0.8
+    ? "high"
+    : field.confidence >= 0.46
+      ? "medium"
+      : "low";
+  const confidenceLabel = field.value === null
+    ? "Needs attention — no value identified"
+    : confidenceTone === "high"
+      ? `High confidence — ${confidencePercent}%`
+      : confidenceTone === "medium"
+        ? `Moderate confidence — ${confidencePercent}%`
+        : `Low confidence — ${confidencePercent}%`;
 
   return (
-    <div className="detail-item">
+    <div className={`detail-item detail-confidence-${confidenceTone}`}>
       <div className="detail-label-row">
         <dt>{fieldLabelFor(fieldKey, identificationValues(identification))}</dt>
         <button type="button" onClick={onEdit} aria-label={`Edit ${fieldLabelFor(fieldKey, identificationValues(identification))}`}>
@@ -459,7 +472,7 @@ function FieldCard({
       <small>
         {field.inferenceSource === "user_correction"
           ? "User edited"
-          : `${Math.round(field.confidence * 100)}% field confidence`}
+          : confidenceLabel}
       </small>
     </div>
   );
@@ -475,9 +488,15 @@ function NumberedCardField({
   const serialNumber = identification.fields.serialNumber.value;
   const isNumbered =
     typeof serialNumber === "string" && serialNumber.trim().length > 0;
+  const serialConfidence = identification.fields.serialNumber.confidence;
+  const confidenceTone = serialConfidence >= 0.8
+    ? "high"
+    : serialConfidence >= 0.46
+      ? "medium"
+      : "low";
 
   return (
-    <div className="detail-item">
+    <div className={`detail-item${isNumbered ? ` detail-confidence-${confidenceTone}` : ""}`}>
       <div className="detail-label-row">
         <dt>Numbered card</dt>
         <button type="button" onClick={onEdit} aria-label="Edit numbered card">
@@ -487,7 +506,7 @@ function NumberedCardField({
       <dd>{isNumbered ? "Yes" : "No"}</dd>
       <small>
         {isNumbered
-          ? `Derived from serial number ${serialNumber}`
+          ? `${confidenceTone === "high" ? "High" : confidenceTone === "medium" ? "Moderate" : "Low"} confidence — derived from ${serialNumber}`
           : "No serial number recorded"}
       </small>
     </div>
@@ -1447,6 +1466,32 @@ function App() {
         throw new Error(payload?.error ?? "CardPilot could not save this card.");
       }
 
+      if (!savedCollectionId) {
+        const baseline = originalIdentificationRef.current ?? cardIdentification;
+        const reviewFields = fieldDefinitions
+          .filter(({ key }) => baseline.fields[key].value !== null)
+          .map(({ key }) => ({
+            field: key,
+            changed: !Object.is(baseline.fields[key].value, cardIdentification.fields[key].value),
+            originalConfidence: baseline.fields[key].confidence,
+            inferenceSource: baseline.fields[key].inferenceSource,
+          }));
+        try {
+          await fetch("/api/identification-reviews", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              identificationId: baseline.identificationId,
+              schemaVersion: baseline.schemaVersion,
+              fields: reviewFields,
+              metadata: { overallConfidence: baseline.overallConfidence },
+            }),
+          });
+        } catch {
+          // Feedback telemetry must never prevent a card from being saved.
+        }
+      }
+
       setSavedCollectionId(payload.card.collectionId);
       setCollectionCards((current) => [
         payload.card as SavedCollectionCard,
@@ -2218,6 +2263,54 @@ function App() {
               </div>
             )}
 
+            {identification.backPhoto.suggested && !backFile && (
+              <div className="follow-up-note">
+                <strong>A back photo could materially improve this match.</strong>
+                <span>{identification.backPhoto.reason} Estimated gain: +{Math.round(identification.backPhoto.expectedConfidenceGain * 100)} points.</span>
+              </div>
+            )}
+
+            {!isEditing && (
+              <>
+                <div className="result-actions">
+                  {identification.backPhoto.suggested && !backFile && (
+                    <button className="secondary-button" type="button" onClick={() => openPicker("back")}>Take back photo</button>
+                  )}
+                  {!isUnsupportedIdentification(identification) && (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={isSavingCollection}
+                      onClick={() => void confirmCardAndCollect()}
+                    >
+                      {isSavingCollection ? "Adding to collection..." : "Confirm card"}
+                    </button>
+                  )}
+                  <button className="outline-button" type="button" onClick={() => openEditor()}>Edit result</button>
+                  <button className="text-button" type="button" onClick={startNewScan}>Scan another card</button>
+                </div>
+
+                {!isUnsupportedIdentification(identification) && (
+                  <div className="candidate-review-guidance">
+                    <strong>
+                      {identification.overallConfidence >= 0.8
+                        ? "Confident in CardPilot's identification? You can confirm the card now."
+                        : "Want more confidence before confirming?"}
+                    </strong>
+                    <span>
+                      {identification.overallConfidence >= 0.8
+                        ? "The similar-looking cards below are optional references if you would still like to compare the design, year, set, or parallel."
+                        : "If confidence is lower, you can choose the card below that looks most like your card to help CardPilot refine the details."}
+                    </span>
+                  </div>
+                )}
+
+                <p className="review-disclaimer">
+                  AI-assisted identification can be wrong. Verify card number, set, and variant before buying, selling, grading, or listing.
+                </p>
+              </>
+            )}
+
             {!isEditing && isPokemon && !isUnsupportedIdentification(identification) && (
               <section
                 className="ebay-results pokemon-catalog-results"
@@ -2409,36 +2502,6 @@ function App() {
               </section>
             )}
 
-            {identification.backPhoto.suggested && !backFile && (
-              <div className="follow-up-note">
-                <strong>A back photo could materially improve this match.</strong>
-                <span>{identification.backPhoto.reason} Estimated gain: +{Math.round(identification.backPhoto.expectedConfidenceGain * 100)} points.</span>
-              </div>
-            )}
-
-            {!isEditing && (
-              <div className="result-actions">
-                {identification.backPhoto.suggested && !backFile && (
-                  <button className="secondary-button" type="button" onClick={() => openPicker("back")}>Take back photo</button>
-                )}
-                {!isUnsupportedIdentification(identification) && (
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    disabled={isSavingCollection}
-                    onClick={() => void confirmCardAndCollect()}
-                  >
-                    {isSavingCollection ? "Adding to collection..." : "Confirm card"}
-                  </button>
-                )}
-                <button className="outline-button" type="button" onClick={() => openEditor()}>Edit result</button>
-                <button className="text-button" type="button" onClick={startNewScan}>Scan another card</button>
-              </div>
-            )}
-
-            <p className="review-disclaimer">
-              AI-assisted identification can be wrong. Verify card number, set, and variant before buying, selling, grading, or listing.
-            </p>
           </section>
         )}
           </>

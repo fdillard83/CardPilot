@@ -105,6 +105,7 @@ export function buildSoldCompsSnapshot({
   results,
   excludedObservationIds = [],
   searchedAt = new Date().toISOString(),
+  identityConsensus = {},
 }) {
   const uniqueSales = new Map();
   results.flatMap((result) => result.sales).forEach((sale, index) => {
@@ -146,7 +147,10 @@ export function buildSoldCompsSnapshot({
   }
 
   const exactSales = eligible.flatMap((sale, index) => {
-    const match = evaluateCardTitleMatch(sale.title, fields);
+    const match = evaluateCardTitleMatch(sale.title, fields, {
+      identityConsensus,
+      visualMatch: sale.visualMatch,
+    });
     return match ? [fromMatch(sale, match, "exact", index)] : [];
   });
   const exactIds = new Set(exactSales.map((sale) => sale.id));
@@ -156,6 +160,8 @@ export function buildSoldCompsSnapshot({
           if (exactIds.has(saleId(sale, index))) return [];
           const match = evaluateCardTitleMatch(sale.title, fields, {
             broader: true,
+            identityConsensus,
+            visualMatch: sale.visualMatch,
           });
           return match ? [fromMatch(sale, match, "broader", index)] : [];
         })
@@ -251,6 +257,7 @@ export function buildSoldCompsSnapshot({
     excludedCount: candidates.length - exactSales.length - broaderSales.length,
     groups,
     variantEstimates,
+    identityConsensusFields: Object.keys(identityConsensus),
     disclaimer: soldCompsDisclaimer,
   };
 }
@@ -258,11 +265,13 @@ export function buildSoldCompsSnapshot({
 export class SoldCompsService {
   constructor({
     cardApiClient,
+    visualMatcher = null,
     now = () => Date.now(),
     cacheDurationMs = 10 * 60 * 1000,
   }) {
     if (!cardApiClient) throw new TypeError("A The Card API client is required.");
     this.cardApiClient = cardApiClient;
+    this.visualMatcher = visualMatcher;
     this.now = now;
     this.cacheDurationMs = cacheDurationMs;
     this.cache = new Map();
@@ -272,7 +281,12 @@ export class SoldCompsService {
     fields,
     grading,
     valuationProfile = deriveValuationProfile(fields),
-    { excludedObservationIds = [] } = {},
+    {
+      excludedObservationIds = [],
+      identityConsensus = {},
+      identityConsensusPromise = null,
+      sourceImageDataUrl = null,
+    } = {},
   ) {
     const query = buildActiveMarketQuery(fields);
     if (!query) {
@@ -285,6 +299,9 @@ export class SoldCompsService {
       : "raw";
     const cacheKey = `${query.toLowerCase()}|${profile.toLowerCase()}|${valuationProfile.featureType}:${valuationProfile.source}`;
     const cached = this.cache.get(cacheKey);
+    const resolvedIdentityConsensus = identityConsensusPromise
+      ? await identityConsensusPromise
+      : identityConsensus;
     const normalizedGrading = grading?.isGraded
       ? grading
       : {
@@ -303,6 +320,7 @@ export class SoldCompsService {
         results,
         excludedObservationIds,
         searchedAt,
+        identityConsensus: resolvedIdentityConsensus,
       });
     if (cached && cached.expiresAt > this.now()) return snapshotFrom(cached);
 
@@ -313,11 +331,12 @@ export class SoldCompsService {
           grade: grading.grade,
         }
       : { graded: false };
-    const primary = await this.cardApiClient.searchSales({
+    let primary = await this.cardApiClient.searchSales({
       query,
       ...searchOptions,
       limit: 100,
     });
+    primary = await this.#rankResult(primary, sourceImageDataUrl);
     const results = [primary];
     const queriesUsed = [query];
     const searchedAt = new Date(this.now()).toISOString();
@@ -329,6 +348,7 @@ export class SoldCompsService {
       queriesUsed,
       results,
       searchedAt,
+      identityConsensus: resolvedIdentityConsensus,
     });
     const discoveryQueries = isPokemonCard(fields)
       ? buildPokemonDiscoveryQueries(fields)
@@ -341,11 +361,14 @@ export class SoldCompsService {
         break;
       }
       results.push(
-        await this.cardApiClient.searchSales({
-          query: discoveryQuery,
-          ...searchOptions,
-          limit: 100,
-        }),
+        await this.#rankResult(
+          await this.cardApiClient.searchSales({
+            query: discoveryQuery,
+            ...searchOptions,
+            limit: 100,
+          }),
+          sourceImageDataUrl,
+        ),
       );
       queriesUsed.push(discoveryQuery);
       snapshot = buildSoldCompsSnapshot({
@@ -356,6 +379,7 @@ export class SoldCompsService {
         queriesUsed,
         results,
         searchedAt,
+        identityConsensus: resolvedIdentityConsensus,
       });
     }
     this.cache.set(cacheKey, {
@@ -365,6 +389,22 @@ export class SoldCompsService {
       expiresAt: this.now() + this.cacheDurationMs,
     });
     return snapshotFrom({ results, queriesUsed, searchedAt });
+  }
+
+  async #rankResult(result, sourceImageDataUrl) {
+    if (!sourceImageDataUrl || !this.visualMatcher || !result?.sales?.length) {
+      return result;
+    }
+    const candidates = result.sales.map((sale, index) => ({
+      ...sale,
+      id: saleId(sale, index),
+    }));
+    const ranked = await this.visualMatcher.rank({
+      sourceImageDataUrl,
+      candidates,
+      limit: 10,
+    });
+    return { ...result, sales: ranked };
   }
 }
 

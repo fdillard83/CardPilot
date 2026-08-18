@@ -341,6 +341,37 @@ test("broader matching rejects conflicting products when saved product details a
   );
 });
 
+test("market consensus and visual similarity strengthen a compatible exact match", () => {
+  const title =
+    "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85";
+  const baseline = evaluateCardTitleMatch(title, fields);
+  const reinforced = evaluateCardTitleMatch(title, fields, {
+    identityConsensus: {
+      player: { strength: 0.95, resultCount: 2 },
+      year: { strength: 0.92, resultCount: 1 },
+      cardNumber: { strength: 0.9, resultCount: 1 },
+    },
+    visualMatch: { score: 0.88, pixelScore: 0.86, borderScore: 0.91, layoutScore: 0.87 },
+  });
+
+  assert.ok(reinforced.score >= baseline.score);
+  assert.ok(reinforced.matchedSignals.includes("web_consensus"));
+  assert.ok(reinforced.matchedSignals.includes("visual_design"));
+});
+
+test("market consensus and visual similarity cannot rescue a conflicting year", () => {
+  const match = evaluateCardTitleMatch(
+    "2025 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85",
+    fields,
+    {
+      identityConsensus: { year: { strength: 0.99, resultCount: 3 } },
+      visualMatch: { score: 0.99 },
+    },
+  );
+
+  assert.equal(match, null);
+});
+
 test("active exclusions remove exact and broader comparisons from summaries", () => {
   const candidates = [
     candidate({

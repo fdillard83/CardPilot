@@ -4,6 +4,7 @@ import { SupabaseCollectionRepository } from "./collection-store.mjs";
 import { SupabaseAccountPreferencesRepository } from "./account-preferences.mjs";
 import { SupabaseEbaySellingStore } from "./ebay-selling-store.mjs";
 import { SupabaseAdminOverview } from "./admin-overview.mjs";
+import { SupabaseIdentificationFeedback } from "./identification-feedback.mjs";
 
 export function supabaseConfiguration(env = process.env) {
   const requested = env.COLLECTION_STORAGE_MODE?.trim().toLowerCase() === "supabase";
@@ -59,6 +60,7 @@ export function createSupabaseServices(configuration) {
       },
     },
   );
+  const identificationFeedback = new SupabaseIdentificationFeedback({ client: adminClient });
   return {
     auth: new SupabaseAuthService({
       client: authClient,
@@ -73,6 +75,7 @@ export function createSupabaseServices(configuration) {
     }),
     preferences: new SupabaseAccountPreferencesRepository({ client: adminClient }),
     ebaySelling: new SupabaseEbaySellingStore({ client: adminClient }),
-    adminOverview: new SupabaseAdminOverview({ client: adminClient }),
+    identificationFeedback,
+    adminOverview: new SupabaseAdminOverview({ client: adminClient, identificationFeedback }),
   };
 }

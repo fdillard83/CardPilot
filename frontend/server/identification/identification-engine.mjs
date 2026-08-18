@@ -10,6 +10,7 @@ import {
   getBackPhotoGuidance,
 } from "./trust-engine.mjs";
 import { verifyCandidates } from "./verification-engine.mjs";
+import { applyEvidenceConsensus } from "./evidence-consensus.mjs";
 
 async function runStage(stages, name, operation) {
   const startedAt = performance.now();
@@ -37,6 +38,7 @@ export class IdentificationEngine {
     candidateGenerator,
     model,
     trustConfig = defaultTrustConfig,
+    webEvidence = null,
     idFactory = randomUUID,
     now = () => new Date(),
   }) {
@@ -44,6 +46,7 @@ export class IdentificationEngine {
     this.candidateGenerator = candidateGenerator;
     this.model = model;
     this.trustConfig = trustConfig;
+    this.webEvidence = webEvidence;
     this.idFactory = idFactory;
     this.now = now;
   }
@@ -54,6 +57,9 @@ export class IdentificationEngine {
     const intake = await runStage(stages, "image_intake", () =>
       parseImageIntake(payload),
     );
+    const webEvidencePending = this.webEvidence?.configured
+      ? this.webEvidence.analyze(intake)
+      : null;
     const pipelineModel =
       this.evidenceEngine.modelFor?.(intake) ?? this.model;
     const rawExtraction = await runStage(
@@ -61,11 +67,26 @@ export class IdentificationEngine {
       "evidence_extraction",
       () => this.evidenceEngine.extract(intake),
     );
-    const extraction = await runStage(
+    let extraction = await runStage(
       stages,
       "semantic_normalization",
       () => normalizeCardSemantics(rawExtraction),
     );
+    if (webEvidencePending) {
+      const providerResults = await webEvidencePending;
+      const webDurationMs = providerResults.reduce(
+        (duration, provider) => Math.max(duration, provider.durationMs),
+        0,
+      );
+      stages.push({
+        name: "web_evidence",
+        status: providerResults.some((provider) => provider.status === "degraded")
+          ? "degraded"
+          : "completed",
+        durationMs: webDurationMs,
+      });
+      extraction = applyEvidenceConsensus(extraction, providerResults);
+    }
 
     let candidates = [];
     const candidateStartedAt = performance.now();

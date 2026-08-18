@@ -341,7 +341,34 @@ function obviousMismatch(title, fields) {
   return false;
 }
 
-function evaluateMatch(candidate, fields) {
+const matchSignalFields = {
+  player: "player",
+  character: "character",
+  year: "year",
+  card_number: "cardNumber",
+  parallel: "parallel",
+  finish: "finish",
+  rarity: "rarity",
+  promo: "promo",
+  language: "language",
+  print_run: "serialNumber",
+  product: "product",
+  set: "setOrInsert",
+};
+
+function consensusAdjustedScore(score, matchedSignals, identityConsensus, visualMatch) {
+  const consensusStrengths = matchedSignals
+    .map((signal) => identityConsensus?.[matchSignalFields[signal]]?.strength)
+    .filter(Number.isFinite);
+  const consensusStrength = consensusStrengths.length
+    ? consensusStrengths.reduce((sum, strength) => sum + strength, 0) / consensusStrengths.length
+    : 0;
+  const visualStrength = Number.isFinite(visualMatch?.score) ? visualMatch.score : 0;
+  const bonus = consensusStrength * 0.07 + Math.max(0, visualStrength - 0.6) * 0.18;
+  return Math.min(1, score + bonus);
+}
+
+function evaluateMatch(candidate, fields, identityConsensus = {}) {
   const title = candidate.title;
   if (obviousMismatch(title, fields)) return null;
 
@@ -433,17 +460,28 @@ function evaluateMatch(candidate, fields) {
   const matchedWeight = checks
     .filter((check) => check.matched)
     .reduce((sum, check) => sum + check.weight, 0);
-  const score = possibleWeight > 0 ? matchedWeight / possibleWeight : 0;
+  const baseScore = possibleWeight > 0 ? matchedWeight / possibleWeight : 0;
+  const matchedSignals = checks
+    .filter((check) => check.matched)
+    .map((check) => check.id);
+  const score = consensusAdjustedScore(
+    baseScore,
+    matchedSignals,
+    identityConsensus,
+    candidate.visualMatch,
+  );
   if (score < 0.65) return null;
   return {
     score: Math.round(score * 100) / 100,
-    matchedSignals: checks
-      .filter((check) => check.matched)
-      .map((check) => check.id),
+    matchedSignals: [
+      ...matchedSignals,
+      ...(candidate.visualMatch?.score >= 0.7 ? ["visual_design"] : []),
+      ...(Object.keys(identityConsensus).length ? ["web_consensus"] : []),
+    ],
   };
 }
 
-function evaluateBroaderMatch(candidate, fields) {
+function evaluateBroaderMatch(candidate, fields, identityConsensus = {}) {
   const title = candidate.title;
   const pokemon = isPokemonCard(fields);
   const identity = cardIdentity(fields);
@@ -528,7 +566,13 @@ function evaluateBroaderMatch(candidate, fields) {
   const matchedWeight = checks
     .filter((check) => check.matched)
     .reduce((sum, check) => sum + check.weight, 0);
-  const score = possibleWeight > 0 ? matchedWeight / possibleWeight : 0;
+  const baseScore = possibleWeight > 0 ? matchedWeight / possibleWeight : 0;
+  const score = consensusAdjustedScore(
+    baseScore,
+    matchedSignals,
+    identityConsensus,
+    candidate.visualMatch,
+  );
   if (score < 0.5) return null;
   return {
     score: Math.round(score * 100) / 100,
@@ -536,12 +580,16 @@ function evaluateBroaderMatch(candidate, fields) {
   };
 }
 
-export function evaluateCardTitleMatch(title, fields, { broader = false } = {}) {
-  const candidate = { title: cleanText(title) };
+export function evaluateCardTitleMatch(
+  title,
+  fields,
+  { broader = false, identityConsensus = {}, visualMatch = null } = {},
+) {
+  const candidate = { title: cleanText(title), visualMatch };
   if (!candidate.title) return null;
   return broader
-    ? evaluateBroaderMatch(candidate, fields)
-    : evaluateMatch(candidate, fields);
+    ? evaluateBroaderMatch(candidate, fields, identityConsensus)
+    : evaluateMatch(candidate, fields, identityConsensus);
 }
 
 function parseCents(price) {
@@ -632,6 +680,7 @@ export function buildActiveMarketSnapshot({
   confirmedReferenceItemId = null,
   excludedObservationIds = [],
   searchedAt = new Date().toISOString(),
+  identityConsensus = {},
 }) {
   const query = buildActiveMarketQuery(fields);
   const excludedObservationIdSet = new Set(excludedObservationIds);
@@ -674,7 +723,7 @@ export function buildActiveMarketSnapshot({
       candidate.itemId === confirmedReferenceItemId;
     const match = isConfirmedReference
       ? { score: 1, matchedSignals: ["confirmed_reference"] }
-      : evaluateMatch(candidate, fields);
+      : evaluateMatch(candidate, fields, identityConsensus);
     if (!match) return [];
     return [
       listingFromMatch(
@@ -689,7 +738,7 @@ export function buildActiveMarketSnapshot({
     exactListings.length < 3
       ? eligibleCandidates.flatMap((candidate) => {
           if (exactItemIds.has(candidate.itemId)) return [];
-          const match = evaluateBroaderMatch(candidate, fields);
+          const match = evaluateBroaderMatch(candidate, fields, identityConsensus);
           return match
             ? [listingFromMatch(candidate, match, "broader")]
             : [];
@@ -805,14 +854,16 @@ export function buildActiveMarketSnapshot({
     groups,
     valuationProfile,
     variantEstimates,
+    identityConsensusFields: Object.keys(identityConsensus),
     disclaimer: activeMarketDisclaimer,
   };
 }
 
 export class ActiveMarketService {
-  constructor({ ebayClient, now = () => Date.now(), cacheDurationMs = 10 * 60 * 1000 }) {
+  constructor({ ebayClient, visualMatcher = null, now = () => Date.now(), cacheDurationMs = 10 * 60 * 1000 }) {
     if (!ebayClient) throw new TypeError("An eBay Browse client is required.");
     this.ebayClient = ebayClient;
+    this.visualMatcher = visualMatcher;
     this.now = now;
     this.cacheDurationMs = cacheDurationMs;
     this.cache = new Map();
@@ -830,6 +881,9 @@ export class ActiveMarketService {
       },
       valuationProfile = deriveValuationProfile(fields),
       excludedObservationIds = [],
+      identityConsensus = {},
+      identityConsensusPromise = null,
+      sourceImageDataUrl = null,
     } = {},
   ) {
     const query = buildActiveMarketQuery(fields);
@@ -843,6 +897,13 @@ export class ActiveMarketService {
       : "raw";
     const cacheKey = `${query.toLowerCase()}|reference:${confirmedReferenceItemId ?? "none"}|${gradeProfile}|${valuationProfile.featureType}:${valuationProfile.source}`;
     const cached = this.cache.get(cacheKey);
+    const hasFreshCache = Boolean(cached && cached.expiresAt > this.now());
+    const marketRequest = hasFreshCache
+      ? null
+      : this.ebayClient.searchByKeywords({ query, limit: 50 });
+    const resolvedIdentityConsensus = identityConsensusPromise
+      ? await identityConsensusPromise
+      : identityConsensus;
     const snapshotFrom = ({
       marketplaceId,
       candidates,
@@ -859,11 +920,14 @@ export class ActiveMarketService {
         confirmedReferenceItemId,
         excludedObservationIds,
         searchedAt,
+        identityConsensus: resolvedIdentityConsensus,
       });
-    if (cached && cached.expiresAt > this.now()) return snapshotFrom(cached);
+    if (hasFreshCache) return snapshotFrom(cached);
 
-    const result = await this.ebayClient.searchByKeywords({ query, limit: 50 });
-    let candidates = result.candidates;
+    const result = await marketRequest;
+    let candidates = sourceImageDataUrl && this.visualMatcher
+      ? await this.visualMatcher.rank({ sourceImageDataUrl, candidates: result.candidates, limit: 10 })
+      : result.candidates;
     const queriesUsed = [query];
     const searchedAt = new Date(this.now()).toISOString();
     let snapshot = buildActiveMarketSnapshot({
@@ -876,6 +940,7 @@ export class ActiveMarketService {
       confirmedReferenceItemId,
       excludedObservationIds,
       searchedAt,
+      identityConsensus: resolvedIdentityConsensus,
     });
     const discoveryQueries = isPokemonCard(fields)
       ? buildPokemonDiscoveryQueries(fields)
@@ -893,6 +958,9 @@ export class ActiveMarketService {
         ]),
       );
       candidates = [...unique.values()];
+      if (sourceImageDataUrl && this.visualMatcher) {
+        candidates = await this.visualMatcher.rank({ sourceImageDataUrl, candidates, limit: 10 });
+      }
       queriesUsed.push(discoveryQuery);
       snapshot = buildActiveMarketSnapshot({
         fields,
@@ -904,6 +972,7 @@ export class ActiveMarketService {
         confirmedReferenceItemId,
         excludedObservationIds,
         searchedAt,
+        identityConsensus: resolvedIdentityConsensus,
       });
     }
     this.cache.set(cacheKey, {

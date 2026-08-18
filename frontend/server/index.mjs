@@ -30,6 +30,11 @@ import { CachedEvidenceEngine } from "./identification/evidence-cache.mjs";
 import { IdentificationEngine } from "./identification/identification-engine.mjs";
 import { VisualImageMatcher } from "./identification/visual-image-matcher.mjs";
 import {
+  GoogleWebEvidenceProvider,
+  googleVisionConfiguration,
+  WebEvidenceOrchestrator,
+} from "./identification/web-evidence-provider.mjs";
+import {
   ImageIntakeError,
   parseImageIntake,
 } from "./identification/image-intake.mjs";
@@ -48,8 +53,9 @@ import {
   PokemonTcgClient,
 } from "./pokemon-tcg/client.mjs";
 import { PokemonCatalogSearchService } from "./pokemon-tcg/catalog-search.mjs";
-import { CandidateValuesSchema, CardIdentificationResultSchema } from "./identification/contracts.mjs";
+import { CandidateValuesSchema, CardIdentificationResultSchema, IdentificationReviewSubmissionSchema } from "./identification/contracts.mjs";
 import { verifyCandidates } from "./identification/verification-engine.mjs";
+import { buildMarketConsensusProfile } from "./identification/evidence-consensus.mjs";
 import { TheCardCatalogClient } from "./the-card-api/catalog-client.mjs";
 import {
   createSupabaseServices,
@@ -108,14 +114,21 @@ const ebayTaxonomy = ebayConfigured
       marketplaceId: ebayMarketplaceId,
     })
   : null;
-const activeMarket = ebayImageSearch
-  ? new ActiveMarketService({ ebayClient: ebayImageSearch })
-  : null;
 const visualImageMatcher = new VisualImageMatcher();
+const activeMarket = ebayImageSearch
+  ? new ActiveMarketService({ ebayClient: ebayImageSearch, visualMatcher: visualImageMatcher })
+  : null;
+const googleVisionConfig = googleVisionConfiguration();
+const webEvidence = new WebEvidenceOrchestrator({
+  providers: googleVisionConfig
+    ? [new GoogleWebEvidenceProvider(googleVisionConfig)]
+    : [],
+});
 const theCardApiKey = process.env.THE_CARD_API_KEY?.trim();
 const soldComps = theCardApiKey
   ? new SoldCompsService({
       cardApiClient: new TheCardApiClient({ apiKey: theCardApiKey }),
+      visualMatcher: visualImageMatcher,
     })
   : null;
 const theCardCatalog = theCardApiKey
@@ -181,12 +194,53 @@ function excludedObservationIds(request, queryName = "exclude") {
   return [...new Set(values)];
 }
 
+async function savedCardFrontDataUrl(userId, collectionId) {
+  const image = await collectionStore.image(userId, collectionId, "front");
+  if (!image) return null;
+  if (image.filePath) {
+    const contents = await readFile(image.filePath);
+    if (!contents.length || contents.length > 12 * 1024 * 1024) return null;
+    return `data:${image.mimeType};base64,${contents.toString("base64")}`;
+  }
+  if (!image.signedUrl) return null;
+  const upstream = await fetch(image.signedUrl, { signal: AbortSignal.timeout(4_000) });
+  if (!upstream.ok) return null;
+  const contents = Buffer.from(await upstream.arrayBuffer());
+  if (!contents.length || contents.length > 12 * 1024 * 1024) return null;
+  const mimeType = upstream.headers.get("content-type")?.split(";")[0] ?? "image/jpeg";
+  if (!new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]).has(mimeType)) return null;
+  return `data:${mimeType};base64,${contents.toString("base64")}`;
+}
+
+async function marketIdentityContext(userId, card) {
+  try {
+    const sourceImageDataUrl = await savedCardFrontDataUrl(userId, card.collectionId);
+    if (!sourceImageDataUrl) return { sourceImageDataUrl: null, identityConsensusPromise: Promise.resolve({}) };
+    const identityConsensusPromise = webEvidence.configured
+      ? webEvidence
+          .analyze({
+            frontImage: sourceImageDataUrl,
+            backImage: null,
+            frontDetailImages: [],
+            backPhotoProvided: false,
+          })
+          .then((results) => buildMarketConsensusProfile(card.fields, results))
+          .catch(() => ({}))
+      : Promise.resolve({});
+    return { sourceImageDataUrl, identityConsensusPromise };
+  } catch (error) {
+    console.warn("Market identity evidence degraded; continuing with confirmed details.", error?.message ?? error);
+    return { sourceImageDataUrl: null, identityConsensusPromise: Promise.resolve({}) };
+  }
+}
+
 app.get("/api/health", (_request, response) => {
   response.json({
     ok: true,
     configured: Boolean(process.env.OPENAI_API_KEY),
     services: {
       openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
+      googleVisionConfigured: webEvidence.configured,
       ebayConfigured,
       ebaySellingConfigured: ebaySellConfigured,
       ebaySellingEnvironment: ebaySellEnvironment,
@@ -1607,12 +1661,17 @@ app.get(
         });
         return;
       }
+      const marketIdentity = await marketIdentityContext(
+        collectionUserId(request),
+        card,
+      );
       response.json(
         await activeMarket.snapshot(card.fields, {
           confirmedReferenceItemId: card.ebayReference?.itemId ?? null,
           grading: card.grading,
           valuationProfile: card.valuationProfile,
           excludedObservationIds: excludedObservationIds(request),
+          ...marketIdentity,
         }),
       );
     } catch (error) {
@@ -1672,12 +1731,19 @@ app.get(
         });
         return;
       }
+      const marketIdentity = await marketIdentityContext(
+        collectionUserId(request),
+        card,
+      );
       response.json(
         await soldComps.snapshot(
           card.fields,
           card.grading,
           card.valuationProfile,
-          { excludedObservationIds: excludedObservationIds(request) },
+          {
+            excludedObservationIds: excludedObservationIds(request),
+            ...marketIdentity,
+          },
         ),
       );
     } catch (error) {
@@ -1729,6 +1795,7 @@ app.post("/api/identify-card", async (request, response) => {
       evidenceEngine: openaiEvidence,
       candidateGenerator: new CatalogCandidateGenerator(),
       model: accuracyModel,
+      webEvidence,
     });
     const identification = await identificationEngine.identify(request.body);
     console.info(
@@ -2062,6 +2129,28 @@ app.post("/api/corrections", async (request, response) => {
     response.status(500).json({
       error: "CardPilot could not save this correction. Please try again.",
     });
+  }
+});
+
+app.post("/api/identification-reviews", async (request, response) => {
+  try {
+    const submission = IdentificationReviewSubmissionSchema.parse(request.body);
+    if (!cloudServices?.identificationFeedback || !request.cardPilotUser?.id) {
+      response.status(202).json({ recorded: false, mode: "local" });
+      return;
+    }
+    const result = await cloudServices.identificationFeedback.record(
+      request.cardPilotUser.id,
+      submission,
+    );
+    response.status(201).json({ recorded: true, ...result });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      response.status(400).json({ error: "The identification review is incomplete or invalid." });
+      return;
+    }
+    console.error("Identification review logging failed", error);
+    response.status(500).json({ error: "CardPilot could not record identification feedback." });
   }
 });
 

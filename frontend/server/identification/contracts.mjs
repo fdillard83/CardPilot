@@ -43,6 +43,7 @@ const EvidenceReferenceSchema = z.string().min(1);
 const inferenceSource = z.enum([
   "visible",
   "catalog",
+  "web",
   "candidate",
   "mixed",
   "unknown",
@@ -107,6 +108,7 @@ export const EvidenceItemSchema = z
       "back_image",
       "model_knowledge",
       "catalog",
+      "web",
       "user_correction",
     ]),
     observation: z.string().min(1),
@@ -195,6 +197,7 @@ export const PipelineStageSchema = z
     name: z.enum([
       "image_intake",
       "evidence_extraction",
+      "web_evidence",
       "semantic_normalization",
       "candidate_generation",
       "verification",
@@ -278,6 +281,32 @@ export const CorrectionSubmissionSchema = z
         source: z.literal("editable_confirmation"),
       })
       .strict(),
+  })
+  .strict();
+
+export const IdentificationReviewSubmissionSchema = z
+  .object({
+    identificationId: z.string().min(1),
+    schemaVersion: z.literal("1.0"),
+    fields: z
+      .array(
+        z
+          .object({
+            field: FieldKeySchema,
+            changed: z.boolean(),
+            originalConfidence: confidence,
+            inferenceSource,
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(fieldKeys.length)
+      .superRefine((fields, context) => {
+        if (new Set(fields.map((field) => field.field)).size !== fields.length) {
+          context.addIssue({ code: "custom", message: "Each proposed identification field may be reviewed once." });
+        }
+      }),
+    metadata: z.object({ overallConfidence: confidence }).strict(),
   })
   .strict();
 

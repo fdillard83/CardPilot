@@ -176,6 +176,7 @@ export type IdentificationField = {
   inferenceSource:
     | "visible"
     | "catalog"
+    | "web"
     | "candidate"
     | "mixed"
     | "unknown"
@@ -196,6 +197,7 @@ export type CardIdentification = {
       | "back_image"
       | "model_knowledge"
       | "catalog"
+      | "web"
       | "user_correction";
     observation: string;
     location: string | null;
