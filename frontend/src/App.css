@@ -623,6 +623,149 @@ main {
   padding: 28px;
 }
 
+.batch-scanner {
+  grid-column: 1 / -1;
+  padding: 28px;
+  border: 1px solid var(--line-bright);
+  border-radius: 24px;
+  background: var(--panel);
+}
+
+.batch-heading,
+.batch-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.batch-heading h2 {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: 26px;
+}
+
+.batch-heading p,
+.batch-actions small {
+  margin: 0;
+  color: var(--muted);
+}
+
+.batch-limit {
+  flex: none;
+  padding: 8px 12px;
+  border: 1px solid var(--line-bright);
+  border-radius: 999px;
+  color: var(--lime);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.batch-mode-picker {
+  display: flex;
+  gap: 8px;
+  margin: 22px 0 14px;
+}
+
+.batch-mode-picker button {
+  padding: 10px 14px;
+  border: 1px solid var(--line-bright);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.batch-mode-picker button.active {
+  border-color: var(--lime);
+  background: rgba(183, 238, 79, 0.1);
+  color: var(--ink);
+}
+
+.batch-picker {
+  width: 100%;
+  display: grid;
+  gap: 5px;
+  padding: 22px;
+  border: 1px dashed rgba(183, 238, 79, 0.45);
+  border-radius: 16px;
+  background: rgba(183, 238, 79, 0.035);
+  color: var(--ink);
+  text-align: left;
+}
+
+.batch-picker span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.batch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.batch-item {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.batch-item-saved { border-color: rgba(183, 238, 79, 0.5); }
+.batch-item-failed { border-color: rgba(255, 107, 107, 0.55); }
+
+.batch-item img {
+  width: 72px;
+  height: 96px;
+  border-radius: 8px;
+  object-fit: contain;
+  background: #070d0a;
+}
+
+.batch-item div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.batch-item span,
+.batch-item small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.batch-item-error,
+.batch-review-flag {
+  color: #ffb36b !important;
+}
+
+.batch-progress {
+  height: 8px;
+  margin: 18px 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.batch-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--lime);
+  transition: width 240ms ease;
+}
+
+.batch-actions {
+  margin-top: 18px;
+}
+
 .scanner-heading,
 .result-topline {
   display: flex;
@@ -2545,6 +2688,21 @@ main {
 .ebay-draft-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 
 @media (max-width: 620px) {
+  .batch-heading,
+  .batch-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .batch-mode-picker {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .batch-grid {
+    grid-template-columns: 1fr;
+  }
+
   input:not([type="checkbox"]):not([type="radio"]),
   select,
   textarea {

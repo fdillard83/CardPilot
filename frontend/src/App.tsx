@@ -13,6 +13,7 @@ import {
 } from "./accounts/preferences";
 import { CollectionView } from "./collection/CollectionView";
 import { AdminDashboard } from "./admin/AdminDashboard";
+import { BatchScanner } from "./batch/BatchScanner";
 import {
   createCardDetailImages,
   prepareCardPhoto,
@@ -2082,6 +2083,19 @@ function App() {
               ) : null}
             </div>
           </section>
+
+          {!frontFile && (
+            <BatchScanner
+              onCardsSaved={(cards) => setCollectionCards((current) => [
+                ...cards,
+                ...current.filter((existing) => !cards.some((card) => card.collectionId === existing.collectionId)),
+              ])}
+              onOpenCollection={() => {
+                setView("collection");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            />
+          )}
         </section>
 
         {identification && (

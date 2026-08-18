@@ -1123,7 +1123,7 @@ app.post("/api/collection/:collectionId/ebay-relist", async (request, response) 
 });
 
 app.post("/api/collection/:collectionId/ebay-revise", async (request, response) => {
-  if (request.body?.confirmation !== "REVISE" || !["PRICE_ONLY", "FULL"].includes(request.body?.revisionScope)) {
+  if (request.body?.confirmation !== "REVISE" || !["PRICE_ONLY", "FULL", "SHIPPING_ONLY"].includes(request.body?.revisionScope)) {
     return response.status(400).json({ error: "Explicit revision confirmation is required." });
   }
   try {
@@ -1133,8 +1133,24 @@ app.post("/api/collection/:collectionId/ebay-revise", async (request, response) 
     if (!card || !saved?.ebayOfferId || saved.status !== "published") {
       return response.status(404).json({ error: "No active CardPilot eBay listing was found." });
     }
-    const draft = editableEbayDraft(saved);
+    const shippingOnly = request.body.revisionScope === "SHIPPING_ONLY";
+    const requestedFulfillmentPolicyId = shippingOnly
+      ? String(request.body?.fulfillmentPolicyId ?? "").trim()
+      : null;
+    if (shippingOnly && !requestedFulfillmentPolicyId) {
+      return response.status(400).json({ error: "Choose a shipping policy before applying the shipping change." });
+    }
     const token = await ebaySellerAccessToken(userId);
+    if (shippingOnly) {
+      const setup = await loadEbaySellerSetup(token);
+      if (!setup.fulfillmentPolicies.some((policy) => policy.id === requestedFulfillmentPolicyId)) {
+        return response.status(400).json({ error: "That shipping policy is not available for this connected eBay seller." });
+      }
+    }
+    const draft = {
+      ...editableEbayDraft(saved),
+      ...(shippingOnly ? { fulfillmentPolicyId: requestedFulfillmentPolicyId } : {}),
+    };
     const sku = `cardpilot-${card.collectionId}`;
     const existingOffer = await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(saved.ebayOfferId)}`);
     const [front, back] = await Promise.all([
@@ -1163,11 +1179,11 @@ app.post("/api/collection/:collectionId/ebay-revise", async (request, response) 
           product: { title: draft.title, description: draft.description, aspects: draft.aspects, imageUrls } },
       });
     }
-    const policyChanged = request.body.revisionScope === "FULL" && (String(existingOffer?.categoryId ?? "") !== draft.categoryId ||
+    const policyChanged = shippingOnly || (request.body.revisionScope === "FULL" && (String(existingOffer?.categoryId ?? "") !== draft.categoryId ||
       String(existingOffer?.merchantLocationKey ?? "") !== draft.merchantLocationKey ||
       String(existingOffer?.listingPolicies?.fulfillmentPolicyId ?? "") !== draft.fulfillmentPolicyId ||
       String(existingOffer?.listingPolicies?.paymentPolicyId ?? "") !== draft.paymentPolicyId ||
-      String(existingOffer?.listingPolicies?.returnPolicyId ?? "") !== draft.returnPolicyId);
+      String(existingOffer?.listingPolicies?.returnPolicyId ?? "") !== draft.returnPolicyId));
     if (draft.listingFormat === "FIXED_PRICE" && !policyChanged) {
       const bulkResult = await ebaySelling.request(token, "/sell/inventory/v1/bulk_update_price_quantity", {
         method: "POST",
@@ -1196,6 +1212,9 @@ app.post("/api/collection/:collectionId/ebay-revise", async (request, response) 
           ...(draft.auctionReservePriceCents > 0 ? { auctionReservePrice: { value: (draft.auctionReservePriceCents / 100).toFixed(2), currency: draft.currency } } : {}),
         } : { price: { value: (draft.priceCents / 100).toFixed(2), currency: draft.currency } } },
       });
+    }
+    if (shippingOnly) {
+      await cloudServices.ebaySelling.saveDraft(userId, card.collectionId, draft, ebaySellEnvironment);
     }
     response.json({ draft: await cloudServices.ebaySelling.draft(userId, card.collectionId) });
   } catch (error) {

@@ -163,32 +163,32 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
     });
   };
 
-  const save = async () => {
-    if (!draft) return false;
+  const save = async (draftToSave: Draft | null = draft) => {
+    if (!draftToSave) return false;
     setBusy(true); setError(null); setMessage(null);
     try {
       const enteredPrice = Number(priceInput);
-      if (draft.listingFormat === "FIXED_PRICE" && (!Number.isFinite(enteredPrice) || enteredPrice < 0.01)) {
+      if (draftToSave.listingFormat === "FIXED_PRICE" && (!Number.isFinite(enteredPrice) || enteredPrice < 0.01)) {
         throw new Error("Enter a valid Buy It Now price of at least $0.01.");
       }
       const input = {
-        title: draft.title,
-        description: draft.description,
-        priceCents: draft.listingFormat === "FIXED_PRICE" ? Math.round(enteredPrice * 100) : draft.priceCents,
-        currency: draft.currency,
-        condition: draft.condition,
-        conditionDescription: draft.conditionDescription,
-        categoryId: draft.categoryId,
-        aspects: draft.aspects,
-        merchantLocationKey: draft.merchantLocationKey,
-        fulfillmentPolicyId: draft.fulfillmentPolicyId,
-        paymentPolicyId: draft.paymentPolicyId,
-        returnPolicyId: draft.returnPolicyId,
-        listingFormat: draft.listingFormat,
-        listingImages: draft.listingImages ?? ["front"],
-        auctionDurationDays: draft.auctionDurationDays ?? 7,
-        auctionStartPriceCents: draft.auctionStartPriceCents ?? 99,
-        auctionReservePriceCents: draft.auctionReservePriceCents ?? 0,
+        title: draftToSave.title,
+        description: draftToSave.description,
+        priceCents: draftToSave.listingFormat === "FIXED_PRICE" ? Math.round(enteredPrice * 100) : draftToSave.priceCents,
+        currency: draftToSave.currency,
+        condition: draftToSave.condition,
+        conditionDescription: draftToSave.conditionDescription,
+        categoryId: draftToSave.categoryId,
+        aspects: draftToSave.aspects,
+        merchantLocationKey: draftToSave.merchantLocationKey,
+        fulfillmentPolicyId: draftToSave.fulfillmentPolicyId,
+        paymentPolicyId: draftToSave.paymentPolicyId,
+        returnPolicyId: draftToSave.returnPolicyId,
+        listingFormat: draftToSave.listingFormat,
+        listingImages: draftToSave.listingImages ?? ["front"],
+        auctionDurationDays: draftToSave.auctionDurationDays ?? 7,
+        auctionStartPriceCents: draftToSave.auctionStartPriceCents ?? 99,
+        auctionReservePriceCents: draftToSave.auctionReservePriceCents ?? 0,
       };
       const response = await fetch(`/api/collection/${encodeURIComponent(card.collectionId)}/ebay-draft`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
@@ -285,8 +285,27 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
       if (!response.ok) throw new Error(payload.error);
       const next = payload as SellerSetup & { selectedFulfillmentPolicyId: string };
       setSetup(next);
-      update("fulfillmentPolicyId", next.selectedFulfillmentPolicyId);
-      setMessage(`${serviceLabel} with ${label} is selected and local pickup is off. Save the draft${draft.status === "published" ? " and revise eBay" : ""} to apply it.`);
+      const revisedDraft = { ...draft, fulfillmentPolicyId: next.selectedFulfillmentPolicyId };
+      revisionDetailsDirtyRef.current = true;
+      setDraft(revisedDraft);
+      if (draft.status === "published") {
+        const reviseResponse = await fetch(`/api/collection/${encodeURIComponent(card.collectionId)}/ebay-revise`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            confirmation: "REVISE",
+            revisionScope: "SHIPPING_ONLY",
+            fulfillmentPolicyId: next.selectedFulfillmentPolicyId,
+          }),
+        });
+        const revisePayload = await responsePayload(reviseResponse);
+        if (!reviseResponse.ok) throw new Error(revisePayload.error);
+        setDraft(revisePayload.draft);
+        revisionDetailsDirtyRef.current = false;
+        setMessage(`${serviceLabel} with ${label} is now applied to the active eBay listing. Other listing details were kept.`);
+      } else {
+        setMessage(`${serviceLabel} with ${label} is selected and local pickup is off. Save the draft to remember it.`);
+      }
     } catch (caught) { setError(caught instanceof Error ? caught.message : "CardPilot could not create that shipping charge."); }
     finally { setBusy(false); }
   };
@@ -472,7 +491,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
               <div className="wide ebay-shipping-charge">
                 <label>Shipping method <select value={shippingService} onChange={(event) => setShippingService(event.target.value as typeof shippingService)}><option value="STANDARD_ENVELOPE">eBay Standard Envelope — lowest-cost tracked option</option><option value="GROUND">USPS Ground Advantage — protected package</option><option value="PRIORITY">USPS Priority Mail — faster, more expensive</option></select><small>CardPilot recommends Standard Envelope only for eligible cards under $20; Ground Advantage is the fallback. Local pickup is always off.</small></label>
                 <label>Buyer shipping charge <input type="text" inputMode="decimal" placeholder="4.99" value={sandboxShippingCost} onChange={(event) => setSandboxShippingCost(event.target.value)} /><small>Enter what the buyer pays, or 0 for free shipping. This is separate from the label price charged to the seller.</small></label>
-                <button type="button" disabled={busy || !status.connected} onClick={() => void createShippingCharge()}>Use this method and charge</button>
+                <button type="button" disabled={busy || !status.connected} onClick={() => void createShippingCharge()}>{draft.status === "published" ? "Apply shipping change to active eBay listing" : "Use this method and charge"}</button>
               </div>
               <label>Payment policy <select value={draft.paymentPolicyId} onChange={(e) => update("paymentPolicyId", e.target.value)}><option value="">Choose payment policy</option>{setup?.paymentPolicies.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
               <label>Return policy <select value={draft.returnPolicyId} onChange={(e) => update("returnPolicyId", e.target.value)}><option value="">Choose return policy</option>{setup?.returnPolicies.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label>
