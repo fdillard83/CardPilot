@@ -4,6 +4,7 @@ type Overview = {
   totals: { users: number; cards: number; activeListings: number; activeListingValueCents: number; soldCount: number; soldGrossCents: number; currency: string };
   users: { userId: string; email: string | null; createdAt: string; lastSignInAt: string | null; cardCount: number; activeListingCount: number; activeListingValueCents: number; soldCount: number; soldGrossCents: number }[];
   fieldFeedback: { field: string; reviewed: number; kept: number; changed: number; changeRate: number; averageOriginalConfidence: number }[];
+  providerUsage: { provider: string; providerLabel: string; operation: string; requests: number; successfulRequests: number; successRate: number; averageDurationMs: number; returnedCount: number; usefulCount: number; usefulRate: number; configuredMonthlyCostCents: number; estimatedCostPerUsefulResultCents: number | null; assessment: "collecting_data" | "strong" | "watch" | "weak" }[];
 };
 const money = (cents: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
 
@@ -55,6 +56,16 @@ export function AdminDashboard() {
             {overview.fieldFeedback.map((field) => <div className="admin-feedback-row" role="row" key={field.field}><strong>{field.field}</strong><span>{field.reviewed}</span><span>{field.kept}</span><span>{field.changed}</span><span>{Math.round(field.changeRate * 100)}%</span><span>{Math.round(field.averageOriginalConfidence * 100)}%</span></div>)}
           </div>
         ) : <p className="valuation-disclaimer">Field feedback will appear after users confirm cards with this update.</p>}
+      </section>
+      <section className="admin-feedback-section">
+        <div><span>Paid-service value</span><h2>Are providers earning their cost?</h2><p>Rolling 30-day aggregate. “Useful” means a result survived CardPilot’s matching thresholds and contributed usable evidence—not merely that the provider returned something.</p></div>
+        <div className="admin-provider-grid">
+          {overview.providerUsage.map((provider) => <article key={`${provider.provider}-${provider.operation}`}>
+            <div className="admin-provider-heading"><div><strong>{provider.providerLabel}</strong><small>{provider.operation.replaceAll("_", " ")}</small></div><span className={`admin-provider-assessment assessment-${provider.assessment}`}>{provider.assessment === "collecting_data" ? "Collecting data" : provider.assessment}</span></div>
+            <dl><div><dt>Requests</dt><dd>{provider.requests}</dd></div><div><dt>Success</dt><dd>{Math.round(provider.successRate * 100)}%</dd></div><div><dt>Avg. time</dt><dd>{(provider.averageDurationMs / 1000).toFixed(1)}s</dd></div><div><dt>Returned</dt><dd>{provider.returnedCount}</dd></div><div><dt>Useful</dt><dd>{provider.usefulCount} ({Math.round(provider.usefulRate * 100)}%)</dd></div><div><dt>Monthly cost</dt><dd>{money(provider.configuredMonthlyCostCents)}</dd></div><div><dt>Cost / useful</dt><dd>{provider.estimatedCostPerUsefulResultCents === null ? "Not enough data" : money(provider.estimatedCostPerUsefulResultCents)}</dd></div></dl>
+          </article>)}
+        </div>
+        <p className="valuation-disclaimer">Add each current monthly amount in Render using the optional *_MONTHLY_COST_CENTS variables. Zero means the cost has not been entered or the service is free. Render and Supabase appear as cost inventory; usefulness scoring applies to data providers after a meaningful request sample.</p>
       </section>
       <p className="valuation-disclaimer">Sales figures are gross eBay line-item amounts before fees, taxes, shipping costs, refunds, and other expenses.</p>
     </>}

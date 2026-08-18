@@ -171,6 +171,13 @@ const collectionStore =
   cloudServices?.collection ??
   new LocalCollectionRepository({ store: localCollectionStore });
 
+function recordProviderUsage(event) {
+  if (!cloudServices?.providerUsage) return;
+  void cloudServices.providerUsage.record(event).catch((error) => {
+    console.warn("Provider usage telemetry was unavailable", error?.message ?? error);
+  });
+}
+
 app.disable("x-powered-by");
 app.use(express.json({ limit: "30mb" }));
 
@@ -1664,6 +1671,7 @@ app.get(
 app.get(
   "/api/collection/:collectionId/active-market",
   async (request, response) => {
+    const providerStartedAt = performance.now();
     try {
       const card = await collectionStore.get(
         collectionUserId(request),
@@ -1684,16 +1692,29 @@ app.get(
         collectionUserId(request),
         card,
       );
-      response.json(
-        await activeMarket.snapshot(card.fields, {
+      const snapshot = await activeMarket.snapshot(card.fields, {
           confirmedReferenceItemId: card.ebayReference?.itemId ?? null,
           grading: card.grading,
           valuationProfile: card.valuationProfile,
           excludedObservationIds: excludedObservationIds(request),
           ...marketIdentity,
-        }),
-      );
+        });
+      recordProviderUsage({
+        provider: "ebay",
+        operation: "active_market",
+        success: true,
+        durationMs: performance.now() - providerStartedAt,
+        returnedCount: snapshot.candidateCount ?? 0,
+        usefulCount: snapshot.exactMatchedCount ?? 0,
+      });
+      response.json(snapshot);
     } catch (error) {
+      recordProviderUsage({
+        provider: "ebay",
+        operation: "active_market",
+        success: false,
+        durationMs: performance.now() - providerStartedAt,
+      });
       if (error instanceof TypeError) {
         response.status(422).json({ error: error.message });
         return;
@@ -1734,6 +1755,7 @@ app.get(
 app.get(
   "/api/collection/:collectionId/sold-comps",
   async (request, response) => {
+    const providerStartedAt = performance.now();
     try {
       const card = await collectionStore.get(
         collectionUserId(request),
@@ -1754,8 +1776,7 @@ app.get(
         collectionUserId(request),
         card,
       );
-      response.json(
-        await soldComps.snapshot(
+      const snapshot = await soldComps.snapshot(
           card.fields,
           card.grading,
           card.valuationProfile,
@@ -1763,9 +1784,23 @@ app.get(
             excludedObservationIds: excludedObservationIds(request),
             ...marketIdentity,
           },
-        ),
-      );
+        );
+      recordProviderUsage({
+        provider: "the_card_api",
+        operation: "sold_comps",
+        success: true,
+        durationMs: performance.now() - providerStartedAt,
+        returnedCount: snapshot.candidateCount ?? 0,
+        usefulCount: snapshot.exactMatchedCount ?? 0,
+      });
+      response.json(snapshot);
     } catch (error) {
+      recordProviderUsage({
+        provider: "the_card_api",
+        operation: "sold_comps",
+        success: false,
+        durationMs: performance.now() - providerStartedAt,
+      });
       if (error instanceof TypeError) {
         response.status(422).json({ error: error.message });
         return;
@@ -1809,6 +1844,8 @@ app.post("/api/identify-card", async (request, response) => {
     return;
   }
 
+  const providerStartedAt = performance.now();
+  let providerInvoked = false;
   try {
     const identificationEngine = new IdentificationEngine({
       evidenceEngine: openaiEvidence,
@@ -1816,7 +1853,32 @@ app.post("/api/identify-card", async (request, response) => {
       model: accuracyModel,
       webEvidence,
     });
+    providerInvoked = true;
     const identification = await identificationEngine.identify(request.body);
+    const identifiedFields = Object.values(identification.fields).filter((field) => field.value !== null);
+    recordProviderUsage({
+      provider: "openai",
+      operation: "card_identification",
+      success: true,
+      durationMs: performance.now() - providerStartedAt,
+      returnedCount: identifiedFields.length,
+      usefulCount: identifiedFields.filter((field) => field.confidence >= 0.7).length,
+    });
+    const webFields = identifiedFields.filter((field) =>
+      field.inferenceSource === "web" || field.inferenceSource === "mixed",
+    );
+    if (identification.pipeline.stages.some((stage) => stage.name === "web_evidence")) {
+      recordProviderUsage({
+        provider: "google_vision",
+        operation: "web_detection",
+        success: !identification.pipeline.stages.some((stage) =>
+          stage.name === "web_evidence" && stage.status === "degraded",
+        ),
+        durationMs: identification.pipeline.stages.find((stage) => stage.name === "web_evidence")?.durationMs ?? 0,
+        returnedCount: webFields.length,
+        usefulCount: webFields.filter((field) => field.confidence >= 0.7).length,
+      });
+    }
     console.info(
       "Card identification completed",
       JSON.stringify({
@@ -1834,6 +1896,14 @@ app.post("/api/identify-card", async (request, response) => {
     );
     response.json({ identification });
   } catch (error) {
+    if (providerInvoked) {
+      recordProviderUsage({
+        provider: "openai",
+        operation: "card_identification",
+        success: false,
+        durationMs: performance.now() - providerStartedAt,
+      });
+    }
     if (error instanceof ImageIntakeError) {
       response.status(error.status).json({ error: error.message });
       return;
@@ -1891,9 +1961,18 @@ app.post("/api/pokemon/catalog-search", async (request, response) => {
     return;
   }
 
+  const providerStartedAt = performance.now();
   try {
     const fields = CandidateValuesSchema.parse(request.body?.fields);
     const result = await pokemonCatalog.search(fields, { limit });
+    recordProviderUsage({
+      provider: "pokemon_tcg",
+      operation: "catalog_search",
+      success: true,
+      durationMs: performance.now() - providerStartedAt,
+      returnedCount: result.candidates.length,
+      usefulCount: result.candidates.filter((candidate) => candidate.matchScore >= 0.65).length,
+    });
     console.info(
       "Pokémon catalog search completed",
       JSON.stringify({
@@ -1905,6 +1984,12 @@ app.post("/api/pokemon/catalog-search", async (request, response) => {
     );
     response.json(result);
   } catch (error) {
+    recordProviderUsage({
+      provider: "pokemon_tcg",
+      operation: "catalog_search",
+      success: false,
+      durationMs: performance.now() - providerStartedAt,
+    });
     if (error instanceof ZodError) {
       response.status(400).json({
         error: "The Pokémon catalog-search card details are invalid.",
@@ -1946,15 +2031,32 @@ app.post("/api/pokemon/catalog-search", async (request, response) => {
 
 app.post("/api/card-catalog/candidates", async (request, response) => {
   if (!theCardCatalog) return response.status(503).json({ error: "The Card API catalog is not configured." });
+  const providerStartedAt = performance.now();
   try {
     const identification = CardIdentificationResultSchema.parse(request.body?.identification);
     const candidates = await remoteCatalogCandidates.generate(identification);
     const verification = verifyCandidates(identification, candidates);
+    recordProviderUsage({
+      provider: "the_card_api",
+      operation: "catalog_candidates",
+      success: true,
+      durationMs: performance.now() - providerStartedAt,
+      returnedCount: candidates.filter((candidate) => candidate.id.startsWith("the-card-api-")).length,
+      usefulCount: verification.candidateMatches.filter((candidate) =>
+        candidate.id.startsWith("the-card-api-") && candidate.matchConfidence >= 0.65,
+      ).length,
+    });
     response.json({
       candidateMatches: verification.candidateMatches,
       fields: verification.fields,
     });
   } catch (error) {
+    recordProviderUsage({
+      provider: "the_card_api",
+      operation: "catalog_candidates",
+      success: false,
+      durationMs: performance.now() - providerStartedAt,
+    });
     if (error instanceof ZodError) return response.status(400).json({ error: "The catalog candidate request is invalid." });
     response.status(502).json({ error: error.message ?? "The card catalog is temporarily unavailable." });
   }
@@ -1977,6 +2079,7 @@ app.post("/api/ebay/image-search", async (request, response) => {
     return;
   }
 
+  const providerStartedAt = performance.now();
   try {
     const intake = parseImageIntake(request.body);
     const result = await ebayImageSearch.searchByImage({
@@ -1988,6 +2091,14 @@ app.post("/api/ebay/image-search", async (request, response) => {
       candidates: result.candidates,
       limit: Math.min(6, limit),
     });
+    recordProviderUsage({
+      provider: "ebay",
+      operation: "image_search",
+      success: true,
+      durationMs: performance.now() - providerStartedAt,
+      returnedCount: result.candidates.length,
+      usefulCount: candidates.filter((candidate) => candidate.visualMatch?.score >= 0.7).length,
+    });
     console.info(
       "eBay image search completed",
       JSON.stringify({
@@ -1998,6 +2109,12 @@ app.post("/api/ebay/image-search", async (request, response) => {
     );
     response.json({ ...result, candidates });
   } catch (error) {
+    recordProviderUsage({
+      provider: "ebay",
+      operation: "image_search",
+      success: false,
+      durationMs: performance.now() - providerStartedAt,
+    });
     if (error instanceof ImageIntakeError) {
       response.status(error.status).json({ error: error.message });
       return;

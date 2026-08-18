@@ -5,6 +5,7 @@ import { SupabaseAccountPreferencesRepository } from "./account-preferences.mjs"
 import { SupabaseEbaySellingStore } from "./ebay-selling-store.mjs";
 import { SupabaseAdminOverview } from "./admin-overview.mjs";
 import { SupabaseIdentificationFeedback } from "./identification-feedback.mjs";
+import { SupabaseProviderUsage } from "./provider-usage.mjs";
 
 export function supabaseConfiguration(env = process.env) {
   const requested = env.COLLECTION_STORAGE_MODE?.trim().toLowerCase() === "supabase";
@@ -61,6 +62,18 @@ export function createSupabaseServices(configuration) {
     },
   );
   const identificationFeedback = new SupabaseIdentificationFeedback({ client: adminClient });
+  const providerUsage = new SupabaseProviderUsage({
+    client: adminClient,
+    monthlyCosts: {
+      openai: Number(process.env.OPENAI_MONTHLY_COST_CENTS) || 0,
+      google_vision: Number(process.env.GOOGLE_VISION_MONTHLY_COST_CENTS) || 0,
+      the_card_api: Number(process.env.THE_CARD_API_MONTHLY_COST_CENTS) || 0,
+      ebay: Number(process.env.EBAY_API_MONTHLY_COST_CENTS) || 0,
+      pokemon_tcg: Number(process.env.POKEMON_TCG_MONTHLY_COST_CENTS) || 0,
+      render: Number(process.env.RENDER_MONTHLY_COST_CENTS) || 0,
+      supabase: Number(process.env.SUPABASE_MONTHLY_COST_CENTS) || 0,
+    },
+  });
   return {
     auth: new SupabaseAuthService({
       client: authClient,
@@ -76,6 +89,7 @@ export function createSupabaseServices(configuration) {
     preferences: new SupabaseAccountPreferencesRepository({ client: adminClient }),
     ebaySelling: new SupabaseEbaySellingStore({ client: adminClient }),
     identificationFeedback,
-    adminOverview: new SupabaseAdminOverview({ client: adminClient, identificationFeedback }),
+    providerUsage,
+    adminOverview: new SupabaseAdminOverview({ client: adminClient, identificationFeedback, providerUsage }),
   };
 }

@@ -56,6 +56,20 @@ services:
         sync: false
       - key: THE_CARD_API_KEY
         sync: false
+      - key: THE_CARD_API_MONTHLY_COST_CENTS
+        value: "0"
+      - key: OPENAI_MONTHLY_COST_CENTS
+        value: "0"
+      - key: GOOGLE_VISION_MONTHLY_COST_CENTS
+        value: "0"
+      - key: EBAY_API_MONTHLY_COST_CENTS
+        value: "0"
+      - key: POKEMON_TCG_MONTHLY_COST_CENTS
+        value: "0"
+      - key: RENDER_MONTHLY_COST_CENTS
+        value: "700"
+      - key: SUPABASE_MONTHLY_COST_CENTS
+        value: "0"
       - key: POKEMON_TCG_API_KEY
         sync: false
       - key: SUPABASE_URL

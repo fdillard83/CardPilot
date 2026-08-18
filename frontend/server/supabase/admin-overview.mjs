@@ -1,9 +1,10 @@
 function cents(value) { return Number.isFinite(Number(value)) ? Number(value) : 0; }
 
 export class SupabaseAdminOverview {
-  constructor({ client, identificationFeedback = null }) {
+  constructor({ client, identificationFeedback = null, providerUsage = null }) {
     this.client = client;
     this.identificationFeedback = identificationFeedback;
+    this.providerUsage = providerUsage;
   }
 
   async load() {
@@ -16,11 +17,12 @@ export class SupabaseAdminOverview {
       if ((data?.users?.length ?? 0) < 1000) break;
       page += 1;
     }
-    const [{ data: cards, error: cardError }, { data: drafts, error: draftError }, { data: sales, error: salesError }, fieldFeedback] = await Promise.all([
+    const [{ data: cards, error: cardError }, { data: drafts, error: draftError }, { data: sales, error: salesError }, fieldFeedback, providerUsage] = await Promise.all([
       this.client.from("collection_cards").select("user_id"),
       this.client.from("ebay_listing_drafts").select("user_id,status,draft"),
       this.client.from("ebay_order_sales").select("user_id,amount_cents,currency"),
       this.identificationFeedback?.summary() ?? [],
+      this.providerUsage?.summary() ?? [],
     ]);
     if (cardError || draftError || salesError) throw cardError ?? draftError ?? salesError;
     const rows = users.map((user) => {
@@ -47,6 +49,7 @@ export class SupabaseAdminOverview {
         currency: "USD",
       },
       fieldFeedback,
+      providerUsage,
     };
   }
 }
