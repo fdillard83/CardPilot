@@ -199,6 +199,7 @@ export function normalizeEvidence(raw) {
         ),
         source: "model_knowledge",
         catalogRecordId: null,
+        imageUrl: null,
         values: Object.fromEntries(
           fieldKeys.map((field) => [
             field,

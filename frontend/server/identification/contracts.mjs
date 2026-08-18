@@ -162,6 +162,7 @@ export const CandidateMatchSchema = z
     label: z.string().min(1),
     source: z.enum(["model_knowledge", "catalog", "provisional"]),
     catalogRecordId: z.string().nullable(),
+    imageUrl: z.string().url().nullable().default(null),
     values: CandidateValuesSchema,
     matchConfidence: confidence,
     supportingFields: z.array(FieldKeySchema),

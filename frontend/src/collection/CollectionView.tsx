@@ -11,6 +11,8 @@ import {
   formatFieldValue,
   valuationFeatureOptions,
   type ActiveMarketSnapshot,
+  type ActiveMarketListing,
+  type EbayItemDetails,
   type FieldKey,
   type FieldValue,
   type GradingProfile,
@@ -217,6 +219,35 @@ function soldSuggestionFields(card: SavedCollectionCard, sale: SoldComparable) {
     !isExactSerialNumber(card.fields.serialNumber)
   ) {
     fields.serialNumber = suggestions.serialNumber;
+  }
+  return fields;
+}
+
+function ebaySuggestionFields(
+  card: SavedCollectionCard,
+  details: EbayItemDetails | null,
+) {
+  const fields: Partial<Record<FieldKey, FieldValue>> = {};
+  if (!details) return fields;
+  const supported: Array<[FieldKey, FieldValue]> = [
+    ["character", details.suggestions.character],
+    ["setOrInsert", details.suggestions.setOrInsert],
+    ["year", details.suggestions.year],
+    ["cardNumber", details.suggestions.cardNumber],
+    ["parallel", details.suggestions.parallel],
+    ["language", details.suggestions.language],
+    ["rarity", details.suggestions.rarity],
+    ["finish", details.suggestions.finish],
+    ["promo", details.suggestions.promo],
+  ];
+  for (const [key, value] of supported) {
+    if (value !== null) fields[key] = value;
+  }
+  if (
+    details.suggestions.serialNumber &&
+    !isExactSerialNumber(card.fields.serialNumber)
+  ) {
+    fields.serialNumber = details.suggestions.serialNumber;
   }
   return fields;
 }
@@ -494,6 +525,14 @@ function ActiveMarketPanel({
   isRecommendationUpdating,
   recommendationError,
   onReviewRecommendation,
+  selectedMatchId,
+  confirmedMatchId,
+  isLoadingMatch,
+  isConfirmingMatch,
+  matchError,
+  matchDetails,
+  onSelectMatch,
+  onConfirmMatch,
 }: {
   card: SavedCollectionCard;
   snapshot: ActiveMarketSnapshot | null;
@@ -508,6 +547,14 @@ function ActiveMarketPanel({
   isRecommendationUpdating: boolean;
   recommendationError: string | null;
   onReviewRecommendation: () => void;
+  selectedMatchId: string | null;
+  confirmedMatchId: string | null;
+  isLoadingMatch: boolean;
+  isConfirmingMatch: boolean;
+  matchError: string | null;
+  matchDetails: EbayItemDetails | null;
+  onSelectMatch: (listing: ActiveMarketListing | null) => void;
+  onConfirmMatch: (listing: ActiveMarketListing) => void;
 }) {
   const orderedGroups = snapshot
     ? [...snapshot.groups].sort(
@@ -644,6 +691,14 @@ function ActiveMarketPanel({
                   )}
                   <div className="market-listings">
                     {group.listings.map((listing) => {
+                      const isSelected = selectedMatchId === listing.itemId;
+                      const isConfirmed = confirmedMatchId === listing.itemId;
+                      const suggestedFields = isSelected
+                        ? ebaySuggestionFields(card, matchDetails)
+                        : {};
+                      const suggestionEntries = Object.entries(suggestedFields) as Array<
+                        [FieldKey, FieldValue]
+                      >;
                       const listingContents = (
                         <>
                           {listing.imageUrl ? (
@@ -698,6 +753,46 @@ function ActiveMarketPanel({
                           >
                             Exclude from pricing
                           </button>
+                          {!isConfirmed && (
+                            <button
+                              type="button"
+                              className="market-match-card"
+                              disabled={isConfirmingMatch}
+                              onClick={() => onSelectMatch(isSelected ? null : listing)}
+                            >
+                              {isSelected ? "Cancel selection" : "This looks like my card"}
+                            </button>
+                          )}
+                          {isSelected && !isConfirmed && (
+                            <div className="market-match-confirmation">
+                              <strong>Confirm this active listing matches your card?</strong>
+                              {isLoadingMatch ? (
+                                <span>Loading the seller-provided card details...</span>
+                              ) : matchError ? (
+                                <span>{matchError}</span>
+                              ) : suggestionEntries.length > 0 ? (
+                                <>
+                                  <span>CardPilot will update these details:</span>
+                                  <div className="ebay-suggestions">
+                                    {suggestionEntries.map(([key, value]) => (
+                                      <span key={key}>
+                                        {fieldLabelFor(key, card.fields)}: {formatFieldValue(value)}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </>
+                              ) : (
+                                <span>The listing confirms the visual match, but has no additional safe details to apply.</span>
+                              )}
+                              <button
+                                type="button"
+                                disabled={isLoadingMatch || isConfirmingMatch || Boolean(matchError)}
+                                onClick={() => onConfirmMatch(listing)}
+                              >
+                                {isConfirmingMatch ? "Updating card..." : "Confirm match and update card"}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -1045,6 +1140,11 @@ export function CollectionView({
   const [marketExcludedAnchorIds, setMarketExcludedAnchorIds] = useState<
     string[]
   >([]);
+  const [selectedActiveMatchId, setSelectedActiveMatchId] = useState<string | null>(null);
+  const [confirmedActiveMatchId, setConfirmedActiveMatchId] = useState<string | null>(null);
+  const [activeMatchDetails, setActiveMatchDetails] = useState<EbayItemDetails | null>(null);
+  const [activeMatchBusy, setActiveMatchBusy] = useState(false);
+  const [activeMatchError, setActiveMatchError] = useState<string | null>(null);
   const marketRequestIdRef = useRef(0);
   const [soldCardId, setSoldCardId] = useState<string | null>(null);
   const [soldSnapshot, setSoldSnapshot] = useState<SoldCompsSnapshot | null>(null);
@@ -1202,6 +1302,11 @@ export function CollectionView({
     setMarketError(null);
     setMarketShowingPrevious(false);
     setMarketExcludedAnchorIds([]);
+    setSelectedActiveMatchId(null);
+    setConfirmedActiveMatchId(null);
+    setActiveMatchDetails(null);
+    setActiveMatchBusy(false);
+    setActiveMatchError(null);
     soldRequestIdRef.current += 1;
     setSoldCardId(null);
     setSoldSnapshot(null);
@@ -1298,6 +1403,9 @@ export function CollectionView({
       setMarketSnapshot(null);
       setMarketError(null);
       setMarketShowingPrevious(false);
+      setSelectedActiveMatchId(null);
+      setActiveMatchDetails(null);
+      setActiveMatchError(null);
     } else {
       const samePricingSession = pricingSessionCardId === card.collectionId;
       if (!samePricingSession) {
@@ -1312,6 +1420,92 @@ export function CollectionView({
         card,
         samePricingSession ? marketExcludedAnchorIds : [],
       );
+    }
+  };
+
+  const selectActiveMarketMatch = async (listing: ActiveMarketListing | null) => {
+    if (!listing) {
+      setSelectedActiveMatchId(null);
+      setActiveMatchDetails(null);
+      setActiveMatchError(null);
+      return;
+    }
+    setSelectedActiveMatchId(listing.itemId);
+    setActiveMatchDetails(null);
+    setActiveMatchError(null);
+    setActiveMatchBusy(true);
+    try {
+      const response = await fetch(`/api/ebay/items/${encodeURIComponent(listing.itemId)}`);
+      const payload = (await response.json().catch(() => null)) as
+        | { item?: EbayItemDetails; error?: string }
+        | null;
+      if (!response.ok || !payload?.item) {
+        throw new Error(payload?.error ?? "CardPilot could not load that listing's details.");
+      }
+      setActiveMatchDetails(payload.item);
+    } catch (caughtError) {
+      setActiveMatchError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not load that listing's details.",
+      );
+    } finally {
+      setActiveMatchBusy(false);
+    }
+  };
+
+  const confirmActiveMarketMatch = async (
+    card: SavedCollectionCard,
+    listing: ActiveMarketListing,
+  ) => {
+    if (activeMatchBusy || busyId) return;
+    const suggestions = ebaySuggestionFields(card, activeMatchDetails);
+    const updatedFields = { ...card.fields, ...suggestions };
+    setActiveMatchBusy(true);
+    setActionError(null);
+    try {
+      const response = await fetch(
+        `/api/collection/${encodeURIComponent(card.collectionId)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fields: updatedFields,
+            grading: card.grading,
+            valuationProfile:
+              card.valuationProfile.source === "derived"
+                ? deriveValuationProfile(updatedFields)
+                : card.valuationProfile,
+            ebayReference: {
+              itemId: listing.itemId,
+              title: listing.title,
+              itemWebUrl: listing.itemWebUrl,
+            },
+          }),
+        },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { card?: SavedCollectionCard; error?: string }
+        | null;
+      if (!response.ok || !payload?.card) {
+        throw new Error(payload?.error ?? "CardPilot could not update this card from the active listing.");
+      }
+      onCardsChange(
+        cards.map((item) =>
+          item.collectionId === payload.card?.collectionId ? payload.card : item,
+        ),
+      );
+      setSelectedActiveMatchId(null);
+      setConfirmedActiveMatchId(listing.itemId);
+      setActiveMatchDetails(null);
+    } catch (caughtError) {
+      setActionError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not update this card from the active listing.",
+      );
+    } finally {
+      setActiveMatchBusy(false);
     }
   };
 
@@ -2694,6 +2888,14 @@ export function CollectionView({
                     onReviewRecommendation={() =>
                       reviewUpdatedRecommendation(card)
                     }
+                    selectedMatchId={selectedActiveMatchId}
+                    confirmedMatchId={confirmedActiveMatchId}
+                    isLoadingMatch={activeMatchBusy && selectedActiveMatchId !== null}
+                    isConfirmingMatch={activeMatchBusy && activeMatchDetails !== null}
+                    matchError={activeMatchError}
+                    matchDetails={activeMatchDetails}
+                    onSelectMatch={(listing) => void selectActiveMarketMatch(listing)}
+                    onConfirmMatch={(listing) => void confirmActiveMarketMatch(card, listing)}
                   />
                 )}
                 {isSoldOpen && !isEditing && (

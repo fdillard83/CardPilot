@@ -28,6 +28,7 @@ import { CatalogCandidateGenerator, RemoteCatalogCandidateGenerator } from "./id
 import { OpenAIEvidenceEngine } from "./identification/evidence-engine.mjs";
 import { CachedEvidenceEngine } from "./identification/evidence-cache.mjs";
 import { IdentificationEngine } from "./identification/identification-engine.mjs";
+import { VisualImageMatcher } from "./identification/visual-image-matcher.mjs";
 import {
   ImageIntakeError,
   parseImageIntake,
@@ -110,6 +111,7 @@ const ebayTaxonomy = ebayConfigured
 const activeMarket = ebayImageSearch
   ? new ActiveMarketService({ ebayClient: ebayImageSearch })
   : null;
+const visualImageMatcher = new VisualImageMatcher();
 const theCardApiKey = process.env.THE_CARD_API_KEY?.trim();
 const soldComps = theCardApiKey
   ? new SoldCompsService({
@@ -1862,7 +1864,10 @@ app.post("/api/card-catalog/candidates", async (request, response) => {
     const identification = CardIdentificationResultSchema.parse(request.body?.identification);
     const candidates = await remoteCatalogCandidates.generate(identification);
     const verification = verifyCandidates(identification, candidates);
-    response.json({ candidateMatches: verification.candidateMatches });
+    response.json({
+      candidateMatches: verification.candidateMatches,
+      fields: verification.fields,
+    });
   } catch (error) {
     if (error instanceof ZodError) return response.status(400).json({ error: "The catalog candidate request is invalid." });
     response.status(502).json({ error: error.message ?? "The card catalog is temporarily unavailable." });
@@ -1892,6 +1897,11 @@ app.post("/api/ebay/image-search", async (request, response) => {
       imageDataUrl: intake.frontImage,
       limit,
     });
+    const candidates = await visualImageMatcher.rank({
+      sourceImageDataUrl: intake.frontImage,
+      candidates: result.candidates,
+      limit: Math.min(6, limit),
+    });
     console.info(
       "eBay image search completed",
       JSON.stringify({
@@ -1900,7 +1910,7 @@ app.post("/api/ebay/image-search", async (request, response) => {
         total: result.total,
       }),
     );
-    response.json(result);
+    response.json({ ...result, candidates });
   } catch (error) {
     if (error instanceof ImageIntakeError) {
       response.status(error.status).json({ error: error.message });

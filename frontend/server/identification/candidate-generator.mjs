@@ -96,6 +96,7 @@ export class CatalogCandidateGenerator {
         label: record.label,
         source: "catalog",
         catalogRecordId: record.id,
+        imageUrl: record.imageUrl ?? null,
         values: record.values,
         plausibility,
         basis: `Independent checklist candidate. Ranked from visible player, team, marks, and card-design clues. Verify ${record.values.cardNumber ? `card number ${record.values.cardNumber}` : "the card number"} before accepting.`,
@@ -140,6 +141,7 @@ function remoteCandidate(card) {
     label: [card.year, card.setName, card.subject, card.cardNumber ? `#${card.cardNumber}` : null, card.printRun ? `/${card.printRun}` : null].filter(Boolean).join(" "),
     source: "catalog",
     catalogRecordId: card.ucid,
+    imageUrl: card.imageUrlFront,
     values,
     plausibility: 0.84,
     basis: "The Card API checklist candidate matched from structured player, set, card-number, parallel, and print-run data.",
@@ -174,7 +176,27 @@ export class RemoteCatalogCandidateGenerator {
     const cached = this.cache.get(key);
     if (cached && cached.expiresAt > this.now()) return structuredClone(cached.candidates);
     try {
-      const result = await this.client.searchCards(search);
+      let result = await this.client.searchCards(search);
+      if (!result.cards.length) {
+        result = await this.client.searchCards({
+          ...search,
+          query: [
+            extraction.fields.player.value,
+            extraction.fields.manufacturer.value,
+            extraction.fields.product.value,
+            extraction.fields.setOrInsert.value,
+          ].filter(Boolean).join(" "),
+          year: null,
+        });
+      }
+      if (!result.cards.length && extraction.fields.player.value) {
+        result = await this.client.searchCards({
+          ...search,
+          query: extraction.fields.player.value,
+          year: null,
+          cardNumber: extraction.fields.cardNumber.value,
+        });
+      }
       const candidates = result.cards.map(remoteCandidate);
       if (!candidates.length) return this.fallback.generate(extraction);
       this.cache.set(key, { candidates: structuredClone(candidates), expiresAt: this.now() + this.cacheDurationMs });
@@ -204,6 +226,7 @@ export function createProvisionalCandidate(extraction) {
     label: label || "Visible-evidence candidate",
     source: "provisional",
     catalogRecordId: null,
+    imageUrl: null,
     values,
     plausibility: 0.5,
     basis: "Built from visible evidence because no independent checklist result was available.",

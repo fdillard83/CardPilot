@@ -73,3 +73,26 @@ test("remote catalog candidates preserve permanent IDs and print runs", async ()
   assert.equal(candidates[0].values.parallel, "Orange");
   assert.equal(candidates[0].values.serialNumber, "/25");
 });
+
+test("remote catalog retries without an uncertain year before falling back", async () => {
+  const observed = extraction("Edgar Martinez");
+  observed.fields.year = field("2026");
+  observed.fields.manufacturer = field("Topps");
+  observed.fields.product = field("Tribute");
+  const searches = [];
+  const generator = new RemoteCatalogCandidateGenerator({
+    client: {
+      searchCards: async (search) => {
+        searches.push(search);
+        return search.year === null
+          ? { cards: [{ ucid: "UC-EDGAR-BROAD", subject: "Edgar Martinez", sport: "Baseball", year: 2025, manufacturer: "Topps", setName: "Topps Tribute", parentSetName: null, cardNumber: "TA-EM", parallel: "Orange", isRookie: false, isAuto: true, isRelic: false, printRun: 25 }] }
+          : { cards: [] };
+      },
+    },
+  });
+  const candidates = await generator.generate(observed);
+  assert.equal(searches.length, 2);
+  assert.equal(searches[0].year, 2026);
+  assert.equal(searches[1].year, null);
+  assert.equal(candidates[0].catalogRecordId, "UC-EDGAR-BROAD");
+});

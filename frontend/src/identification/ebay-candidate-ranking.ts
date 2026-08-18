@@ -16,8 +16,11 @@ function denominator(value: FieldValue | undefined) {
 function candidateScore(fields: Record<FieldKey, FieldValue>, candidate: EbayImageSearchCandidate) {
   const title = candidate.title;
   const identity = fields.player ?? fields.character;
-  let score = Math.max(0, 12 - candidate.rank);
-  if (identity) score += titleContains(title, identity) ? 90 : -90;
+  // eBay search_by_image rank is the independent visual signal. Preserve it
+  // strongly, then use confirmed text to corroborate or reject obvious conflicts.
+  let score = Math.max(0, 7 - candidate.rank) * 15;
+  score += (candidate.visualMatch?.score ?? 0) * 110;
+  if (identity) score += titleContains(title, identity) ? 90 : -120;
   for (const [field, weight] of [
     ["year", 24], ["manufacturer", 12], ["product", 16], ["brand", 8],
     ["setOrInsert", 18], ["cardNumber", 30], ["parallel", 25],

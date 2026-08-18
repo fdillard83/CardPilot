@@ -83,6 +83,7 @@ function scoreCandidate(extraction, candidate) {
     label: candidate.label,
     source: candidate.source,
     catalogRecordId: candidate.catalogRecordId,
+    imageUrl: candidate.imageUrl ?? null,
     values: candidate.values,
     matchConfidence: Number(matchConfidence.toFixed(3)),
     supportingFields,

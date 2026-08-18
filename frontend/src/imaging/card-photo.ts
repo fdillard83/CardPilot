@@ -487,13 +487,15 @@ export async function createCardDetailImages(
     const imageBlob = await (await fetch(imageDataUrl)).blob();
     bitmap = await createImageBitmap(imageBlob);
     const cropWidth = bitmap.width;
-    const cropHeight = Math.max(1, Math.round(bitmap.height * 0.58));
+    // Narrow detail bands retain the small identifying text while avoiding two
+    // nearly complete duplicate images in the model request.
+    const cropHeight = Math.max(1, Math.round(bitmap.height * 0.32));
     const zones = [
       { label: "upper detail band", x: 0, y: 0 },
       { label: "lower detail band", x: 0, y: bitmap.height - cropHeight },
     ];
     return zones.flatMap((zone) => {
-      const scale = Math.min(1.5, 1200 / Math.max(cropWidth, cropHeight));
+      const scale = Math.min(1.2, 900 / Math.max(cropWidth, cropHeight));
       const canvas = document.createElement("canvas");
       canvas.width = Math.max(1, Math.round(cropWidth * scale));
       canvas.height = Math.max(1, Math.round(cropHeight * scale));

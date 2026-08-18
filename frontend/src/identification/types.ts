@@ -216,6 +216,7 @@ export type CardIdentification = {
     label: string;
     source: "model_knowledge" | "catalog" | "provisional";
     catalogRecordId: string | null;
+    imageUrl: string | null;
     values: Record<FieldKey, FieldValue>;
     matchConfidence: number;
     supportingFields: FieldKey[];
@@ -272,6 +273,12 @@ export type EbayImageSearchCandidate = {
     categoryId: string;
     categoryName: string | null;
   }>;
+  visualMatch?: {
+    score: number;
+    pixelScore: number;
+    borderScore: number;
+    layoutScore: number;
+  };
 };
 
 export type EbayImageSearchResult = {

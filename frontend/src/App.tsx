@@ -199,6 +199,11 @@ function EbayMatchCard({
           <strong>{formatListingPrice(candidate.price)}</strong>
           {candidate.condition && <span>{candidate.condition}</span>}
         </div>
+        {candidate.visualMatch && (
+          <small className="ebay-visual-score">
+            {Math.round(candidate.visualMatch.score * 100)}% CardPilot visual match · border {Math.round(candidate.visualMatch.borderScore * 100)}% · layout {Math.round(candidate.visualMatch.layoutScore * 100)}%
+          </small>
+        )}
         {isSelected ? (
           <div className="ebay-inline-selection" role="status">
             <div className="ebay-inline-selection-heading">
@@ -576,6 +581,7 @@ function App() {
   const [isSavingCollection, setIsSavingCollection] = useState(false);
   const [identificationProgress, setIdentificationProgress] = useState("");
   const [identificationElapsedSeconds, setIdentificationElapsedSeconds] = useState(0);
+  const [identificationProgressPercent, setIdentificationProgressPercent] = useState(0);
   const [identificationCompletedMs, setIdentificationCompletedMs] = useState<number | null>(null);
   const [accountSession, setAccountSession] = useState<AccountSession | null>(null);
   const [accountSessionError, setAccountSessionError] = useState<string | null>(null);
@@ -773,8 +779,19 @@ function App() {
 
     const startedAt = Date.now();
     const updateProgress = () => {
-      const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+      const elapsedMilliseconds = Date.now() - startedAt;
+      const elapsedSeconds = Math.floor(elapsedMilliseconds / 1000);
+      const progressPercent = elapsedMilliseconds < 2_000
+        ? 6 + (elapsedMilliseconds / 2_000) * 19
+        : elapsedMilliseconds < 6_000
+          ? 25 + ((elapsedMilliseconds - 2_000) / 4_000) * 27
+          : elapsedMilliseconds < 11_000
+            ? 52 + ((elapsedMilliseconds - 6_000) / 5_000) * 23
+            : elapsedMilliseconds < 18_000
+              ? 75 + ((elapsedMilliseconds - 11_000) / 7_000) * 13
+              : Math.min(96, 88 + (1 - Math.exp(-(elapsedMilliseconds - 18_000) / 12_000)) * 8);
       setIdentificationElapsedSeconds(elapsedSeconds);
+      setIdentificationProgressPercent(Math.round(progressPercent));
       setIdentificationProgress(
         elapsedSeconds < 3
           ? "Preparing card photos"
@@ -785,7 +802,8 @@ function App() {
               : "Finishing the evidence review",
       );
     };
-    const timer = window.setInterval(updateProgress, 1000);
+    updateProgress();
+    const timer = window.setInterval(updateProgress, 160);
     return () => window.clearInterval(timer);
   }, [isIdentifying]);
 
@@ -942,11 +960,16 @@ function App() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ identification: cardIdentification }),
       });
-      const payload = (await response.json().catch(() => null)) as { candidateMatches?: CardIdentification["candidateMatches"]; error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as {
+        candidateMatches?: CardIdentification["candidateMatches"];
+        fields?: CardIdentification["fields"];
+        error?: string;
+      } | null;
       if (!response.ok || !Array.isArray(payload?.candidateMatches)) throw new Error(payload?.error ?? "Catalog verification was unavailable.");
       if (requestId !== cardCatalogRequestIdRef.current || !payload.candidateMatches.length) return;
       setIdentification((current) => current ? {
         ...current,
+        fields: payload.fields ?? current.fields,
         candidateMatches: [...payload.candidateMatches!, ...current.candidateMatches]
           .filter((candidate, index, all) => all.findIndex((item) => item.id === candidate.id) === index)
           .sort((left, right) => right.matchConfidence - left.matchConfidence)
@@ -1018,6 +1041,7 @@ function App() {
 
     setIdentificationProgress("Preparing card photos");
     setIdentificationElapsedSeconds(0);
+    setIdentificationProgressPercent(4);
     setIdentificationCompletedMs(null);
     setIsIdentifying(true);
     setError(null);
@@ -1974,8 +1998,29 @@ function App() {
 
               {isIdentifying ? (
                 <>
-                  <div className="identify-button identify-button-status" role="status">
-                    <span className="spinner" /> {identificationProgress} ({identificationElapsedSeconds}s)
+                  <div className="identification-progress-card" role="status" aria-live="polite">
+                    <div className="identification-progress-heading">
+                      <span><span className="spinner" /> {identificationProgress}</span>
+                      <strong>{identificationElapsedSeconds}s</strong>
+                    </div>
+                    <div
+                      className="identification-progress-track"
+                      role="progressbar"
+                      aria-label="Card identification progress"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={identificationProgressPercent}
+                    >
+                      <span
+                        className="identification-progress-buffer"
+                        style={{ width: `${Math.min(98, identificationProgressPercent + 12)}%` }}
+                      />
+                      <span
+                        className="identification-progress-fill"
+                        style={{ width: `${identificationProgressPercent}%` }}
+                      />
+                    </div>
+                    <small>{identificationProgressPercent}% processed</small>
                   </div>
                   <p className="scan-progress-note">
                     Identification started automatically. Image matching is running alongside it.
@@ -2111,6 +2156,14 @@ function App() {
                           className={`candidate-card${isSelected ? " candidate-card-selected" : ""}`}
                           key={candidate.id}
                         >
+                          {candidate.imageUrl && (
+                            <img
+                              className="candidate-catalog-image"
+                              src={candidate.imageUrl}
+                              alt={`Catalog image for ${candidate.label}`}
+                              loading="lazy"
+                            />
+                          )}
                           <div className="candidate-heading">
                             <strong>{candidate.label}</strong>
                             {candidate.source === "catalog" && (
