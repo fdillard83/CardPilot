@@ -1,4 +1,7 @@
-import { isReliableCardDetection } from "./card-detection";
+import {
+  getNormalizedCardDimensions,
+  isReliableCardDetection,
+} from "./card-detection";
 
 export type PreparedCardPhoto = {
   image: string;
@@ -385,18 +388,15 @@ function straightenCard(
     (distance(detectedCorners[0], detectedCorners[3]) +
       distance(detectedCorners[1], detectedCorners[2])) /
     2;
-  const corners: Quad =
-    horizontalLength > verticalLength
-      ? [
-          detectedCorners[3],
-          detectedCorners[0],
-          detectedCorners[1],
-          detectedCorners[2],
-        ]
-      : detectedCorners;
+  const corners = detectedCorners;
+  const dimensions = getNormalizedCardDimensions(
+    horizontalLength,
+    verticalLength,
+    maxDimension,
+  );
   const output = document.createElement("canvas");
-  output.height = Math.max(1, Math.round(maxDimension));
-  output.width = Math.max(1, Math.round(output.height * STANDARD_CARD_RATIO));
+  output.width = dimensions.width;
+  output.height = dimensions.height;
   const context = output.getContext("2d");
   if (!context) return null;
   context.imageSmoothingEnabled = true;

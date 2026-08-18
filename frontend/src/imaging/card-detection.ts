@@ -12,6 +12,25 @@ export type CardDetectionMetrics = {
 
 const STANDARD_CARD_RATIO = 2.5 / 3.5;
 
+export function getNormalizedCardDimensions(
+  horizontalLength: number,
+  verticalLength: number,
+  maxDimension: number,
+) {
+  const isLandscape = horizontalLength > verticalLength;
+  return isLandscape
+    ? {
+        width: Math.max(1, Math.round(maxDimension)),
+        height: Math.max(1, Math.round(maxDimension * STANDARD_CARD_RATIO)),
+        isLandscape,
+      }
+    : {
+        width: Math.max(1, Math.round(maxDimension * STANDARD_CARD_RATIO)),
+        height: Math.max(1, Math.round(maxDimension)),
+        isLandscape,
+      };
+}
+
 /**
  * Reject uncertain detections instead of risking an irreversible partial crop.
  * The original photo remains usable by identification when this returns false.

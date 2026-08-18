@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isReliableCardDetection } from "./card-detection.ts";
+import {
+  getNormalizedCardDimensions,
+  isReliableCardDetection,
+} from "./card-detection.ts";
 
 const reliable = {
   areaRatio: 0.76,
@@ -86,4 +89,20 @@ test("still corrects modest perspective when all four edges agree", () => {
     }),
     true,
   );
+});
+
+test("keeps a detected horizontal card in landscape orientation", () => {
+  assert.deepEqual(getNormalizedCardDimensions(700, 500, 1900), {
+    width: 1900,
+    height: 1357,
+    isLandscape: true,
+  });
+});
+
+test("keeps a detected vertical card in portrait orientation", () => {
+  assert.deepEqual(getNormalizedCardDimensions(500, 700, 1900), {
+    width: 1357,
+    height: 1900,
+    isLandscape: false,
+  });
 });
