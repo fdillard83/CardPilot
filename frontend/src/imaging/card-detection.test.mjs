@@ -55,6 +55,17 @@ test("allows a near-full crop when the original frame is card-shaped", () => {
   );
 });
 
+test("does not mistake a common 3:4 camera photo for an already-cropped card", () => {
+  assert.equal(
+    isReliableCardDetection({
+      ...reliable,
+      areaRatio: 0.49,
+      frameShortLongRatio: 3 / 4,
+    }),
+    true,
+  );
+});
+
 test("rejects distorted quadrilaterals", () => {
   assert.equal(
     isReliableCardDetection({

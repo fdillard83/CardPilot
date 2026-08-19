@@ -281,6 +281,8 @@ export type EbayImageSearchCandidate = {
     borderScore: number;
     layoutScore: number;
     structureScore?: number;
+    normalization?: string;
+    cropCoverage?: number;
   };
   visualMatchStatus?: "matched" | "unavailable" | "not_evaluated";
 };

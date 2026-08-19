@@ -37,7 +37,7 @@ export function getNormalizedCardDimensions(
  */
 export function isReliableCardDetection(metrics: CardDetectionMetrics) {
   const frameAlreadyLooksCardShaped =
-    Math.abs(metrics.frameShortLongRatio - STANDARD_CARD_RATIO) <= 0.065;
+    Math.abs(metrics.frameShortLongRatio - STANDARD_CARD_RATIO) <= 0.02;
 
   // Perspective correction amplifies even small corner errors. Favor the
   // untouched photo when opposing edges or diagonals disagree enough that a
