@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   buildActiveMarketQuery,
   buildPokemonDiscoveryQueries,
@@ -10,6 +11,7 @@ import {
 } from "../valuation/variant-adjustment.mjs";
 import { isPokemonCard } from "../card-category.mjs";
 import { suggestionsFromListingTitle } from "../ebay/image-search.mjs";
+import { isVisualMismatch } from "../identification/visual-image-matcher.mjs";
 
 const soldCompsDisclaimer =
   "Completed-sale records are supplied by The Card API and are informational comparisons, not an appraisal or guaranteed value. Exact and broader title matches remain separate, and marketplace fee or buyer-premium treatment can differ by platform.";
@@ -77,6 +79,19 @@ function saleId(sale, index) {
   );
 }
 
+function visuallyEligibleSale(sale) {
+  if (!sale.visualMatchStatus) return true;
+  return sale.visualMatchStatus === "matched" &&
+    Number.isFinite(sale.visualMatch?.score) &&
+    !isVisualMismatch(sale.visualMatch, sale.visualMatchStatus);
+}
+
+function sourceImageCacheKey(sourceImageDataUrl) {
+  return sourceImageDataUrl
+    ? createHash("sha256").update(sourceImageDataUrl).digest("base64url").slice(0, 20)
+    : "none";
+}
+
 function mergeCoverage(results) {
   const from = results
     .map((result) => result.coverage.from)
@@ -118,7 +133,8 @@ export function buildSoldCompsSnapshot({
       !excludedObservationIdSet.has(saleId(sale, index)) &&
       sale.priceConfirmed === true &&
       cents(sale.price) !== null &&
-      Boolean(cleanText(sale.currency)),
+      Boolean(cleanText(sale.currency)) &&
+      visuallyEligibleSale(sale),
   );
 
   function fromMatch(sale, match, matchTier, index) {
@@ -142,6 +158,8 @@ export function buildSoldCompsSnapshot({
       matchScore: match.score,
       matchedSignals: match.matchedSignals,
       matchTier,
+      visualMatch: sale.visualMatch ?? null,
+      visualMatchStatus: sale.visualMatchStatus ?? null,
       suggestions: suggestionsFromListingTitle(sale.title),
     };
   }
@@ -150,6 +168,7 @@ export function buildSoldCompsSnapshot({
     const match = evaluateCardTitleMatch(sale.title, fields, {
       identityConsensus,
       visualMatch: sale.visualMatch,
+      visualMatchStatus: sale.visualMatchStatus,
     });
     return match ? [fromMatch(sale, match, "exact", index)] : [];
   });
@@ -162,6 +181,7 @@ export function buildSoldCompsSnapshot({
             broader: true,
             identityConsensus,
             visualMatch: sale.visualMatch,
+            visualMatchStatus: sale.visualMatchStatus,
           });
           return match ? [fromMatch(sale, match, "broader", index)] : [];
         })
@@ -297,7 +317,7 @@ export class SoldCompsService {
     const profile = grading?.isGraded
       ? `${grading.company ?? ""}:${grading.grade ?? ""}`
       : "raw";
-    const cacheKey = `${query.toLowerCase()}|${profile.toLowerCase()}|${valuationProfile.featureType}:${valuationProfile.source}`;
+    const cacheKey = `${query.toLowerCase()}|${profile.toLowerCase()}|${valuationProfile.featureType}:${valuationProfile.source}|image:${sourceImageCacheKey(sourceImageDataUrl)}`;
     const cached = this.cache.get(cacheKey);
     const resolvedIdentityConsensus = identityConsensusPromise
       ? await identityConsensusPromise

@@ -4,7 +4,12 @@ const width = 48;
 const height = 68;
 const channels = 3;
 const maxImageBytes = 8 * 1024 * 1024;
-const allowedImageHosts = new Set(["i.ebayimg.com", "thumbs.ebaystatic.com"]);
+const allowedImageHosts = new Set([
+  "i.ebayimg.com",
+  "thumbs.ebaystatic.com",
+  "thecardapi.com",
+  "www.thecardapi.com",
+]);
 
 function dataUrlBuffer(dataUrl) {
   const match = typeof dataUrl === "string" && dataUrl.match(

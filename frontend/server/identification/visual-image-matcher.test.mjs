@@ -66,8 +66,9 @@ test("visual matcher marks candidates outside its inspection budget", async () =
   assert.equal(isVisualMismatch(null, candidates[1].visualMatchStatus), true);
 });
 
-test("visual matcher refuses non-eBay image hosts", () => {
+test("visual matcher accepts only approved marketplace and sold-provider image hosts", () => {
   assert.equal(visualImageInternals.safeCandidateUrl("https://example.com/card.jpg"), null);
   assert.equal(visualImageInternals.safeCandidateUrl("http://i.ebayimg.com/card.jpg"), null);
   assert.equal(visualImageInternals.safeCandidateUrl("https://i.ebayimg.com/card.jpg")?.hostname, "i.ebayimg.com");
+  assert.equal(visualImageInternals.safeCandidateUrl("https://www.thecardapi.com/card.jpg")?.hostname, "www.thecardapi.com");
 });

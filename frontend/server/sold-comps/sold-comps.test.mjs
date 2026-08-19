@@ -152,6 +152,40 @@ test("broader sold comparisons stay separate and reject known conflicts", () => 
   assert.equal(snapshot.groups[1].confidence, "low");
 });
 
+test("sold comps reject different, unavailable, and uninspected card images", () => {
+  const snapshot = buildSoldCompsSnapshot({
+    fields,
+    grading: raw,
+    query: exactTitle,
+    results: [result([
+      sale("matching-image", 40, {
+        visualMatchStatus: "matched",
+        visualMatch: { score: 0.94, structureScore: 0.91 },
+      }),
+      sale("different-pose", 42, {
+        visualMatchStatus: "matched",
+        visualMatch: { score: 0.48, structureScore: 0.22 },
+      }),
+      sale("not-inspected", 44, { visualMatchStatus: "not_evaluated" }),
+      sale("image-unavailable", 46, { visualMatchStatus: "unavailable" }),
+      sale("wrong-variant-anchor", 120, {
+        title: "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 On-Card Auto /50",
+        printRun: 50,
+        visualMatchStatus: "matched",
+        visualMatch: { score: 0.51, structureScore: 0.2 },
+      }),
+    ])],
+  });
+
+  assert.equal(snapshot.candidateCount, 5);
+  assert.equal(snapshot.confirmedPriceCount, 1);
+  assert.equal(snapshot.exactMatchedCount, 1);
+  assert.equal(snapshot.broaderMatchedCount, 0);
+  assert.equal(snapshot.variantEstimates.length, 0);
+  assert.equal(snapshot.groups[0].sales[0].id, "matching-image");
+  assert.equal(snapshot.groups[0].sales[0].visualMatchStatus, "matched");
+});
+
 test("sold exclusions remove exact and broader comparisons from summaries", () => {
   const results = [
     result([
@@ -281,6 +315,36 @@ test("sold-comps service retries a broad discovery query and caches in memory", 
   now += 11 * 60 * 1000;
   await service.snapshot(fields, raw);
   assert.equal(calls.length, 4);
+});
+
+test("sold-comps visual cache stays isolated to the submitted card image", async () => {
+  let providerCalls = 0;
+  let visualCalls = 0;
+  const service = new SoldCompsService({
+    cardApiClient: {
+      async searchSales() {
+        providerCalls += 1;
+        return result([sale("1", 40), sale("2", 42), sale("3", 44)]);
+      },
+    },
+    visualMatcher: {
+      async rank({ candidates }) {
+        visualCalls += 1;
+        return candidates.map((candidate) => ({
+          ...candidate,
+          visualMatchStatus: "matched",
+          visualMatch: { score: 0.95, structureScore: 0.9 },
+        }));
+      },
+    },
+  });
+
+  await service.snapshot(fields, raw, undefined, { sourceImageDataUrl: "data:image/png;base64,AAAA" });
+  await service.snapshot(fields, raw, undefined, { sourceImageDataUrl: "data:image/png;base64,AAAA" });
+  await service.snapshot(fields, raw, undefined, { sourceImageDataUrl: "data:image/png;base64,BBBB" });
+
+  assert.equal(providerCalls, 2);
+  assert.equal(visualCalls, 2);
 });
 
 test("sold-comps service retries a focused Pokémon discovery query", async () => {

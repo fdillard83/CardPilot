@@ -588,9 +588,9 @@ function evaluateBroaderMatch(candidate, fields, identityConsensus = {}) {
 export function evaluateCardTitleMatch(
   title,
   fields,
-  { broader = false, identityConsensus = {}, visualMatch = null } = {},
+  { broader = false, identityConsensus = {}, visualMatch = null, visualMatchStatus = null } = {},
 ) {
-  const candidate = { title: cleanText(title), visualMatch };
+  const candidate = { title: cleanText(title), visualMatch, visualMatchStatus };
   if (!candidate.title) return null;
   return broader
     ? evaluateBroaderMatch(candidate, fields, identityConsensus)
