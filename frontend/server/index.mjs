@@ -636,6 +636,7 @@ app.put("/api/account/preferences", async (request, response) => {
 });
 
 const EBAY_STATE_COOKIE = "cardpilot_ebay_state";
+const EBAY_RETURN_COOKIE = "cardpilot_ebay_return";
 
 function requestCookie(request, name) {
   return Object.fromEntries(
@@ -680,13 +681,22 @@ app.post("/api/ebay/selling/authorize", (request, response) => {
     "Set-Cookie",
     `${EBAY_STATE_COOKIE}=${encodeURIComponent(state)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${cloudConfiguration.secureCookies ? "; Secure" : ""}`,
   );
+  const returnTo = request.body?.returnTo === "listing-queue" ? "listing-queue" : "";
+  response.append(
+    "Set-Cookie",
+    returnTo
+      ? `${EBAY_RETURN_COOKIE}=${returnTo}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${cloudConfiguration.secureCookies ? "; Secure" : ""}`
+      : `${EBAY_RETURN_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${cloudConfiguration.secureCookies ? "; Secure" : ""}`,
+  );
   response.json({ authorizationUrl: ebaySelling.authorizationUrl(state) });
 });
 
 app.get("/api/ebay/selling/callback", async (request, response) => {
   const expectedState = requestCookie(request, EBAY_STATE_COOKIE);
+  const returnTo = requestCookie(request, EBAY_RETURN_COOKIE);
+  const returnQuery = returnTo === "listing-queue" ? "&open=ebay-listings" : "";
   if (!ebaySelling || !expectedState || request.query.state !== expectedState || typeof request.query.code !== "string") {
-    response.redirect(`${cloudConfiguration.appOrigin ?? "/"}?ebay=connection-error`);
+    response.redirect(`${cloudConfiguration.appOrigin ?? "/"}?ebay=connection-error${returnQuery}`);
     return;
   }
   try {
@@ -700,10 +710,11 @@ app.get("/api/ebay/selling/callback", async (request, response) => {
       scopes: token.scope ?? "",
     });
     response.append("Set-Cookie", `${EBAY_STATE_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
-    response.redirect(`${cloudConfiguration.appOrigin ?? "/"}?ebay=connected`);
+    response.append("Set-Cookie", `${EBAY_RETURN_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+    response.redirect(`${cloudConfiguration.appOrigin ?? "/"}?ebay=connected${returnQuery}`);
   } catch (error) {
     console.error("eBay seller connection failed", { status: error?.status, code: error?.code });
-    response.redirect(`${cloudConfiguration.appOrigin ?? "/"}?ebay=connection-error`);
+    response.redirect(`${cloudConfiguration.appOrigin ?? "/"}?ebay=connection-error${returnQuery}`);
   }
 });
 

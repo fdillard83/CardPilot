@@ -1133,7 +1133,20 @@ export function CollectionView({
   const [expandedImageCard, setExpandedImageCard] =
     useState<SavedCollectionCard | null>(null);
   const [sellingCard, setSellingCard] = useState<SavedCollectionCard | null>(null);
-  const [listingQueueOpen, setListingQueueOpen] = useState(false);
+  const [listingQueueOpen, setListingQueueOpen] = useState(() =>
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("open") === "ebay-listings"
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("open") !== "ebay-listings") return;
+    params.delete("open");
+    params.delete("ebay");
+    const query = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+  }, []);
   const [marketCardId, setMarketCardId] = useState<string | null>(null);
   const [marketSnapshot, setMarketSnapshot] =
     useState<ActiveMarketSnapshot | null>(null);

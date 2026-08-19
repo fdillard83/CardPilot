@@ -20,6 +20,7 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
 }) {
   const [payload, setPayload] = useState<QueuePayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [shippingId, setShippingId] = useState<string | null>(null);
@@ -52,13 +53,20 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
     finally { setDeletingId(null); }
   };
   const reconnectEbay = async () => {
-    setError(null);
+    setError(null); setReconnecting(true);
     try {
-      const response = await fetch("/api/ebay/selling/authorize", { method: "POST" });
+      const response = await fetch("/api/ebay/selling/authorize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ returnTo: "listing-queue" }),
+      });
       const body = await response.json();
       if (!response.ok || !body.authorizationUrl) throw new Error(body.error ?? "eBay reconnect could not start.");
       window.location.assign(body.authorizationUrl);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "eBay reconnect could not start."); }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "eBay reconnect could not start.");
+      setReconnecting(false);
+    }
   };
   const confirmShipment = async (item: QueueItem) => {
     if (!item.saleId || !trackingNumber.trim()) return;
@@ -86,8 +94,17 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
           <strong>{payload.environment === "sandbox" ? "Sandbox test mode" : "Production mode"}</strong>
           <span>{payload.environment === "sandbox" ? "Nothing in this queue can become a real eBay listing." : "Publishing can create a real public listing and may incur eBay fees."}</span>
         </div>
-        {!payload.fulfillmentWriteAuthorized && <div className="error-banner"><span>Reconnect eBay once before CardPilot can send shipment tracking.</span> <button type="button" onClick={() => void reconnectEbay()}>Reconnect eBay permissions</button></div>}
-        {payload.environment === "production" && !payload.analyticsAuthorized && <div className="error-banner"><span>Reconnect eBay once to show views for active listings. Watchers will still appear when eBay provides them.</span> <button type="button" onClick={() => void reconnectEbay()}>Enable listing views</button></div>}
+        {(!payload.fulfillmentWriteAuthorized || (payload.environment === "production" && !payload.analyticsAuthorized)) && <div className="ebay-permission-notice" role="status">
+          <strong>One-time eBay permission update</strong>
+          <span>
+            Reconnect eBay to enable {[
+              !payload.analyticsAuthorized && payload.environment === "production" ? "listing views" : null,
+              !payload.fulfillmentWriteAuthorized ? "shipment tracking" : null,
+            ].filter(Boolean).join(" and ")}. Your active listings and drafts will not be changed or republished.
+          </span>
+          {!payload.analyticsAuthorized && payload.environment === "production" && <small>Watchers can still appear when eBay provides them.</small>}
+          <button type="button" disabled={reconnecting} onClick={() => void reconnectEbay()}>{reconnecting ? "Opening eBay..." : "Update eBay permissions"}</button>
+        </div>}
         <div className="ebay-queue-tabs" role="tablist" aria-label="Listing status">{(["all", "draft", "scheduled", "active", "sold", "ended"] as const).map((state) => <button type="button" role="tab" aria-selected={tab === state} className={tab === state ? "active" : ""} key={state} onClick={() => setTab(state)}>{state[0].toUpperCase() + state.slice(1)} {state === "all" ? payload.items.length : counts[state]}</button>)}</div>
         {payload.items.length === 0 ? <div className="collection-empty"><strong>No saved eBay drafts yet</strong><span>Open a card and choose Sell on eBay, then save its draft.</span></div> :
           visibleItems.length === 0 ? <div className="collection-empty"><strong>No {tab} listings</strong><span>Choose another status above.</span></div> : <div className="ebay-queue-list">{visibleItems.map((item) => {

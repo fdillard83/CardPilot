@@ -2589,6 +2589,9 @@ main {
 .ebay-environment-guard.sandbox { background: rgba(98, 170, 255, .12); border: 1px solid rgba(98, 170, 255, .32); }
 .ebay-environment-guard.production { background: rgba(255, 174, 75, .12); border: 1px solid rgba(255, 174, 75, .4); }
 .ebay-environment-guard span { color: var(--muted); font-size: 12px; }
+.ebay-permission-notice { display: grid; gap: 6px; margin: 13px 0; padding: 14px 15px; border: 1px solid rgba(98, 170, 255, .32); border-radius: 13px; background: rgba(98, 170, 255, .09); }
+.ebay-permission-notice span, .ebay-permission-notice small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.ebay-permission-notice button { margin-top: 4px; }
 .ebay-queue-list { display: grid; gap: 10px; }
 .ebay-queue-tabs { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0; }
 .ebay-queue-tabs button { padding: 7px 10px; border-radius: 999px; }
