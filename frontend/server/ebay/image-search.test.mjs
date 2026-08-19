@@ -1,12 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  deriveVisualYearVerification,
   EbayImageSearchClient,
   suggestedCardNumberFromTitle,
   suggestedParallelFromTitle,
   suggestedSerialNumberFromTitle,
   suggestedYearFromTitle,
 } from "./image-search.mjs";
+
+function visualCandidate(id, title, score, structureScore = score) {
+  return {
+    itemId: id,
+    title,
+    visualMatchStatus: "matched",
+    visualMatch: { score, structureScore },
+  };
+}
 
 function jsonResponse(payload, init = {}) {
   return new Response(JSON.stringify(payload), {
@@ -302,4 +312,42 @@ test("conservative title parsing suggests reviewable card details", () => {
   assert.equal(suggestedCardNumberFromTitle("2026 Topps Nolan Ryan"), null);
   assert.equal(suggestedParallelFromTitle("2026 Topps Nolan Ryan Base"), null);
   assert.equal(suggestedSerialNumberFromTitle("2026 Topps #91B2-36"), null);
+});
+
+test("visual year verification corrects a proposed year from repeated matching card images", () => {
+  const result = deriveVisualYearVerification(
+    { player: "Michael McGreevy", year: "2022", rookieStatus: true },
+    [
+      visualCandidate("correct-1", "2025 Topps Michael McGreevy Rookie RC #85", 0.91, 0.88),
+      visualCandidate("correct-2", "2025 Topps Chrome Michael McGreevy RC Rookie #85", 0.87, 0.84),
+      visualCandidate("wrong-pose", "2022 Bowman Michael McGreevy Prospect", 0.58, 0.31),
+    ],
+  );
+
+  assert.equal(result.year, "2025");
+  assert.equal(result.proposedYear, "2022");
+  assert.equal(result.status, "corrected");
+  assert.deepEqual(result.supportingItemIds, ["correct-1", "correct-2"]);
+});
+
+test("visual year verification refuses one listing or competing card formats", () => {
+  assert.equal(
+    deriveVisualYearVerification(
+      { player: "Nick Kurtz", year: "2024", rookieStatus: true },
+      [visualCandidate("only", "2025 Topps Nick Kurtz Rookie RC", 0.96, 0.94)],
+    ),
+    null,
+  );
+  assert.equal(
+    deriveVisualYearVerification(
+      { player: "Nick Kurtz", year: "2024", rookieStatus: true },
+      [
+        visualCandidate("a1", "2024 Bowman Nick Kurtz Rookie RC", 0.86, 0.82),
+        visualCandidate("a2", "2024 Bowman Nick Kurtz Rookie RC", 0.84, 0.8),
+        visualCandidate("b1", "2025 Topps Nick Kurtz Rookie RC", 0.85, 0.81),
+        visualCandidate("b2", "2025 Topps Nick Kurtz Rookie RC", 0.83, 0.79),
+      ],
+    ),
+    null,
+  );
 });

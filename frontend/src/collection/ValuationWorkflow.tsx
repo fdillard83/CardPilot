@@ -301,9 +301,10 @@ export function CardValuationPanel({
               </label>
             </div>
             <p>
-              Saving stores only your confirmed value, confidence, valuation
-              method, and date. Provider listings and sales are not added to the
-              collection record.
+              You can replace an automatically saved value with your own amount at
+              any time. Saving stores only the confirmed value, confidence,
+              valuation method, and date. Provider listings and sales are not added
+              to the collection record.
             </p>
             <div className="confirmed-value-actions">
               <button

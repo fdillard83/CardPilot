@@ -20,6 +20,14 @@ export const EbayListingDraftSchema = z.object({
   auctionDurationDays: z.union([z.literal(1), z.literal(3), z.literal(5), z.literal(7), z.literal(10)]).default(7),
   auctionStartPriceCents: z.number().int().min(1).max(100_000_000).default(99),
   auctionReservePriceCents: z.number().int().min(0).max(100_000_000).default(0),
+  pricingStrategy: z.enum(["sell_faster", "balanced", "maximize_value"]).default("balanced"),
+  promoteListing: z.boolean().default(false),
+  promotionAdRatePercent: z.number().min(1).max(100).default(2),
+  automationStatus: z.enum(["preview", "needs_attention", "ready", "publishing", "published", "failed"]).default("preview"),
+  automationReason: z.string().max(1000).nullable().default(null),
+  automationUpdatedAt: z.string().datetime().nullable().default(null),
+  automationRepricedAt: z.string().datetime().nullable().default(null),
+  automationOriginalPriceCents: z.number().int().min(1).max(100_000_000).nullable().default(null),
 }).strict().superRefine((draft, context) => {
   if (draft.listingFormat === "AUCTION" && draft.auctionReservePriceCents > 0 && draft.auctionReservePriceCents <= draft.auctionStartPriceCents) {
     context.addIssue({ code: "custom", path: ["auctionReservePriceCents"], message: "The reserve price must be higher than the starting bid." });
@@ -166,6 +174,7 @@ const SELL_SCOPES = [
   "https://api.ebay.com/oauth/api_scope/sell.account",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+  "https://api.ebay.com/oauth/api_scope/sell.marketing",
 ];
 
 function tokenKey(secret) {
@@ -249,7 +258,7 @@ export class EbaySellingClient {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    const payload = response.status === 204 ? null : await json(response);
+  const payload = response.status === 204 ? null : await json(response);
     if (!response.ok) {
       const ebayError = payload?.errors?.[0];
       const parameterDetails = (ebayError?.parameters ?? [])
@@ -265,7 +274,8 @@ export class EbaySellingClient {
         : `eBay rejected the selling request${code ? ` (error ${code})` : ""}.`;
       throw new EbayApiError(message, { service: "selling", status: response.status, code });
     }
-    return payload;
+    const location = response.headers.get("location");
+    return payload ?? (location ? { location } : null);
   }
 }
 

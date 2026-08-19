@@ -1800,6 +1800,8 @@ export function CollectionView({
         const limit = accountPreferences.autoValueMaxCents;
         if (
           accountPreferences.autoValueEnabled &&
+          !openPanel &&
+          !card.confirmedValuation?.userAdjusted &&
           limit !== null &&
           snapshot.recommendation.amountCents <= limit
         ) {
@@ -1918,10 +1920,10 @@ export function CollectionView({
     const recommendation = valuationSnapshot?.recommendation ?? null;
     const method: ValuationMethod = recommendation?.method ?? "manual";
     const userAdjusted = Boolean(
-      recommendation &&
-        (amountCents !== recommendation.amountCents ||
+      !recommendation ||
+        amountCents !== recommendation.amountCents ||
           valuationCurrency !== recommendation.currency ||
-          valuationConfidence !== recommendation.confidence),
+          valuationConfidence !== recommendation.confidence,
     );
     setValuationSaving(true);
     setValuationError(null);
@@ -2065,6 +2067,7 @@ export function CollectionView({
           if (
             recommendation &&
             accountPreferences.autoValueEnabled &&
+            !card.confirmedValuation?.userAdjusted &&
             limit !== null &&
             recommendation.amountCents <= limit
           ) {

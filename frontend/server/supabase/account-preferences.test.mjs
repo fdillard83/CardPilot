@@ -7,6 +7,13 @@ import {
 
 test("automatic card values are off by default", () => {
   assert.deepEqual(DEFAULT_ACCOUNT_PREFERENCES, {
+    automationMode: "preview",
+    autopilotMinConfidence: 0.95,
+    autopilotApprovalAboveCents: null,
+    autopilotMinimumPriceCents: 99,
+    autoRepriceEnabled: false,
+    autoRepriceAfterDays: 14,
+    autoRepriceFloorPercent: 90,
     autoValueEnabled: false,
     autoValueMaxCents: null,
     ebayConnectPromptDismissed: false,
@@ -15,6 +22,10 @@ test("automatic card values are off by default", () => {
       fulfillmentPolicyId: "",
       paymentPolicyId: "",
       returnPolicyId: "",
+      pricingStrategy: "balanced",
+      sellFasterBelowCents: null,
+      promoteListings: false,
+      promotionAdRatePercent: 2,
     },
   });
 });
@@ -22,20 +33,18 @@ test("automatic card values are off by default", () => {
 test("an enabled automatic-value rule requires a positive dollar limit", () => {
   assert.equal(
     AccountPreferencesSchema.safeParse({
+      ...DEFAULT_ACCOUNT_PREFERENCES,
       autoValueEnabled: true,
       autoValueMaxCents: null,
-      ebayConnectPromptDismissed: false,
-      ebaySellingDefaults: DEFAULT_ACCOUNT_PREFERENCES.ebaySellingDefaults,
     }).success,
     false,
   );
   assert.deepEqual(
     AccountPreferencesSchema.parse({
+      ...DEFAULT_ACCOUNT_PREFERENCES,
       autoValueEnabled: true,
       autoValueMaxCents: 2500,
-      ebayConnectPromptDismissed: false,
-      ebaySellingDefaults: DEFAULT_ACCOUNT_PREFERENCES.ebaySellingDefaults,
     }),
-    { autoValueEnabled: true, autoValueMaxCents: 2500, ebayConnectPromptDismissed: false, ebaySellingDefaults: DEFAULT_ACCOUNT_PREFERENCES.ebaySellingDefaults },
+    { ...DEFAULT_ACCOUNT_PREFERENCES, autoValueEnabled: true, autoValueMaxCents: 2500 },
   );
 });

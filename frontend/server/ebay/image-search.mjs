@@ -154,6 +154,68 @@ function suggestedYearFromTitle(title) {
   return title.match(/\b(?:19|20)\d{2}\b/)?.[0] ?? null;
 }
 
+function normalizedIdentityWords(value) {
+  return typeof value === "string"
+    ? value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter((word) => word.length > 1)
+    : [];
+}
+
+function titleHasIdentity(title, identity) {
+  const titleWords = new Set(normalizedIdentityWords(title));
+  const identityWords = normalizedIdentityWords(identity);
+  return identityWords.length > 0 && identityWords.every((word) => titleWords.has(word));
+}
+
+export function deriveVisualYearVerification(fields, candidates) {
+  const identity = fields?.player ?? fields?.character;
+  if (!identity || !Array.isArray(candidates)) return null;
+  const rookieRequired = fields.rookieStatus === true;
+  const claims = new Map();
+
+  for (const candidate of candidates) {
+    const match = candidate.visualMatch;
+    const structureScore = Number.isFinite(match?.structureScore)
+      ? match.structureScore
+      : match?.score;
+    if (
+      candidate.visualMatchStatus !== "matched" ||
+      !Number.isFinite(match?.score) ||
+      match.score < 0.7 ||
+      structureScore < 0.52 ||
+      !titleHasIdentity(candidate.title, identity) ||
+      (rookieRequired && !/\b(?:rc|rookie)\b/i.test(candidate.title))
+    ) continue;
+    const year = suggestedYearFromTitle(candidate.title);
+    if (!year) continue;
+    const claim = claims.get(year) ?? { year, strength: 0, candidates: [] };
+    claim.strength += match.score + structureScore * 0.25;
+    claim.candidates.push(candidate);
+    claims.set(year, claim);
+  }
+
+  const ranked = [...claims.values()].sort((left, right) => right.strength - left.strength);
+  const best = ranked[0];
+  const runnerUp = ranked[1];
+  if (!best || best.candidates.length < 2) return null;
+  if (runnerUp && best.strength - runnerUp.strength < 0.22) return null;
+  const averageVisualScore = best.candidates.reduce(
+    (sum, candidate) => sum + candidate.visualMatch.score,
+    0,
+  ) / best.candidates.length;
+  const confidence = Math.min(
+    0.94,
+    0.7 + Math.min(0.12, best.candidates.length * 0.04) + Math.max(0, averageVisualScore - 0.7) * 0.35,
+  );
+  return {
+    year: best.year,
+    proposedYear: typeof fields.year === "string" ? fields.year : null,
+    status: fields.year === best.year ? "confirmed" : "corrected",
+    confidence: Number(confidence.toFixed(3)),
+    supportingItemIds: best.candidates.slice(0, 5).map((candidate) => candidate.itemId),
+    averageVisualScore: Number(averageVisualScore.toFixed(3)),
+  };
+}
+
 function normalizePrintRun(value, { allowBareNumber = false } = {}) {
   if (typeof value !== "string") return null;
   const compact = value.trim().replace(/\s+/g, "");

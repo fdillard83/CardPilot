@@ -73,9 +73,40 @@ test("general or conflicting web labels cannot invent or boost a field", () => {
   assert.deepEqual(result, extraction);
 });
 
-test("a Google full-image page match corrects a tentative year", () => {
+test("repeated Google full-image page matches correct a tentative year", () => {
   const extraction = {
-    fields: { year: visible("2026", 0.72) },
+    fields: { player: visible("Nick Kurtz", 0.95), year: visible("2026", 0.72) },
+    evidence: [],
+  };
+  const result = applyEvidenceConsensus(extraction, [{
+    provider: "google_web_detection",
+    status: "completed",
+    signals: [
+      {
+        type: "full_matching_page",
+        text: "2025 Topps Chrome Nick Kurtz Gold Refractor #99",
+        url: "https://example.com/2025-topps-chrome-nick-kurtz",
+        imageUrl: "https://example.com/card-a.jpg",
+        strength: 0.96,
+      },
+      {
+        type: "full_matching_page",
+        text: "2025 Nick Kurtz Topps Chrome Gold Refractor #99",
+        url: "https://example.org/nick-kurtz-2025-card",
+        imageUrl: "https://example.org/card-b.jpg",
+        strength: 0.94,
+      },
+    ],
+  }]);
+  assert.equal(result.fields.year.value, "2025");
+  assert.equal(result.fields.year.inferenceSource, "web");
+  assert.ok(result.fields.year.confidence > extraction.fields.year.confidence);
+  assert.match(result.evidence[0].observation, /2025 instead of the tentative 2026/);
+});
+
+test("one seller page cannot overwrite a tentative year", () => {
+  const extraction = {
+    fields: { player: visible("Nick Kurtz", 0.95), year: visible("2026", 0.72) },
     evidence: [],
   };
   const result = applyEvidenceConsensus(extraction, [{
@@ -83,16 +114,14 @@ test("a Google full-image page match corrects a tentative year", () => {
     status: "completed",
     signals: [{
       type: "full_matching_page",
-      text: "2025 Topps Chrome Baseball Gold Refractor #99",
-      url: "https://example.com/2025-topps-chrome-card",
+      text: "2025 Topps Chrome Nick Kurtz Gold Refractor #99",
+      url: "https://example.com/2025-topps-chrome-nick-kurtz",
       imageUrl: "https://example.com/card.jpg",
-      strength: 0.96,
+      strength: 0.99,
     }],
   }]);
-  assert.equal(result.fields.year.value, "2025");
-  assert.equal(result.fields.year.inferenceSource, "web");
-  assert.ok(result.fields.year.confidence > extraction.fields.year.confidence);
-  assert.match(result.evidence[0].observation, /2025 instead of the tentative 2026/);
+  assert.equal(result.fields.year.value, "2026");
+  assert.equal(result.fields.year.inferenceSource, "visible");
 });
 
 test("visually similar images alone cannot overwrite a year", () => {

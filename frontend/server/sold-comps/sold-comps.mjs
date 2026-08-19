@@ -402,7 +402,7 @@ export class SoldCompsService {
     const ranked = await this.visualMatcher.rank({
       sourceImageDataUrl,
       candidates,
-      limit: 10,
+      limit: 20,
     });
     return { ...result, sales: ranked };
   }

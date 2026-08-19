@@ -50,6 +50,31 @@ test("recommended values round up to CardPilot price points", () => {
   assert.equal(roundRecommendedValueCents(0), 0);
 });
 
+test("selling strategies separate the market floor from midpoint and upper value", () => {
+  const snapshot = buildValuationRecommendation({
+    grading: raw,
+    activeSnapshot: activeSnapshot([{
+      matchTier: "exact",
+      classification: "raw",
+      label: "Raw / ungraded",
+      currency: "USD",
+      listingCount: 3,
+      medianAmountCents: 225,
+      typicalRange: { lowAmountCents: 195, highAmountCents: 295 },
+      confidence: "medium",
+      listings: [
+        { totalPriceCents: 195 },
+        { totalPriceCents: 225 },
+        { totalPriceCents: 295 },
+      ],
+    }]),
+  });
+
+  assert.equal(snapshot.saleStrategyOptions.sell_faster.amountCents, 195);
+  assert.equal(snapshot.saleStrategyOptions.balanced.amountCents, 225);
+  assert.equal(snapshot.saleStrategyOptions.maximize_value.amountCents, 295);
+});
+
 test("exact sold and active evidence are blended with more weight on active listings", () => {
   const snapshot = buildValuationRecommendation({
     grading: raw,

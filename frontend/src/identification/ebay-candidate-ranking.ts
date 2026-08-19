@@ -13,6 +13,15 @@ function denominator(value: FieldValue | undefined) {
   return typeof value === "string" ? value.replace(/\s/g, "").match(/\/(\d{1,5})/)?.[1] ?? null : null;
 }
 
+function visualMismatch(candidate: EbayImageSearchCandidate) {
+  if (candidate.visualMatchStatus === "not_evaluated") return true;
+  const match = candidate.visualMatch;
+  if (!match || !Number.isFinite(match.score)) return false;
+  if (match.score < 0.55) return true;
+  if (!Number.isFinite(match.structureScore)) return match.score < 0.62;
+  return match.structureScore! < 0.35 || (match.score < 0.68 && match.structureScore! < 0.55);
+}
+
 function candidateScore(fields: Record<FieldKey, FieldValue>, candidate: EbayImageSearchCandidate) {
   const title = candidate.title;
   const identity = fields.player ?? fields.character;
@@ -41,7 +50,7 @@ export function rankEbayCandidates(
   fields: Record<FieldKey, FieldValue>,
   candidates: EbayImageSearchCandidate[],
 ) {
-  return [...candidates].sort((left, right) => {
+  return candidates.filter((candidate) => !visualMismatch(candidate)).sort((left, right) => {
     const scoreDifference = candidateScore(fields, right) - candidateScore(fields, left);
     return scoreDifference || left.rank - right.rank;
   });

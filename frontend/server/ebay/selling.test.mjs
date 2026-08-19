@@ -41,6 +41,7 @@ test("sandbox seller authorization uses the configured RuName and CSRF state", (
   assert.equal(url.searchParams.get("redirect_uri"), "CardPilot-Sandbox-RuName");
   assert.equal(url.searchParams.get("state"), "csrf-state");
   assert.match(url.searchParams.get("scope"), /sell\.inventory/);
+  assert.match(url.searchParams.get("scope"), /sell\.marketing/);
 });
 
 test("listing drafts require an editable title and positive price", () => {
@@ -60,6 +61,9 @@ test("listing drafts require an editable title and positive price", () => {
     listingFormat: "FIXED_PRICE",
   };
   assert.equal(EbayListingDraftSchema.safeParse(base).success, true);
+  const promoted = EbayListingDraftSchema.parse({ ...base, promoteListing: true, promotionAdRatePercent: 3.5, pricingStrategy: "sell_faster" });
+  assert.equal(promoted.promoteListing, true);
+  assert.equal(promoted.promotionAdRatePercent, 3.5);
   assert.equal(EbayListingDraftSchema.safeParse({ ...base, priceCents: 0 }).success, false);
   const auction = EbayListingDraftSchema.parse({ ...base, listingFormat: "AUCTION", auctionStartPriceCents: 500, auctionReservePriceCents: 1000 });
   assert.deepEqual(auction.listingImages, ["front"]);

@@ -68,6 +68,50 @@ function identificationValues(identification: CardIdentification) {
   ) as Record<FieldKey, FieldValue>;
 }
 
+function withVisualYearVerification(
+  identification: CardIdentification,
+  verification: NonNullable<EbayImageSearchResult["yearVerification"]>,
+): CardIdentification {
+  const currentYear = identification.fields.year.value;
+  const alreadyApplied = identification.evidence.some(
+    (item) => item.id === `ev-year-ebay-visual-${verification.year}`,
+  );
+  if (alreadyApplied || (currentYear === verification.year && identification.fields.year.confidence >= verification.confidence)) {
+    return identification;
+  }
+  const evidenceId = `ev-year-ebay-visual-${verification.year}`;
+  const observation = verification.status === "corrected"
+    ? `Repeated close image matches support ${verification.year} instead of ${currentYear ?? "the proposed year"}; the card photograph and layout agree.`
+    : `Repeated close image matches confirm the ${verification.year} card photograph and layout.`;
+  return {
+    ...identification,
+    fields: {
+      ...identification.fields,
+      year: {
+        ...identification.fields.year,
+        value: verification.year,
+        confidence: verification.confidence,
+        evidenceIds: [...identification.fields.year.evidenceIds, evidenceId],
+        inferenceSource: "web" as const,
+        missingEvidence: identification.fields.year.missingEvidence.filter(
+          (item) => !/issue year|assign the year|model suggestion/i.test(item),
+        ),
+      },
+    },
+    evidence: [
+      ...identification.evidence,
+      {
+        id: evidenceId,
+        field: "year" as const,
+        source: "web" as const,
+        observation,
+        location: null,
+        strength: verification.confidence,
+      },
+    ],
+  };
+}
+
 function CameraIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -932,7 +976,12 @@ function App() {
       setEbaySearch((existing) => {
         const candidates = [...payload.candidates!, ...(existing?.candidates ?? [])]
           .filter((candidate, index, all) => all.findIndex((item) => item.itemId === candidate.itemId) === index);
-        return { marketplaceId: payload.marketplaceId ?? existing?.marketplaceId ?? "EBAY_US", total: candidates.length, candidates };
+        return {
+          marketplaceId: payload.marketplaceId ?? existing?.marketplaceId ?? "EBAY_US",
+          total: candidates.length,
+          candidates,
+          yearVerification: existing?.yearVerification ?? null,
+        };
       });
     } catch (caughtError) {
       if (requestId !== ebayRequestIdRef.current) return;
@@ -954,15 +1003,31 @@ function App() {
     try {
       const response = await fetch("/api/ebay/identity-search", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: identificationValues(cardIdentification) }),
+        body: JSON.stringify({
+          fields: identificationValues(cardIdentification),
+          frontImage: preparedImagesRef.current?.frontImage ?? null,
+        }),
       });
       const payload = (await response.json().catch(() => null)) as (Partial<EbayImageSearchResult> & { error?: string }) | null;
       if (!response.ok || !Array.isArray(payload?.candidates)) throw new Error(payload?.error ?? "Identity search was unavailable.");
       if (requestId !== ebayIdentityRequestIdRef.current) return;
+      if (payload.yearVerification) {
+        setIdentification((current) => {
+          if (!current) return current;
+          const updated = withVisualYearVerification(current, payload.yearVerification!);
+          originalIdentificationRef.current = updated;
+          return updated;
+        });
+      }
       setEbaySearch((existing) => {
         const candidates = [...(existing?.candidates ?? []), ...payload.candidates!]
           .filter((candidate, index, all) => all.findIndex((item) => item.itemId === candidate.itemId) === index);
-        return { marketplaceId: existing?.marketplaceId ?? payload.marketplaceId ?? "EBAY_US", total: candidates.length, candidates };
+        return {
+          marketplaceId: existing?.marketplaceId ?? payload.marketplaceId ?? "EBAY_US",
+          total: candidates.length,
+          candidates,
+          yearVerification: payload.yearVerification ?? existing?.yearVerification ?? null,
+        };
       });
     } catch {
       // Image matches remain available when the optional keyword corroboration degrades.
@@ -989,7 +1054,14 @@ function App() {
       if (requestId !== cardCatalogRequestIdRef.current || !payload.candidateMatches.length) return;
       setIdentification((current) => current ? {
         ...current,
-        fields: payload.fields ?? current.fields,
+        fields: payload.fields
+          ? {
+              ...payload.fields,
+              year: current.fields.year.inferenceSource === "web"
+                ? current.fields.year
+                : payload.fields.year,
+            }
+          : current.fields,
         candidateMatches: [...payload.candidateMatches!, ...current.candidateMatches]
           .filter((candidate, index, all) => all.findIndex((item) => item.id === candidate.id) === index)
           .sort((left, right) => right.matchConfidence - left.matchConfidence)
@@ -1138,6 +1210,10 @@ function App() {
         void loadEbayIdentityCandidates(payload.identification);
         void loadCardCatalogCandidates(payload.identification);
         void loadPokemonCatalogCandidates(payload.identification);
+        if (accountPreferences.automationMode === "autopilot") {
+          setIdentificationProgress("Autopilot is pricing and preparing the eBay listing");
+          await saveIdentificationToCollection(payload.identification);
+        }
       }
     } catch (caughtError) {
       if (requestId !== identificationRequestIdRef.current) return;
@@ -2182,7 +2258,7 @@ function App() {
                   {identification.evidence.length > 0 ? (
                     <ul>
                       {identification.evidence.slice(0, 8).map((clue) => (
-                        <li key={clue.id}><CheckIcon /> <span>{clue.observation}<small>{clue.source === "back_image" ? "Card back" : "Card front"}</small></span></li>
+                        <li key={clue.id}><CheckIcon /> <span>{clue.observation}<small>{clue.source === "back_image" ? "Card back" : clue.source === "web" ? "Repeated image matches" : clue.source === "catalog" ? "Card catalog" : "Card front"}</small></span></li>
                       ))}
                     </ul>
                   ) : (

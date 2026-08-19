@@ -47,7 +47,7 @@ function yearsInSignal(signal) {
     .filter((year) => Number(year) >= 1880 && Number(year) <= new Date().getFullYear() + 2);
 }
 
-function yearConsensus(providerResults) {
+function yearConsensus(providerResults, fields = {}) {
   const claims = new Map();
   for (const providerResult of providerResults) {
     if (providerResult.status !== "completed") continue;
@@ -57,7 +57,13 @@ function yearConsensus(providerResults) {
         "partial_matching_page",
         "best_guess_label",
       ].includes(signal.type)) continue;
-      for (const year of yearsInSignal(signal)) {
+      const signalYears = yearsInSignal(signal);
+      // Marketplace pages often contain unrelated years in recommendations,
+      // navigation, or seller text. Such a page cannot safely resolve a year.
+      if (signalYears.length !== 1) continue;
+      const identity = fields.player?.value ?? fields.character?.value;
+      if (identity && !signalSupportsValue(signal, identity)) continue;
+      for (const year of signalYears) {
         const claim = claims.get(year) ?? {
           year,
           score: 0,
@@ -79,7 +85,7 @@ function yearConsensus(providerResults) {
   const best = ranked[0];
   if (!best) return null;
   const runnerUpScore = ranked[1]?.score ?? 0;
-  const hasStrongExactMatch = best.fullMatches >= 1 && best.score >= 0.9;
+  const hasStrongExactMatch = best.fullMatches >= 2 && best.score >= 1.8;
   const hasRepeatedPartialSupport = best.partialMatches >= 2 && best.score >= 1.4;
   if ((!hasStrongExactMatch && !hasRepeatedPartialSupport) || best.score - runnerUpScore < 0.3) {
     return null;
@@ -90,7 +96,7 @@ function yearConsensus(providerResults) {
 function applyYearConsensus(result, providerResults) {
   const fieldResult = result.fields.year;
   if (!fieldResult) return;
-  const consensus = yearConsensus(providerResults);
+  const consensus = yearConsensus(providerResults, result.fields);
   if (!consensus || consensus.year === fieldResult.value) return;
   // Clear, visible printed evidence remains authoritative. Web consensus may
   // correct a tentative/model-derived year, but never a near-certain reading.

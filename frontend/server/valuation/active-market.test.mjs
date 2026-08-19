@@ -372,6 +372,23 @@ test("market consensus and visual similarity cannot rescue a conflicting year", 
   assert.equal(match, null);
 });
 
+test("a different photographed card is rejected even when its title matches", () => {
+  const match = evaluateCardTitleMatch(
+    "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85",
+    fields,
+    {
+      visualMatch: {
+        score: 0.64,
+        pixelScore: 0.61,
+        borderScore: 0.91,
+        layoutScore: 0.8,
+        structureScore: 0.22,
+      },
+    },
+  );
+  assert.equal(match, null);
+});
+
 test("active exclusions remove exact and broader comparisons from summaries", () => {
   const candidates = [
     candidate({

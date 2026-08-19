@@ -115,12 +115,39 @@ function layoutSignature(data) {
   return edges;
 }
 
+function structureSignature(data) {
+  // Focus on the photograph/artwork area and preserve signed light/dark shapes.
+  // This distinguishes a different pose on the same card template while being
+  // substantially less sensitive than RGB pixels to parallel color changes.
+  const left = Math.round(width * 0.12);
+  const right = Math.round(width * 0.88);
+  const top = Math.round(height * 0.14);
+  const bottom = Math.round(height * 0.82);
+  const values = new Float64Array((right - left) * (bottom - top));
+  let mean = 0;
+  let output = 0;
+  for (let y = top; y < bottom; y += 1) {
+    for (let x = left; x < right; x += 1) {
+      const value = luminance(data, y * width + x);
+      values[output] = value;
+      mean += value;
+      output += 1;
+    }
+  }
+  mean /= values.length;
+  for (let index = 0; index < values.length; index += 1) {
+    values[index] = (values[index] - mean) / 128;
+  }
+  return values;
+}
+
 async function signature(buffer) {
   const pixels = await normalizedPixels(buffer);
   return {
     pixels: pixelSignature(pixels),
     border: borderHistogram(pixels),
     layout: layoutSignature(pixels),
+    structure: structureSignature(pixels),
   };
 }
 
@@ -128,13 +155,26 @@ function compare(source, candidate) {
   const pixelScore = cosineSimilarity(source.pixels, candidate.pixels);
   const borderScore = histogramIntersection(source.border, candidate.border);
   const layoutScore = cosineSimilarity(source.layout, candidate.layout);
-  const score = pixelScore * 0.45 + borderScore * 0.3 + layoutScore * 0.25;
+  const structureScore = cosineSimilarity(source.structure, candidate.structure);
+  const score = pixelScore * 0.25 + borderScore * 0.15 + layoutScore * 0.2 + structureScore * 0.4;
   return {
     score: Number(score.toFixed(3)),
     pixelScore: Number(pixelScore.toFixed(3)),
     borderScore: Number(borderScore.toFixed(3)),
     layoutScore: Number(layoutScore.toFixed(3)),
+    structureScore: Number(structureScore.toFixed(3)),
   };
+}
+
+export function isVisualMismatch(visualMatch, visualMatchStatus = null) {
+  if (visualMatchStatus === "not_evaluated") return true;
+  if (!Number.isFinite(visualMatch?.score)) return false;
+  const structureScore = Number.isFinite(visualMatch.structureScore)
+    ? visualMatch.structureScore
+    : null;
+  if (visualMatch.score < 0.55) return true;
+  if (structureScore === null) return visualMatch.score < 0.62;
+  return structureScore < 0.35 || (visualMatch.score < 0.68 && structureScore < 0.55);
 }
 
 export class VisualImageMatcher {
@@ -147,25 +187,28 @@ export class VisualImageMatcher {
     const source = await signature(dataUrlBuffer(sourceImageDataUrl));
     const ranked = await Promise.all(candidates.slice(0, limit).map(async (candidate) => {
       const url = safeCandidateUrl(candidate.imageUrl);
-      if (!url) return candidate;
+      if (!url) return { ...candidate, visualMatchStatus: "unavailable" };
       try {
         const response = await this.fetch(url, {
           headers: { Accept: "image/avif,image/webp,image/jpeg,image/png" },
           signal: AbortSignal.timeout(this.timeoutMs),
         });
-        if (!response.ok) return candidate;
+        if (!response.ok) return { ...candidate, visualMatchStatus: "unavailable" };
         const contentLength = Number(response.headers.get("content-length"));
-        if (Number.isFinite(contentLength) && contentLength > maxImageBytes) return candidate;
+        if (Number.isFinite(contentLength) && contentLength > maxImageBytes) return { ...candidate, visualMatchStatus: "unavailable" };
         const buffer = Buffer.from(await response.arrayBuffer());
-        if (!buffer.length || buffer.length > maxImageBytes) return candidate;
-        return { ...candidate, visualMatch: compare(source, await signature(buffer)) };
+        if (!buffer.length || buffer.length > maxImageBytes) return { ...candidate, visualMatchStatus: "unavailable" };
+        return { ...candidate, visualMatchStatus: "matched", visualMatch: compare(source, await signature(buffer)) };
       } catch {
-        return candidate;
+        return { ...candidate, visualMatchStatus: "unavailable" };
       }
     }));
     return [
       ...ranked,
-      ...candidates.slice(limit),
+      ...candidates.slice(limit).map((candidate) => ({
+        ...candidate,
+        visualMatchStatus: "not_evaluated",
+      })),
     ];
   }
 }

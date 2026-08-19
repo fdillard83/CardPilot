@@ -44,7 +44,7 @@ function candidate(
   };
 }
 
-test("ambiguous catalog records fill only their shared identity", () => {
+test("ambiguous catalog records do not assign a year from generic identity alone", () => {
   const fields = Object.fromEntries(fieldKeys.map((key) => [key, field(null)]));
   fields.player = field("Nolan Ryan");
   fields.team = field("Angels");
@@ -66,10 +66,43 @@ test("ambiguous catalog records fill only their shared identity", () => {
     ],
   );
 
-  assert.equal(verified.fields.year.value, "2026");
-  assert.equal(verified.fields.year.inferenceSource, "catalog");
+  assert.equal(verified.fields.year.value, null);
+  assert.match(verified.fields.year.missingEvidence[0], /card number, set, product/i);
   assert.equal(verified.fields.product.value, null);
   assert.equal(verified.fields.setOrInsert.value, null);
   assert.equal(verified.fields.cardNumber.value, null);
   assert.equal(verified.fields.parallel.value, null);
+});
+
+test("a catalog match may fill year when the visible card number discriminates it", () => {
+  const fields = Object.fromEntries(fieldKeys.map((key) => [key, field(null)]));
+  fields.player = field("Nolan Ryan");
+  fields.cardNumber = field("CN-14");
+
+  const verified = verifyCandidates(
+    { fields },
+    [candidate("series-2", "Topps Series 2", "Crooked Numbers", "CN-14", 0.9)],
+  );
+
+  assert.equal(verified.fields.year.value, "2026");
+  assert.equal(verified.fields.year.inferenceSource, "catalog");
+});
+
+test("a model candidate cannot invent a missing year", () => {
+  const fields = Object.fromEntries(fieldKeys.map((key) => [key, field(null)]));
+  fields.player = field("Nolan Ryan");
+  const suggestion = candidate(
+    "model-guess",
+    "Topps Series 2",
+    "Crooked Numbers",
+    "CN-14",
+    0.92,
+  );
+  suggestion.source = "model_knowledge";
+  suggestion.catalogRecordId = null;
+
+  const verified = verifyCandidates({ fields }, [suggestion]);
+
+  assert.equal(verified.fields.year.value, null);
+  assert.match(verified.fields.year.missingEvidence[0], /not independent evidence/i);
 });

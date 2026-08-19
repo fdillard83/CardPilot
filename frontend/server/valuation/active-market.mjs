@@ -7,6 +7,7 @@ import {
   cardIdentity,
   isPokemonCard,
 } from "../card-category.mjs";
+import { isVisualMismatch } from "../identification/visual-image-matcher.mjs";
 
 const activeMarketDisclaimer =
   "Active Buy It Now asking prices are not completed sales, appraisals, or guaranteed sale values. Shipping is included only when eBay provides it in search results.";
@@ -370,7 +371,10 @@ function consensusAdjustedScore(score, matchedSignals, identityConsensus, visual
 
 function evaluateMatch(candidate, fields, identityConsensus = {}) {
   const title = candidate.title;
-  if (obviousMismatch(title, fields)) return null;
+  if (
+    obviousMismatch(title, fields) ||
+    isVisualMismatch(candidate.visualMatch, candidate.visualMatchStatus)
+  ) return null;
 
   const pokemon = isPokemonCard(fields);
   const identity = cardIdentity(fields);
@@ -488,6 +492,7 @@ function evaluateBroaderMatch(candidate, fields, identityConsensus = {}) {
   const identitySignal = pokemon ? "character" : "player";
   if (
     obviousMismatch(title, fields) ||
+    isVisualMismatch(candidate.visualMatch, candidate.visualMatchStatus) ||
     !identity ||
     !titleHasWords(title, identity) ||
     hasBroaderMatchConflict(title, fields)
@@ -926,7 +931,7 @@ export class ActiveMarketService {
 
     const result = await marketRequest;
     let candidates = sourceImageDataUrl && this.visualMatcher
-      ? await this.visualMatcher.rank({ sourceImageDataUrl, candidates: result.candidates, limit: 10 })
+      ? await this.visualMatcher.rank({ sourceImageDataUrl, candidates: result.candidates, limit: 20 })
       : result.candidates;
     const queriesUsed = [query];
     const searchedAt = new Date(this.now()).toISOString();
@@ -959,7 +964,7 @@ export class ActiveMarketService {
       );
       candidates = [...unique.values()];
       if (sourceImageDataUrl && this.visualMatcher) {
-        candidates = await this.visualMatcher.rank({ sourceImageDataUrl, candidates, limit: 10 });
+        candidates = await this.visualMatcher.rank({ sourceImageDataUrl, candidates, limit: 20 });
       }
       queriesUsed.push(discoveryQuery);
       snapshot = buildActiveMarketSnapshot({

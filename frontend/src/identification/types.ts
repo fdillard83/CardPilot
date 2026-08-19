@@ -280,13 +280,23 @@ export type EbayImageSearchCandidate = {
     pixelScore: number;
     borderScore: number;
     layoutScore: number;
+    structureScore?: number;
   };
+  visualMatchStatus?: "matched" | "unavailable" | "not_evaluated";
 };
 
 export type EbayImageSearchResult = {
   marketplaceId: string;
   total: number;
   candidates: EbayImageSearchCandidate[];
+  yearVerification?: {
+    year: string;
+    proposedYear: string | null;
+    status: "confirmed" | "corrected";
+    confidence: number;
+    supportingItemIds: string[];
+    averageVisualScore: number;
+  } | null;
 };
 
 export type EbayItemDetails = {

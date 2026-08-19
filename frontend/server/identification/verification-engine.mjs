@@ -126,6 +126,25 @@ function mergeVerifiedCandidates(extraction, candidates) {
     if (proposed === null) continue;
 
     if (result.value === null) {
+      if (
+        field === "year" &&
+        (
+          candidate.source !== "catalog" ||
+          !candidate.supportingFields.some((supportingField) =>
+            ["cardNumber", "product", "setOrInsert", "parallel", "serialNumber"].includes(supportingField),
+          )
+        )
+      ) {
+        result.missingEvidence = [
+          ...new Set([
+            ...result.missingEvidence,
+            candidate.source === "catalog"
+              ? "The catalog did not match a card number, set, product, parallel, or print run strongly enough to assign the year."
+              : "A model suggestion is not independent evidence of the issue year; confirm it from the card back or a discriminating catalog match.",
+          ]),
+        ];
+        continue;
+      }
       result.value = proposed;
       result.confidence = Number(
         Math.min(

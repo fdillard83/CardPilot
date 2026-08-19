@@ -348,6 +348,49 @@ function applyRecommendedPricePoint(recommendation) {
   };
 }
 
+function floorPricePointCents(amountCents) {
+  if (!Number.isInteger(amountCents) || amountCents <= 0) return 1;
+  if (amountCents <= 95) return amountCents;
+  const candidate = Math.floor(amountCents / 100) * 100 + 95;
+  return candidate <= amountCents ? candidate : Math.max(95, candidate - 100);
+}
+
+function activeMarketFloor(activeSnapshot, grading) {
+  if (!activeSnapshot) return null;
+  const group = preferredGroup(activeSnapshot.groups, "exact", "listingCount", grading) ??
+    preferredGroup(activeSnapshot.groups, "broader", "listingCount", grading);
+  const prices = group?.listings
+    ?.map((listing) => listing.itemPriceCents ?? listing.totalPriceCents)
+    .filter(Number.isInteger) ?? [];
+  return prices.length ? Math.min(...prices) : group?.typicalRange?.lowAmountCents ?? null;
+}
+
+export function buildSaleStrategyOptions(recommendation, activeSnapshot = null, grading = null) {
+  if (!recommendation) return null;
+  const floor = activeMarketFloor(activeSnapshot, grading) ?? recommendation.typicalRange.lowAmountCents;
+  const fasterAmount = floorPricePointCents(Math.min(recommendation.amountCents, floor));
+  const maximizeAmount = roundRecommendedValueCents(
+    Math.max(recommendation.amountCents, recommendation.typicalRange.highAmountCents),
+  );
+  return {
+    sell_faster: {
+      amountCents: fasterAmount,
+      label: "Sell faster",
+      rationale: "Meets or slightly undercuts the lowest compatible current-market price point.",
+    },
+    balanced: {
+      amountCents: recommendation.amountCents,
+      label: "Balanced",
+      rationale: "Uses CardPilot's market midpoint recommendation.",
+    },
+    maximize_value: {
+      amountCents: maximizeAmount,
+      label: "Maximize value",
+      rationale: "Prices near the upper compatible market range and may take longer to sell.",
+    },
+  };
+}
+
 export function buildValuationRecommendation({
   soldSnapshot = null,
   activeSnapshot = null,
@@ -433,12 +476,18 @@ export function buildValuationRecommendation({
   }
 
   recommendation = applyRecommendedPricePoint(recommendation);
+  const saleStrategyOptions = buildSaleStrategyOptions(
+    recommendation,
+    activeSnapshot,
+    grading,
+  );
 
   return {
     schemaVersion: "1.0",
     kind: "card_valuation_recommendation",
     generatedAt,
     recommendation,
+    saleStrategyOptions,
     evidence: {
       sold: {
         status: soldStatus,

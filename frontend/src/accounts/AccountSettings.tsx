@@ -38,6 +38,15 @@ export function AccountSettings({
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [automationMode, setAutomationMode] = useState(preferences.automationMode);
+  const [autopilotMinConfidence, setAutopilotMinConfidence] = useState(String(preferences.autopilotMinConfidence));
+  const [autopilotApprovalAbove, setAutopilotApprovalAbove] = useState(
+    preferences.autopilotApprovalAboveCents === null ? "" : (preferences.autopilotApprovalAboveCents / 100).toFixed(2),
+  );
+  const [autopilotMinimumPrice, setAutopilotMinimumPrice] = useState((preferences.autopilotMinimumPriceCents / 100).toFixed(2));
+  const [autoRepriceEnabled, setAutoRepriceEnabled] = useState(preferences.autoRepriceEnabled);
+  const [autoRepriceAfterDays, setAutoRepriceAfterDays] = useState(String(preferences.autoRepriceAfterDays));
+  const [autoRepriceFloorPercent, setAutoRepriceFloorPercent] = useState(String(preferences.autoRepriceFloorPercent));
   const [autoValueEnabled, setAutoValueEnabled] = useState(
     preferences.autoValueEnabled,
   );
@@ -49,6 +58,14 @@ export function AccountSettings({
   const [preferenceStatus, setPreferenceStatus] = useState<string | null>(null);
   const [preferenceError, setPreferenceError] = useState<string | null>(null);
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
+  const [pricingStrategy, setPricingStrategy] = useState(preferences.ebaySellingDefaults.pricingStrategy);
+  const [sellFasterBelow, setSellFasterBelow] = useState(
+    preferences.ebaySellingDefaults.sellFasterBelowCents === null
+      ? ""
+      : (preferences.ebaySellingDefaults.sellFasterBelowCents / 100).toFixed(2),
+  );
+  const [promoteListings, setPromoteListings] = useState(preferences.ebaySellingDefaults.promoteListings);
+  const [promotionAdRate, setPromotionAdRate] = useState(String(preferences.ebaySellingDefaults.promotionAdRatePercent));
   const [ebayStatus, setEbayStatus] = useState<EbayConnectionStatus | null>(null);
   const [ebayBusy, setEbayBusy] = useState(false);
   const [ebayError, setEbayError] = useState<string | null>(null);
@@ -88,8 +105,43 @@ export function AccountSettings({
 
   const savePreferences = async () => {
     const dollars = Number(autoValueLimit);
+    const approvalAboveDollars = autopilotApprovalAbove.trim() ? Number(autopilotApprovalAbove) : null;
+    const minimumPriceDollars = Number(autopilotMinimumPrice);
+    const minimumConfidence = Number(autopilotMinConfidence);
+    const repriceDays = Number(autoRepriceAfterDays);
+    const repriceFloorPercent = Number(autoRepriceFloorPercent);
+    const fasterBelowDollars = sellFasterBelow.trim() ? Number(sellFasterBelow) : null;
+    const adRate = Number(promotionAdRate);
     if (autoValueEnabled && (!Number.isFinite(dollars) || dollars <= 0)) {
       setPreferenceError("Enter a dollar limit greater than $0.");
+      return;
+    }
+    if (fasterBelowDollars !== null && (!Number.isFinite(fasterBelowDollars) || fasterBelowDollars <= 0)) {
+      setPreferenceError("Enter a valid low-value quick-sale limit or leave it blank.");
+      return;
+    }
+    if (promoteListings && (!Number.isFinite(adRate) || adRate < 1 || adRate > 100)) {
+      setPreferenceError("Choose an eBay promotion ad rate from 1% through 100%.");
+      return;
+    }
+    if (!Number.isFinite(minimumConfidence) || minimumConfidence < 0.8 || minimumConfidence > 1) {
+      setPreferenceError("Choose a valid Autopilot confidence safeguard.");
+      return;
+    }
+    if (!Number.isFinite(minimumPriceDollars) || minimumPriceDollars <= 0) {
+      setPreferenceError("Enter the lowest price Autopilot may publish.");
+      return;
+    }
+    if (approvalAboveDollars !== null && (!Number.isFinite(approvalAboveDollars) || approvalAboveDollars <= 0)) {
+      setPreferenceError("Enter a valid approval threshold or leave it blank.");
+      return;
+    }
+    if (autoRepriceEnabled && (!Number.isInteger(repriceDays) || repriceDays < 1 || repriceDays > 365)) {
+      setPreferenceError("Choose automatic repricing after 1 through 365 days.");
+      return;
+    }
+    if (autoRepriceEnabled && (!Number.isInteger(repriceFloorPercent) || repriceFloorPercent < 50 || repriceFloorPercent > 100)) {
+      setPreferenceError("Choose a repricing floor from 50% through 100% of the original listing price.");
       return;
     }
     setIsSavingPreferences(true);
@@ -100,10 +152,23 @@ export function AccountSettings({
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          automationMode,
+          autopilotMinConfidence: minimumConfidence,
+          autopilotApprovalAboveCents: approvalAboveDollars === null ? null : Math.round(approvalAboveDollars * 100),
+          autopilotMinimumPriceCents: Math.round(minimumPriceDollars * 100),
+          autoRepriceEnabled,
+          autoRepriceAfterDays: repriceDays,
+          autoRepriceFloorPercent: repriceFloorPercent,
           autoValueEnabled,
           autoValueMaxCents: autoValueEnabled ? Math.round(dollars * 100) : null,
           ebayConnectPromptDismissed: preferences.ebayConnectPromptDismissed,
-          ebaySellingDefaults: preferences.ebaySellingDefaults,
+          ebaySellingDefaults: {
+            ...preferences.ebaySellingDefaults,
+            pricingStrategy,
+            sellFasterBelowCents: fasterBelowDollars === null ? null : Math.round(fasterBelowDollars * 100),
+            promoteListings,
+            promotionAdRatePercent: adRate,
+          },
         }),
       });
       const payload = (await response.json().catch(() => null)) as
@@ -113,7 +178,7 @@ export function AccountSettings({
         throw new Error(payload?.error ?? "CardPilot could not save this pricing rule.");
       }
       onPreferencesChange(payload);
-      setPreferenceStatus("Your automatic pricing rule has been saved.");
+      setPreferenceStatus("Your Autopilot and selling preferences have been saved.");
     } catch (caughtError) {
       setPreferenceError(
         caughtError instanceof Error
@@ -325,12 +390,87 @@ export function AccountSettings({
         {!recoveryMode && (
           <>
             <section className="account-settings-section">
-              <h3>Automatic values</h3>
+              <h3>CardPilot Autopilot</h3>
               <p>
-                Let CardPilot save its recommended value automatically for lower-value
-                cards. Recommendations above your limit still wait for your review.
+                Choose whether CardPilot should automatically identify, value, and prepare high-confidence cards or let you review each step.
               </p>
               <div className="account-settings-form">
+                <label>
+                  After I submit a card
+                  <select value={automationMode} onChange={(event) => setAutomationMode(event.target.value as typeof automationMode)}>
+                    <option value="autopilot">Autopilot — identify, price, and prepare the listing</option>
+                    <option value="preview">Preview — prepare the card and wait for my approval</option>
+                  </select>
+                </label>
+                {automationMode === "autopilot" && <>
+                  <label>
+                    Minimum identification confidence
+                    <select value={autopilotMinConfidence} onChange={(event) => setAutopilotMinConfidence(event.target.value)}>
+                      <option value="0.95">95% — high confidence</option>
+                      <option value="0.97">97% — stricter</option>
+                      <option value="0.99">99% — strictest</option>
+                    </select>
+                    <small>Cards below this level go to Needs attention instead of becoming publish-ready.</small>
+                  </label>
+                  <small>During testing, every completed listing still requires you to press the eBay publish button.</small>
+                  <label>
+                    Ask for approval when a card is worth more than
+                    <input type="number" min="0.01" step="0.01" inputMode="decimal" placeholder="Leave blank for no value limit" value={autopilotApprovalAbove} onChange={(event) => setAutopilotApprovalAbove(event.target.value)} />
+                  </label>
+                  <label>
+                    Never publish below
+                    <input type="number" min="0.01" step="0.01" inputMode="decimal" value={autopilotMinimumPrice} onChange={(event) => setAutopilotMinimumPrice(event.target.value)} />
+                    <small>This is a hard floor even when Sell faster is selected.</small>
+                  </label>
+                  <label className="account-toggle-row">
+                    <input type="checkbox" checked={autoRepriceEnabled} onChange={(event) => setAutoRepriceEnabled(event.target.checked)} />
+                    Reprice unsold fixed-price listings automatically
+                  </label>
+                  {autoRepriceEnabled && <>
+                    <label>
+                      Recheck an unsold listing after
+                      <input type="number" min="1" max="365" step="1" value={autoRepriceAfterDays} onChange={(event) => setAutoRepriceAfterDays(event.target.value)} />
+                      <small>Days after publication.</small>
+                    </label>
+                    <label>
+                      Never reduce below this percentage of its original price
+                      <input type="number" min="50" max="100" step="1" value={autoRepriceFloorPercent} onChange={(event) => setAutoRepriceFloorPercent(event.target.value)} />
+                    </label>
+                  </>}
+                </>}
+              </div>
+            </section>
+
+            <section className="account-settings-section">
+              <h3>Pricing and promotion</h3>
+              <p>
+                Let CardPilot save its recommended value automatically for lower-value
+                cards. Recommendations above your limit still wait for your review, and
+                you can revise any automatically saved value later.
+              </p>
+              <div className="account-settings-form">
+                <label>
+                  Default selling goal
+                  <select value={pricingStrategy} onChange={(event) => setPricingStrategy(event.target.value as typeof pricingStrategy)}>
+                    <option value="sell_faster">Sell faster — price near the market floor</option>
+                    <option value="balanced">Balanced — price near the market midpoint</option>
+                    <option value="maximize_value">Maximize value — accept a slower sale</option>
+                  </select>
+                </label>
+                <label>
+                  Always use Sell faster for cards at or below
+                  <input type="number" min="0.01" step="0.01" inputMode="decimal" placeholder="5.00" value={sellFasterBelow} onChange={(event) => setSellFasterBelow(event.target.value)} />
+                  <small>Optional. This overrides the default goal for lower-value cards.</small>
+                </label>
+                <label className="account-toggle-row">
+                  <input type="checkbox" checked={promoteListings} onChange={(event) => setPromoteListings(event.target.checked)} />
+                  Promote new eligible listings on eBay by default
+                </label>
+                {promoteListings && <label>
+                  Promoted Listings ad rate
+                  <input type="number" min="1" max="100" step="0.1" value={promotionAdRate} onChange={(event) => setPromotionAdRate(event.target.value)} />
+                  <small>Percent of the sale charged by eBay when a promoted interaction receives sale attribution.</small>
+                </label>}
                 <label className="account-toggle-row">
                   <input
                     type="checkbox"
@@ -362,7 +502,7 @@ export function AccountSettings({
                   disabled={isSavingPreferences}
                   onClick={() => void savePreferences()}
                 >
-                  {isSavingPreferences ? "Saving..." : "Save pricing rule"}
+                  {isSavingPreferences ? "Saving..." : "Save Autopilot preferences"}
                 </button>
               </div>
             </section>
