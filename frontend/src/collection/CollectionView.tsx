@@ -1001,6 +1001,9 @@ function SoldCompsPanel({
                             {sale.matchTier === "broader" && (
                               <span className="market-broader-badge">Broader comparison</span>
                             )}
+                            {sale.matchTier === "exact" && sale.visualMatchStatus && sale.visualMatchStatus !== "matched" && (
+                              <span className="market-broader-badge">Exact text match · photo not verified</span>
+                            )}
                             {isConfirmed && (
                               <span className="market-reference-badge">Confirmed as your card</span>
                             )}
@@ -2728,6 +2731,7 @@ export function CollectionView({
                       <div className="collection-card-value">
                         <div><span>eBay status</span><strong>{card.selling.status === "published" ? "Active" : card.selling.status[0].toUpperCase() + card.selling.status.slice(1)}</strong></div>
                         {isDetailsExpanded && card.selling.status === "published" && card.selling.publishedAt && <small>Active since {new Date(card.selling.publishedAt).toLocaleString()}</small>}
+                        {isDetailsExpanded && card.selling.status === "published" && (card.selling.viewCount != null || card.selling.watcherCount != null) && <small>{card.selling.viewCount ?? "—"} views · {card.selling.watcherCount ?? "—"} watchers{card.selling.impressionCount != null ? ` · ${card.selling.impressionCount} impressions` : ""}</small>}
                         {isDetailsExpanded && card.selling.status === "sold" && card.selling.soldAmountCents !== null && <small>Sold for {formatPrice(card.selling.soldAmountCents, card.selling.soldCurrency ?? "USD")}</small>}
                         {isDetailsExpanded && card.selling.listingUrl && <a href={card.selling.listingUrl} target="_blank" rel="noreferrer">View on eBay</a>}
                       </div>

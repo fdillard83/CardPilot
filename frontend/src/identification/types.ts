@@ -433,6 +433,14 @@ export type SoldComparable = {
   matchScore: number;
   matchedSignals: string[];
   matchTier: "exact" | "broader";
+  visualMatch?: {
+    score: number;
+    pixelScore?: number;
+    borderScore?: number;
+    layoutScore?: number;
+    structureScore?: number;
+  } | null;
+  visualMatchStatus?: "matched" | "unavailable" | "not_evaluated" | null;
   suggestions: {
     character: string | null;
     setOrInsert: string | null;
@@ -679,6 +687,9 @@ export type SavedCollectionCard = {
       listingUrl: string | null;
       priceCents: number;
       currency: string;
+      viewCount: number | null;
+      impressionCount: number | null;
+      watcherCount: number | null;
       publishedAt: string | null;
       endedAt: string | null;
       soldAt: string | null;

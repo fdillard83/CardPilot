@@ -79,11 +79,36 @@ function saleId(sale, index) {
   );
 }
 
-function visuallyEligibleSale(sale) {
-  if (!sale.visualMatchStatus) return true;
+function knownVisualMismatch(sale) {
   return sale.visualMatchStatus === "matched" &&
     Number.isFinite(sale.visualMatch?.score) &&
-    !isVisualMismatch(sale.visualMatch, sale.visualMatchStatus);
+    isVisualMismatch(sale.visualMatch, sale.visualMatchStatus);
+}
+
+function titleMatchVisualOptions(sale) {
+  return sale.visualMatchStatus === "matched"
+    ? { visualMatch: sale.visualMatch, visualMatchStatus: sale.visualMatchStatus }
+    : { visualMatch: null, visualMatchStatus: null };
+}
+
+function broaderVisualEligible(sale) {
+  return !sale.visualMatchStatus || (
+    sale.visualMatchStatus === "matched" &&
+    Number.isFinite(sale.visualMatch?.score) &&
+    !isVisualMismatch(sale.visualMatch, sale.visualMatchStatus)
+  );
+}
+
+function exactTextFallbackEligible(sale, match) {
+  if (!sale.visualMatchStatus || sale.visualMatchStatus === "matched") return true;
+  return match.matchedSignals.some((signal) => [
+    "card_number",
+    "parallel",
+    "finish",
+    "promo",
+    "print_run",
+    "set",
+  ].includes(signal));
 }
 
 function sourceImageCacheKey(sourceImageDataUrl) {
@@ -134,7 +159,7 @@ export function buildSoldCompsSnapshot({
       sale.priceConfirmed === true &&
       cents(sale.price) !== null &&
       Boolean(cleanText(sale.currency)) &&
-      visuallyEligibleSale(sale),
+      !knownVisualMismatch(sale),
   );
 
   function fromMatch(sale, match, matchTier, index) {
@@ -167,16 +192,18 @@ export function buildSoldCompsSnapshot({
   const exactSales = eligible.flatMap((sale, index) => {
     const match = evaluateCardTitleMatch(sale.title, fields, {
       identityConsensus,
-      visualMatch: sale.visualMatch,
-      visualMatchStatus: sale.visualMatchStatus,
+      ...titleMatchVisualOptions(sale),
     });
-    return match ? [fromMatch(sale, match, "exact", index)] : [];
+    return match && exactTextFallbackEligible(sale, match)
+      ? [fromMatch(sale, match, "exact", index)]
+      : [];
   });
   const exactIds = new Set(exactSales.map((sale) => sale.id));
   const broaderSales =
     exactSales.length < 3
       ? eligible.flatMap((sale, index) => {
           if (exactIds.has(saleId(sale, index))) return [];
+          if (!broaderVisualEligible(sale)) return [];
           const match = evaluateCardTitleMatch(sale.title, fields, {
             broader: true,
             identityConsensus,
@@ -232,7 +259,7 @@ export function buildSoldCompsSnapshot({
           fields,
           valuationProfile,
           observationType: "completed_sale",
-          observations: eligible.map((sale, index) => ({
+          observations: eligible.filter(broaderVisualEligible).map((sale, index) => ({
             id: saleId(sale, index),
             title: sale.title,
             amountCents: cents(sale.price),
@@ -356,7 +383,12 @@ export class SoldCompsService {
       ...searchOptions,
       limit: 100,
     });
-    primary = await this.#rankResult(primary, sourceImageDataUrl);
+    primary = await this.#rankResult(
+      primary,
+      sourceImageDataUrl,
+      fields,
+      resolvedIdentityConsensus,
+    );
     const results = [primary];
     const queriesUsed = [query];
     const searchedAt = new Date(this.now()).toISOString();
@@ -388,6 +420,8 @@ export class SoldCompsService {
             limit: 100,
           }),
           sourceImageDataUrl,
+          fields,
+          resolvedIdentityConsensus,
         ),
       );
       queriesUsed.push(discoveryQuery);
@@ -411,7 +445,7 @@ export class SoldCompsService {
     return snapshotFrom({ results, queriesUsed, searchedAt });
   }
 
-  async #rankResult(result, sourceImageDataUrl) {
+  async #rankResult(result, sourceImageDataUrl, fields, identityConsensus) {
     if (!sourceImageDataUrl || !this.visualMatcher || !result?.sales?.length) {
       return result;
     }
@@ -419,10 +453,17 @@ export class SoldCompsService {
       ...sale,
       id: saleId(sale, index),
     }));
+    const prioritized = [...candidates].sort((left, right) => {
+      const matchScore = (candidate) => (
+        evaluateCardTitleMatch(candidate.title, fields, { identityConsensus })
+        ?? evaluateCardTitleMatch(candidate.title, fields, { identityConsensus, broader: true })
+      )?.score ?? 0;
+      return matchScore(right) - matchScore(left);
+    });
     const ranked = await this.visualMatcher.rank({
       sourceImageDataUrl,
-      candidates,
-      limit: 20,
+      candidates: prioritized,
+      limit: 30,
     });
     return { ...result, sales: ranked };
   }

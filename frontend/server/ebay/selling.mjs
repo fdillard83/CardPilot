@@ -175,6 +175,7 @@ const SELL_SCOPES = [
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
   "https://api.ebay.com/oauth/api_scope/sell.marketing",
+  "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
 ];
 
 function tokenKey(secret) {
@@ -276,6 +277,30 @@ export class EbaySellingClient {
     }
     const location = response.headers.get("location");
     return payload ?? (location ? { location } : null);
+  }
+
+  async tradingRequest(accessToken, callName, body) {
+    const response = await this.fetch(`${this.apiRoot}/ws/api.dll`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/xml",
+        "X-EBAY-API-CALL-NAME": callName,
+        "X-EBAY-API-COMPATIBILITY-LEVEL": "1423",
+        "X-EBAY-API-SITEID": "0",
+        "X-EBAY-API-IAF-TOKEN": accessToken,
+      },
+      body,
+    });
+    const payload = await response.text();
+    if (!response.ok || /<Ack>(?:Failure|PartialFailure)<\/Ack>/i.test(payload)) {
+      const detail = payload.match(/<LongMessage>([\s\S]*?)<\/LongMessage>/i)?.[1]
+        ?? payload.match(/<ShortMessage>([\s\S]*?)<\/ShortMessage>/i)?.[1];
+      throw new EbayApiError(detail || "eBay could not return seller listing activity.", {
+        service: "selling",
+        status: response.status,
+      });
+    }
+    return payload;
   }
 }
 

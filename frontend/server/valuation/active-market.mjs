@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   buildVariantAdjustedEstimates,
   buildVariantDiscoveryQuery,
@@ -78,6 +79,12 @@ const productVariantWords = new Set([
 
 function cleanText(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function sourceImageCacheKey(sourceImageDataUrl) {
+  return sourceImageDataUrl
+    ? createHash("sha256").update(sourceImageDataUrl).digest("base64url").slice(0, 20)
+    : "none";
 }
 
 function searchKey(value) {
@@ -726,9 +733,13 @@ export function buildActiveMarketSnapshot({
     const isConfirmedReference =
       Boolean(confirmedReferenceItemId) &&
       candidate.itemId === confirmedReferenceItemId;
-    const match = isConfirmedReference
+    const confirmedReferenceRejected = isConfirmedReference &&
+      isVisualMismatch(candidate.visualMatch, candidate.visualMatchStatus);
+    const match = isConfirmedReference && !confirmedReferenceRejected
       ? { score: 1, matchedSignals: ["confirmed_reference"] }
-      : evaluateMatch(candidate, fields, identityConsensus);
+      : isConfirmedReference
+        ? null
+        : evaluateMatch(candidate, fields, identityConsensus);
     if (!match) return [];
     return [
       listingFromMatch(
@@ -900,7 +911,7 @@ export class ActiveMarketService {
     const gradeProfile = grading.isGraded
       ? `${grading.company ?? ""}:${grading.grade ?? ""}`
       : "raw";
-    const cacheKey = `${query.toLowerCase()}|reference:${confirmedReferenceItemId ?? "none"}|${gradeProfile}|${valuationProfile.featureType}:${valuationProfile.source}`;
+    const cacheKey = `${query.toLowerCase()}|reference:${confirmedReferenceItemId ?? "none"}|${gradeProfile}|${valuationProfile.featureType}:${valuationProfile.source}|image:${sourceImageCacheKey(sourceImageDataUrl)}`;
     const cached = this.cache.get(cacheKey);
     const hasFreshCache = Boolean(cached && cached.expiresAt > this.now());
     const marketRequest = hasFreshCache

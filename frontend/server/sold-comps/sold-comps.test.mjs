@@ -152,7 +152,7 @@ test("broader sold comparisons stay separate and reject known conflicts", () => 
   assert.equal(snapshot.groups[1].confidence, "low");
 });
 
-test("sold comps reject different, unavailable, and uninspected card images", () => {
+test("sold comps reject known visual mismatches but retain exact text fallbacks", () => {
   const snapshot = buildSoldCompsSnapshot({
     fields,
     grading: raw,
@@ -178,12 +178,51 @@ test("sold comps reject different, unavailable, and uninspected card images", ()
   });
 
   assert.equal(snapshot.candidateCount, 5);
-  assert.equal(snapshot.confirmedPriceCount, 1);
-  assert.equal(snapshot.exactMatchedCount, 1);
+  assert.equal(snapshot.confirmedPriceCount, 3);
+  assert.equal(snapshot.exactMatchedCount, 3);
   assert.equal(snapshot.broaderMatchedCount, 0);
   assert.equal(snapshot.variantEstimates.length, 0);
   assert.equal(snapshot.groups[0].sales[0].id, "matching-image");
   assert.equal(snapshot.groups[0].sales[0].visualMatchStatus, "matched");
+  assert.deepEqual(
+    new Set(snapshot.groups[0].sales.map((candidate) => candidate.id)),
+    new Set(["matching-image", "not-inspected", "image-unavailable"]),
+  );
+});
+
+test("sold comps do not use an unverified image to rescue a broader title", () => {
+  const snapshot = buildSoldCompsSnapshot({
+    fields,
+    grading: raw,
+    query: exactTitle,
+    results: [result([sale("unverified-broader", 44, {
+      title: "Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85",
+      visualMatchStatus: "unavailable",
+    })])],
+  });
+  assert.equal(snapshot.exactMatchedCount, 0);
+  assert.equal(snapshot.broaderMatchedCount, 0);
+});
+
+test("an unavailable sold image needs a card-design identifier in the title", () => {
+  const sparseFields = {
+    ...fields,
+    product: null,
+    setOrInsert: null,
+    cardNumber: null,
+    parallel: null,
+    serialNumber: null,
+  };
+  const snapshot = buildSoldCompsSnapshot({
+    fields: sparseFields,
+    grading: raw,
+    query: "2026 Nolan Ryan Topps",
+    results: [result([sale("generic", 20, {
+      title: "2026 Topps Nolan Ryan Baseball Card",
+      visualMatchStatus: "unavailable",
+    })])],
+  });
+  assert.equal(snapshot.exactMatchedCount, 0);
 });
 
 test("sold exclusions remove exact and broader comparisons from summaries", () => {

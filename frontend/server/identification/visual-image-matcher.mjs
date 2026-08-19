@@ -172,7 +172,7 @@ function compare(source, candidate) {
 }
 
 export function isVisualMismatch(visualMatch, visualMatchStatus = null) {
-  if (visualMatchStatus === "not_evaluated") return true;
+  if (visualMatchStatus === "not_evaluated" || visualMatchStatus === "unavailable") return true;
   if (!Number.isFinite(visualMatch?.score)) return false;
   const structureScore = Number.isFinite(visualMatch.structureScore)
     ? visualMatch.structureScore

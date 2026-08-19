@@ -275,6 +275,21 @@ test("a collector-confirmed eBay reference survives an incomplete seller title",
   ]);
 });
 
+test("a confirmed reference cannot override a different photographed card", () => {
+  const snapshot = buildActiveMarketSnapshot({
+    fields,
+    marketplaceId: "EBAY_US",
+    confirmedReferenceItemId: "v1|confirmed|0",
+    candidates: [{
+      ...candidate({ id: "confirmed", title: "Nolan Ryan collectible", price: 40 }),
+      visualMatchStatus: "matched",
+      visualMatch: { score: 0.48, structureScore: 0.2 },
+    }],
+  });
+  assert.equal(snapshot.exactMatchedCount, 0);
+  assert.equal(snapshot.matchedCount, 0);
+});
+
 test("broader comparisons activate only when exact results are scarce", () => {
   const strictTitle =
     "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85";
@@ -543,4 +558,39 @@ test("active-market cache keeps different confirmed references separate", async 
   await service.snapshot(fields, { confirmedReferenceItemId: "v1|1|0" });
   await service.snapshot(fields, { confirmedReferenceItemId: "v1|2|0" });
   assert.equal(requests, 4);
+});
+
+test("active-market visual cache stays isolated to the submitted card image", async () => {
+  let requests = 0;
+  let visualCalls = 0;
+  const service = new ActiveMarketService({
+    ebayClient: {
+      async searchByKeywords() {
+        requests += 1;
+        return {
+          marketplaceId: "EBAY_US",
+          candidates: [
+            candidate({ id: "1", title: "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85", price: 40 }),
+            candidate({ id: "2", title: "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85", price: 42 }),
+            candidate({ id: "3", title: "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85", price: 44 }),
+          ],
+        };
+      },
+    },
+    visualMatcher: {
+      async rank({ candidates }) {
+        visualCalls += 1;
+        return candidates.map((entry) => ({
+          ...entry,
+          visualMatchStatus: "matched",
+          visualMatch: { score: 0.95, structureScore: 0.9 },
+        }));
+      },
+    },
+  });
+  await service.snapshot(fields, { sourceImageDataUrl: "data:image/png;base64,AAAA" });
+  await service.snapshot(fields, { sourceImageDataUrl: "data:image/png;base64,AAAA" });
+  await service.snapshot(fields, { sourceImageDataUrl: "data:image/png;base64,BBBB" });
+  assert.equal(requests, 2);
+  assert.equal(visualCalls, 2);
 });

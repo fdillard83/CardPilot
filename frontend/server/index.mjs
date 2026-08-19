@@ -16,6 +16,10 @@ import { EbayTaxonomyClient } from "./ebay/taxonomy.mjs";
 import { listingReadiness } from "./ebay/listing-readiness.mjs";
 import { calculateAuctionSchedule } from "./ebay/auction-schedule.mjs";
 import {
+  EBAY_ANALYTICS_SCOPE,
+  EbayListingEngagementService,
+} from "./ebay/listing-engagement.mjs";
+import {
   EbayListingDraftSchema,
   EbaySandboxSetupSchema,
   EbaySellingClient,
@@ -102,6 +106,9 @@ const ebaySelling = ebaySellConfigured
       redirectUriName: process.env.EBAY_REDIRECT_URI_NAME.trim(),
       environment: ebaySellEnvironment,
     })
+  : null;
+const ebayListingEngagement = ebaySelling
+  ? new EbayListingEngagementService({ ebayClient: ebaySelling })
   : null;
 const ebayImageSearch = ebayConfigured
   ? new EbayImageSearchClient({
@@ -656,6 +663,10 @@ app.get("/api/ebay/selling/status", async (request, response) => {
       environmentMatches && String(connection?.scopes ?? "").split(/\s+/)
         .includes("https://api.ebay.com/oauth/api_scope/sell.marketing"),
     ),
+    analyticsAuthorized: Boolean(
+      environmentMatches && String(connection?.scopes ?? "").split(/\s+/)
+        .includes(EBAY_ANALYTICS_SCOPE),
+    ),
   });
 });
 
@@ -1070,10 +1081,12 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
     ]);
     const saleByCollectionId = new Map(sales.map((sale) => [sale.collection_id, sale]));
     const cardById = new Map(cards.map((card) => [card.collectionId, card]));
+    const engagement = await ebayEngagementForDrafts(userId, drafts, connection);
     const items = await Promise.all(drafts.map(async (draft) => {
       const card = cardById.get(draft.collectionId);
       if (!card) return null;
       const sale = saleByCollectionId.get(draft.collectionId);
+      const listingEngagement = engagement.byListingId.get(String(draft.ebayListingId));
       let requirements = { missingAspects: [], checks: [], ready: false };
       if (/^\d+$/.test(draft.categoryId) && ebayTaxonomy) {
         try { requirements = listingReadiness(card, draft, await ebayTaxonomy.itemAspects(draft.categoryId)); }
@@ -1091,6 +1104,9 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
         scheduleError: draft.scheduleError,
         ebayListingId: draft.ebayListingId,
         listingUrl: draft.ebayListingId ? `https://www.ebay.com/itm/${encodeURIComponent(draft.ebayListingId)}` : null,
+        viewCount: listingEngagement?.viewCount ?? null,
+        impressionCount: listingEngagement?.impressionCount ?? null,
+        watcherCount: listingEngagement?.watcherCount ?? null,
         publishedAt: draft.publishedAt,
         endedAt: draft.endedAt,
         soldAt: draft.soldAt,
@@ -1116,6 +1132,8 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
       environment: ebaySellEnvironment,
       productionPublishingEnabled: ebaySellEnvironment === "production",
       fulfillmentWriteAuthorized: String(connection?.scopes ?? "").split(/\s+/).includes("https://api.ebay.com/oauth/api_scope/sell.fulfillment"),
+      analyticsAuthorized: engagement.analyticsAuthorized,
+      engagementUpdatedAt: engagement.viewsUpdatedAt ?? engagement.fetchedAt,
       items: items.filter(Boolean),
     });
   } catch (error) {
@@ -1157,6 +1175,38 @@ async function ebaySellerAccessToken(userId) {
   if (connection.environment !== ebaySellEnvironment) throw new Error(`Reconnect your eBay ${ebaySellEnvironment} seller account before continuing.`);
   const refreshToken = decryptSellerToken(connection.encrypted_refresh_token, process.env.EBAY_TOKEN_ENCRYPTION_KEY);
   return (await ebaySelling.refresh(refreshToken, connection.scopes || undefined)).access_token;
+}
+
+async function ebayEngagementForDrafts(userId, drafts, existingConnection = null) {
+  const connection = existingConnection ?? await cloudServices?.ebaySelling.connection(userId);
+  const analyticsAuthorized = Boolean(
+    connection?.environment === ebaySellEnvironment &&
+    String(connection?.scopes ?? "").split(/\s+/).includes(EBAY_ANALYTICS_SCOPE),
+  );
+  const empty = {
+    byListingId: new Map(),
+    analyticsAuthorized,
+    viewsUpdatedAt: null,
+    fetchedAt: null,
+  };
+  const active = drafts
+    .filter((draft) => draft.status === "published" && draft.ebayListingId)
+    .map((draft) => ({ listingId: draft.ebayListingId, publishedAt: draft.publishedAt }));
+  if (!ebayListingEngagement || !connection || connection.environment !== ebaySellEnvironment || !active.length) {
+    return empty;
+  }
+  try {
+    return await ebayListingEngagement.snapshot({
+      userId,
+      listings: active,
+      analyticsAuthorized,
+      environment: ebaySellEnvironment,
+      accessToken: () => ebaySellerAccessToken(userId),
+    });
+  } catch (error) {
+    console.warn("eBay listing engagement was unavailable", error?.message ?? error);
+    return empty;
+  }
 }
 
 function ebayListingImageUrls(userId, card, draft, availableImages) {
@@ -1671,10 +1721,16 @@ app.get("/api/collection", async (request, response) => {
     const userId = collectionUserId(request);
     const cards = await collectionStore.list(userId);
     const drafts = cloudServices ? await cloudServices.ebaySelling.drafts(userId) : [];
+    const engagement = cloudServices
+      ? await ebayEngagementForDrafts(userId, drafts)
+      : { byListingId: new Map() };
     const sellingByCard = new Map(drafts.map((draft) => [draft.collectionId, {
       status: draft.status, listingId: draft.ebayListingId ?? null,
       listingUrl: draft.ebayListingId ? `https://www.ebay.com/itm/${encodeURIComponent(draft.ebayListingId)}` : null,
       priceCents: draft.priceCents, currency: draft.currency,
+      viewCount: engagement.byListingId.get(String(draft.ebayListingId))?.viewCount ?? null,
+      impressionCount: engagement.byListingId.get(String(draft.ebayListingId))?.impressionCount ?? null,
+      watcherCount: engagement.byListingId.get(String(draft.ebayListingId))?.watcherCount ?? null,
       publishedAt: draft.publishedAt ?? null, endedAt: draft.endedAt ?? null,
       soldAt: draft.soldAt ?? null, soldAmountCents: draft.soldAmountCents ?? null,
       soldCurrency: draft.soldCurrency ?? null,

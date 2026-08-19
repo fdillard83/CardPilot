@@ -42,6 +42,7 @@ test("sandbox seller authorization uses the configured RuName and CSRF state", (
   assert.equal(url.searchParams.get("state"), "csrf-state");
   assert.match(url.searchParams.get("scope"), /sell\.inventory/);
   assert.match(url.searchParams.get("scope"), /sell\.marketing/);
+  assert.match(url.searchParams.get("scope"), /sell\.analytics\.readonly/);
 });
 
 test("listing drafts require an editable title and positive price", () => {
@@ -187,4 +188,21 @@ test("selling requests preserve useful eBay validation details", async () => {
   assert.equal(requestHeaders.Accept, "application/json");
   assert.equal(requestHeaders["Accept-Language"], "en-US");
   assert.equal(requestHeaders["Content-Language"], "en-US");
+});
+
+test("traditional seller requests use the OAuth seller token", async () => {
+  let captured;
+  const client = new EbaySellingClient({
+    clientId: "sandbox-id",
+    clientSecret: "sandbox-secret",
+    redirectUriName: "sandbox-runame",
+    fetchImpl: async (url, options) => {
+      captured = { url, options };
+      return new Response("<GetMyeBaySellingResponse><Ack>Success</Ack></GetMyeBaySellingResponse>");
+    },
+  });
+  await client.tradingRequest("seller-token", "GetMyeBaySelling", "<request />");
+  assert.match(captured.url, /\/ws\/api\.dll$/);
+  assert.equal(captured.options.headers["X-EBAY-API-IAF-TOKEN"], "seller-token");
+  assert.equal(captured.options.headers["X-EBAY-API-CALL-NAME"], "GetMyeBaySelling");
 });

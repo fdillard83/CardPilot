@@ -64,6 +64,7 @@ test("visual matcher marks candidates outside its inspection budget", async () =
   assert.equal(candidates[0].visualMatchStatus, "matched");
   assert.equal(candidates[1].visualMatchStatus, "not_evaluated");
   assert.equal(isVisualMismatch(null, candidates[1].visualMatchStatus), true);
+  assert.equal(isVisualMismatch(null, "unavailable"), true);
 });
 
 test("visual matcher accepts only approved marketplace and sold-provider image hosts", () => {
