@@ -74,6 +74,7 @@ import {
   localImportStatus,
 } from "./supabase/local-import.mjs";
 import { assessAutopilot, autopilotRepriceCents, shouldAutomaticallySaveValuation } from "./autopilot/decision.mjs";
+import { MarketFeedbackSubmissionSchema } from "./supabase/market-feedback.mjs";
 
 const serverFile = fileURLToPath(import.meta.url);
 const currentDirectory = path.dirname(serverFile);
@@ -210,6 +211,23 @@ function excludedObservationIds(request, queryName = "exclude") {
     throw new TypeError("The removed pricing anchors are invalid.");
   }
   return [...new Set(values)];
+}
+
+async function learnedMarketExclusions(request, card, source) {
+  if (!cloudServices?.marketFeedback || !request.cardPilotUser?.id) {
+    return { ids: [], personalCount: 0, globalCount: 0 };
+  }
+  try {
+    return await cloudServices.marketFeedback.learnedExclusions({
+      userId: request.cardPilotUser.id,
+      collectionId: card.collectionId,
+      source,
+      targetTitle: card.title,
+    });
+  } catch (error) {
+    console.warn("Learned market exclusions were unavailable", error?.message ?? error);
+    return { ids: [], personalCount: 0, globalCount: 0 };
+  }
 }
 
 async function savedCardFrontDataUrl(userId, collectionId) {
@@ -2028,13 +2046,25 @@ app.get(
         collectionUserId(request),
         card,
       );
+      const learnedExclusions = await learnedMarketExclusions(
+        request,
+        card,
+        "active_market",
+      );
       const snapshot = await activeMarket.snapshot(card.fields, {
           confirmedReferenceItemId: card.ebayReference?.itemId ?? null,
           grading: card.grading,
           valuationProfile: card.valuationProfile,
-          excludedObservationIds: excludedObservationIds(request),
+          excludedObservationIds: [...new Set([
+            ...excludedObservationIds(request),
+            ...learnedExclusions.ids,
+          ])],
           ...marketIdentity,
         });
+      snapshot.learning = {
+        personalExclusionsApplied: learnedExclusions.personalCount,
+        globalExclusionsApplied: learnedExclusions.globalCount,
+      };
       recordProviderUsage({
         provider: "ebay",
         operation: "active_market",
@@ -2112,15 +2142,27 @@ app.get(
         collectionUserId(request),
         card,
       );
+      const learnedExclusions = await learnedMarketExclusions(
+        request,
+        card,
+        "sold_comps",
+      );
       const snapshot = await soldComps.snapshot(
           card.fields,
           card.grading,
           card.valuationProfile,
           {
-            excludedObservationIds: excludedObservationIds(request),
+            excludedObservationIds: [...new Set([
+              ...excludedObservationIds(request),
+              ...learnedExclusions.ids,
+            ])],
             ...marketIdentity,
           },
         );
+      snapshot.learning = {
+        personalExclusionsApplied: learnedExclusions.personalCount,
+        globalExclusionsApplied: learnedExclusions.globalCount,
+      };
       recordProviderUsage({
         provider: "the_card_api",
         operation: "sold_comps",
@@ -2653,6 +2695,28 @@ app.post("/api/identification-reviews", async (request, response) => {
     }
     console.error("Identification review logging failed", error);
     response.status(500).json({ error: "CardPilot could not record identification feedback." });
+  }
+});
+
+app.post("/api/market-match-reviews", async (request, response) => {
+  try {
+    const submission = MarketFeedbackSubmissionSchema.parse(request.body);
+    if (!cloudServices?.marketFeedback || !request.cardPilotUser?.id) {
+      response.status(202).json({ recorded: false, mode: "local" });
+      return;
+    }
+    const result = await cloudServices.marketFeedback.record(
+      request.cardPilotUser.id,
+      submission,
+    );
+    response.status(result.recorded ? 201 : 202).json(result);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      response.status(400).json({ error: "The market-match feedback is incomplete or invalid." });
+      return;
+    }
+    console.error("Market-match feedback logging failed", error);
+    response.status(500).json({ error: "CardPilot could not record this match feedback." });
   }
 });
 

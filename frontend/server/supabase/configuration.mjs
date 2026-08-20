@@ -6,6 +6,7 @@ import { SupabaseEbaySellingStore } from "./ebay-selling-store.mjs";
 import { SupabaseAdminOverview } from "./admin-overview.mjs";
 import { SupabaseIdentificationFeedback } from "./identification-feedback.mjs";
 import { SupabaseProviderUsage } from "./provider-usage.mjs";
+import { SupabaseMarketFeedback } from "./market-feedback.mjs";
 
 export function supabaseConfiguration(env = process.env) {
   const requested = env.COLLECTION_STORAGE_MODE?.trim().toLowerCase() === "supabase";
@@ -62,6 +63,7 @@ export function createSupabaseServices(configuration) {
     },
   );
   const identificationFeedback = new SupabaseIdentificationFeedback({ client: adminClient });
+  const marketFeedback = new SupabaseMarketFeedback({ client: adminClient });
   const providerUsage = new SupabaseProviderUsage({
     client: adminClient,
     monthlyCosts: {
@@ -89,7 +91,13 @@ export function createSupabaseServices(configuration) {
     preferences: new SupabaseAccountPreferencesRepository({ client: adminClient }),
     ebaySelling: new SupabaseEbaySellingStore({ client: adminClient }),
     identificationFeedback,
+    marketFeedback,
     providerUsage,
-    adminOverview: new SupabaseAdminOverview({ client: adminClient, identificationFeedback, providerUsage }),
+    adminOverview: new SupabaseAdminOverview({
+      client: adminClient,
+      identificationFeedback,
+      marketFeedback,
+      providerUsage,
+    }),
   };
 }

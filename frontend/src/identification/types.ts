@@ -371,6 +371,14 @@ export type ActiveMarketListing = {
   currency: string;
   matchScore: number;
   matchedSignals: string[];
+  visualMatch?: {
+    score: number;
+    pixelScore?: number;
+    borderScore?: number;
+    layoutScore?: number;
+    structureScore?: number;
+  } | null;
+  visualMatchStatus?: "matched" | "unavailable" | "not_evaluated" | null;
   matchTier: "confirmed" | "strict" | "broader";
   confirmedReference: boolean;
 };
@@ -409,6 +417,10 @@ export type ActiveMarketSnapshot = {
   exactMatchedCount: number;
   broaderMatchedCount: number;
   excludedCount: number;
+  learning?: {
+    personalExclusionsApplied: number;
+    globalExclusionsApplied: number;
+  };
   groups: ActiveMarketGroup[];
   valuationProfile: ValuationProfile;
   variantEstimates: VariantAdjustedEstimate[];
@@ -499,6 +511,10 @@ export type SoldCompsSnapshot = {
   exactMatchedCount: number;
   broaderMatchedCount: number;
   excludedCount: number;
+  learning?: {
+    personalExclusionsApplied: number;
+    globalExclusionsApplied: number;
+  };
   groups: SoldCompsGroup[];
   variantEstimates: VariantAdjustedEstimate[];
   disclaimer: string;

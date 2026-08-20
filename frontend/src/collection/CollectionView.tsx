@@ -511,6 +511,133 @@ function groupMatchesSavedCondition(
   );
 }
 
+type MarketFeedbackOutcome =
+  | "correct_match"
+  | "wrong_card"
+  | "wrong_variation"
+  | "missing_matches";
+
+type MarketFeedbackSnapshot = {
+  searchedAt: string;
+  candidateCount: number;
+  matchedCount: number;
+  exactMatchedCount: number;
+  broaderMatchedCount: number;
+  excludedCount: number;
+};
+
+function MarketFeedbackControls({
+  card,
+  source,
+  snapshot,
+  observation,
+  onIncorrect,
+}: {
+  card: SavedCollectionCard;
+  source: "active_market" | "sold_comps";
+  snapshot: MarketFeedbackSnapshot;
+  observation: {
+    id: string;
+    title: string;
+    matchTier: string;
+    matchScore: number;
+    visualMatchScore: number | null;
+    visualMatchStatus: "matched" | "unavailable" | "not_evaluated" | null;
+    matchedSignals: string[];
+  } | null;
+  onIncorrect?: () => void;
+}) {
+  const [selectedOutcome, setSelectedOutcome] = useState<MarketFeedbackOutcome | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const sendFeedback = async (outcome: MarketFeedbackOutcome) => {
+    if (isSending) return;
+    setIsSending(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/market-match-reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          collectionId: card.collectionId,
+          source,
+          snapshotSearchedAt: snapshot.searchedAt,
+          observationId: observation?.id ?? null,
+          outcome,
+          targetTitle: card.title,
+          resultTitle: observation?.title ?? null,
+          matchTier: observation?.matchTier ?? null,
+          matchScore: observation?.matchScore ?? null,
+          visualMatchScore: observation?.visualMatchScore ?? null,
+          visualMatchStatus: observation?.visualMatchStatus ?? null,
+          matchedSignals: observation?.matchedSignals ?? [],
+          candidateCount: snapshot.candidateCount,
+          matchedCount: snapshot.matchedCount,
+          exactMatchedCount: snapshot.exactMatchedCount,
+          broaderMatchedCount: snapshot.broaderMatchedCount,
+          excludedCount: snapshot.excludedCount,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { recorded?: boolean; error?: string }
+        | null;
+      if (!response.ok || payload?.recorded !== true) {
+        throw new Error(payload?.error ?? "Feedback storage is not ready yet.");
+      }
+      setSelectedOutcome(outcome);
+      setMessage("Thanks—this will help CardPilot improve matching.");
+      if (outcome === "wrong_card" || outcome === "wrong_variation") {
+        onIncorrect?.();
+      }
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "CardPilot could not save that feedback.");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  if (!observation) {
+    return (
+      <div className="market-feedback market-feedback-missing">
+        <span>Is CardPilot leaving out a good comparison?</span>
+        <button
+          type="button"
+          disabled={isSending || selectedOutcome === "missing_matches"}
+          onClick={() => void sendFeedback("missing_matches")}
+        >
+          {selectedOutcome === "missing_matches" ? "Reported" : "A good match is missing"}
+        </button>
+        {message && <small role="status">{message}</small>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="market-feedback" aria-label={`Rate match for ${observation.title}`}>
+      <span>Help CardPilot learn:</span>
+      <div>
+        {([
+          ["correct_match", "Correct match"],
+          ["wrong_card", "Wrong card"],
+          ["wrong_variation", "Wrong variation"],
+        ] as const).map(([outcome, label]) => (
+          <button
+            type="button"
+            className={selectedOutcome === outcome ? "is-selected" : undefined}
+            disabled={isSending}
+            key={outcome}
+            onClick={() => void sendFeedback(outcome)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {message && <small role="status">{message}</small>}
+    </div>
+  );
+}
+
 function ActiveMarketPanel({
   card,
   snapshot,
@@ -612,9 +739,22 @@ function ActiveMarketPanel({
                 <span>{snapshot.broaderMatchedCount} broader comparisons</span>
               )}
               <span>{snapshot.excludedCount} results excluded</span>
+              {(snapshot.learning?.personalExclusionsApplied ?? 0) > 0 && (
+                <span>{snapshot.learning?.personalExclusionsApplied} matches removed from your feedback</span>
+              )}
+              {(snapshot.learning?.globalExclusionsApplied ?? 0) > 0 && (
+                <span>{snapshot.learning?.globalExclusionsApplied} matches removed from community feedback</span>
+              )}
               <span>Checked {new Date(snapshot.searchedAt).toLocaleString()}</span>
             </div>
           </div>
+
+          <MarketFeedbackControls
+            card={card}
+            source="active_market"
+            snapshot={snapshot}
+            observation={null}
+          />
 
           <PricingExclusionControls
             excludedCount={excludedAnchorCount}
@@ -745,6 +885,21 @@ function ActiveMarketPanel({
                           ) : (
                             <div className="market-listing">{listingContents}</div>
                           )}
+                          <MarketFeedbackControls
+                            card={card}
+                            source="active_market"
+                            snapshot={snapshot}
+                            observation={{
+                              id: listing.itemId,
+                              title: listing.title,
+                              matchTier: listing.matchTier,
+                              matchScore: listing.matchScore,
+                              visualMatchScore: listing.visualMatch?.score ?? null,
+                              visualMatchStatus: listing.visualMatchStatus ?? null,
+                              matchedSignals: listing.matchedSignals,
+                            }}
+                            onIncorrect={() => onExcludeAnchor(listing.itemId)}
+                          />
                           <button
                             type="button"
                             className="market-remove-anchor"
@@ -911,10 +1066,26 @@ function SoldCompsPanel({
                 <span>{snapshot.broaderMatchedCount} broader sold comparisons</span>
               )}
               <span>{snapshot.excludedCount} records excluded</span>
+              {(snapshot.learning?.personalExclusionsApplied ?? 0) > 0 && (
+                <span>{snapshot.learning?.personalExclusionsApplied} sales removed from your feedback</span>
+              )}
+              {(snapshot.learning?.globalExclusionsApplied ?? 0) > 0 && (
+                <span>{snapshot.learning?.globalExclusionsApplied} sales removed from community feedback</span>
+              )}
               <span>Coverage: {coverageLabel}</span>
               <span>Checked {new Date(snapshot.searchedAt).toLocaleString()}</span>
             </div>
           </div>
+
+          <MarketFeedbackControls
+            card={card}
+            source="sold_comps"
+            snapshot={{
+              ...snapshot,
+              matchedCount: snapshot.exactMatchedCount + snapshot.broaderMatchedCount,
+            }}
+            observation={null}
+          />
 
           <PricingExclusionControls
             excludedCount={excludedAnchorCount}
@@ -1032,6 +1203,24 @@ function SoldCompsPanel({
                               {saleContents}
                             </div>
                           )}
+                          <MarketFeedbackControls
+                            card={card}
+                            source="sold_comps"
+                            snapshot={{
+                              ...snapshot,
+                              matchedCount: snapshot.exactMatchedCount + snapshot.broaderMatchedCount,
+                            }}
+                            observation={{
+                              id: sale.id,
+                              title: sale.title,
+                              matchTier: sale.matchTier,
+                              matchScore: sale.matchScore,
+                              visualMatchScore: sale.visualMatch?.score ?? null,
+                              visualMatchStatus: sale.visualMatchStatus ?? null,
+                              matchedSignals: sale.matchedSignals,
+                            }}
+                            onIncorrect={() => onExcludeAnchor(sale.id)}
+                          />
                           <button
                             type="button"
                             className="market-remove-anchor"

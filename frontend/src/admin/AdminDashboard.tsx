@@ -4,6 +4,7 @@ type Overview = {
   totals: { users: number; cards: number; activeListings: number; activeListingValueCents: number; soldCount: number; soldGrossCents: number; currency: string };
   users: { userId: string; email: string | null; createdAt: string; lastSignInAt: string | null; cardCount: number; activeListingCount: number; activeListingValueCents: number; soldCount: number; soldGrossCents: number }[];
   fieldFeedback: { field: string; reviewed: number; kept: number; changed: number; changeRate: number; averageOriginalConfidence: number }[];
+  marketFeedback: { source: "active_market" | "sold_comps"; reviewedResults: number; correctMatches: number; wrongCards: number; wrongVariations: number; missingMatchReports: number; correctRate: number; falseMatchRate: number; averageReviewedScore: number | null }[];
   providerUsage: { provider: string; providerLabel: string; operation: string; requests: number; successfulRequests: number; successRate: number; averageDurationMs: number; returnedCount: number; usefulCount: number; usefulRate: number; configuredMonthlyCostCents: number; estimatedCostPerUsefulResultCents: number | null; assessment: "collecting_data" | "strong" | "watch" | "weak" }[];
 };
 const money = (cents: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
@@ -56,6 +57,17 @@ export function AdminDashboard() {
             {overview.fieldFeedback.map((field) => <div className="admin-feedback-row" role="row" key={field.field}><strong>{field.field}</strong><span>{field.reviewed}</span><span>{field.kept}</span><span>{field.changed}</span><span>{Math.round(field.changeRate * 100)}%</span><span>{Math.round(field.averageOriginalConfidence * 100)}%</span></div>)}
           </div>
         ) : <p className="valuation-disclaimer">Field feedback will appear after users confirm cards with this update.</p>}
+      </section>
+      <section className="admin-feedback-section">
+        <div><span>Match learning</span><h2>Are market results accurate and complete?</h2><p>User-reviewed results become labeled examples for personal and global matching calibration. Photos and prices are not stored in this feedback log.</p></div>
+        {overview.marketFeedback.length ? (
+          <div className="admin-provider-grid">
+            {overview.marketFeedback.map((feedback) => <article key={feedback.source}>
+              <div className="admin-provider-heading"><div><strong>{feedback.source === "active_market" ? "Active market" : "Sold comps"}</strong><small>Reviewed matching outcomes</small></div><span className={`admin-provider-assessment ${feedback.reviewedResults < 10 ? "assessment-collecting_data" : feedback.correctRate >= 0.8 ? "assessment-strong" : feedback.correctRate >= 0.6 ? "assessment-watch" : "assessment-weak"}`}>{feedback.reviewedResults < 10 ? "Collecting data" : `${Math.round(feedback.correctRate * 100)}% correct`}</span></div>
+              <dl><div><dt>Results reviewed</dt><dd>{feedback.reviewedResults}</dd></div><div><dt>Correct</dt><dd>{feedback.correctMatches}</dd></div><div><dt>Wrong cards</dt><dd>{feedback.wrongCards}</dd></div><div><dt>Wrong variations</dt><dd>{feedback.wrongVariations}</dd></div><div><dt>False-match rate</dt><dd>{Math.round(feedback.falseMatchRate * 100)}%</dd></div><div><dt>Good matches missing</dt><dd>{feedback.missingMatchReports}</dd></div><div><dt>Avg. reviewed score</dt><dd>{feedback.averageReviewedScore === null ? "Not available" : feedback.averageReviewedScore.toFixed(2)}</dd></div></dl>
+            </article>)}
+          </div>
+        ) : <p className="valuation-disclaimer">Market-match learning will appear after users rate active listings and sold comps.</p>}
       </section>
       <section className="admin-feedback-section">
         <div><span>Paid-service value</span><h2>Are providers earning their cost?</h2><p>Rolling 30-day aggregate. “Useful” means a result survived CardPilot’s matching thresholds and contributed usable evidence—not merely that the provider returned something.</p></div>

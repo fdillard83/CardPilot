@@ -723,6 +723,8 @@ export function buildActiveMarketSnapshot({
       currency,
       matchScore: match.score,
       matchedSignals: match.matchedSignals,
+      visualMatch: candidate.visualMatch ?? null,
+      visualMatchStatus: candidate.visualMatchStatus ?? null,
       matchTier,
       confirmedReference: matchTier === "confirmed",
       grade: detectedGrade(candidate.title, candidate.condition),
