@@ -75,6 +75,7 @@ import {
 } from "./supabase/local-import.mjs";
 import { assessAutopilot, autopilotRepriceCents, shouldAutomaticallySaveValuation } from "./autopilot/decision.mjs";
 import { MarketFeedbackSubmissionSchema } from "./supabase/market-feedback.mjs";
+import { listingHealth, optimizedListingDetails } from "./ebay/listing-health.mjs";
 
 const serverFile = fileURLToPath(import.meta.url);
 const currentDirectory = path.dirname(serverFile);
@@ -1117,10 +1118,23 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
       const sale = saleByCollectionId.get(draft.collectionId);
       const listingEngagement = engagement.byListingId.get(String(draft.ebayListingId));
       let requirements = { missingAspects: [], checks: [], ready: false };
+      let definitions = [];
       if (/^\d+$/.test(draft.categoryId) && ebayTaxonomy) {
-        try { requirements = listingReadiness(card, draft, await ebayTaxonomy.itemAspects(draft.categoryId)); }
+        try {
+          definitions = await ebayTaxonomy.itemAspects(draft.categoryId);
+          requirements = listingReadiness(card, draft, definitions);
+        }
         catch { requirements = listingReadiness(card, draft, []); }
       } else requirements = listingReadiness(card, draft, []);
+      const health = draft.status === "published"
+        ? listingHealth({
+            card,
+            draft,
+            definitions,
+            engagement: listingEngagement,
+            backAvailable: Boolean(card.images.backUrl),
+          })
+        : null;
       return {
         collectionId: card.collectionId,
         title: draft.title || card.title,
@@ -1155,6 +1169,9 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
         missingAspects: requirements.missingAspects,
         checks: requirements.checks,
         ready: requirements.ready,
+        health,
+        promotionRequested: draft.promoteListing === true,
+        promotion: draft.promotion ?? null,
       };
     }));
     response.json({
@@ -1162,6 +1179,7 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
       productionPublishingEnabled: ebaySellEnvironment === "production",
       fulfillmentWriteAuthorized: String(connection?.scopes ?? "").split(/\s+/).includes("https://api.ebay.com/oauth/api_scope/sell.fulfillment"),
       analyticsAuthorized: engagement.analyticsAuthorized,
+      marketingAuthorized: String(connection?.scopes ?? "").split(/\s+/).includes("https://api.ebay.com/oauth/api_scope/sell.marketing"),
       engagementUpdatedAt: engagement.viewsUpdatedAt ?? engagement.fetchedAt,
       items: items.filter(Boolean),
     });
@@ -1330,15 +1348,25 @@ async function publishEbayListing(userId, collectionId) {
     if (!draft.promoteListing) return result;
     try {
       const promotion = await promoteEbayListing(token, published.listingId, card.collectionId, draft.promotionAdRatePercent);
-      return { ...result, promotion };
+      const promotedDraft = await cloudServices.ebaySelling.saveDraft(
+        userId,
+        card.collectionId,
+        { ...draft, promotion },
+        ebaySellEnvironment,
+      );
+      return { ...promotedDraft, promotion };
     } catch (error) {
-      return {
-        ...result,
-        promotion: {
+      const promotion = {
           status: "failed",
           error: error.message ?? "The listing is live, but eBay could not promote it.",
-        },
       };
+      const promotionFailedDraft = await cloudServices.ebaySelling.saveDraft(
+        userId,
+        card.collectionId,
+        { ...draft, promotion },
+        ebaySellEnvironment,
+      );
+      return { ...promotionFailedDraft, promotion };
     }
 }
 
@@ -1389,6 +1417,173 @@ async function promoteEbayListing(token, listingId, collectionId, adRatePercent)
     adRatePercent: Number(adRatePercent),
   };
 }
+
+const EbayActiveOptimizationSchema = z.object({
+  collectionIds: z.array(z.string().min(1).max(100)).min(1).max(100),
+  promoteListings: z.boolean().default(false),
+  promotionAdRatePercent: z.number().min(1).max(100).default(2),
+  confirmation: z.literal("OPTIMIZE_ACTIVE_LISTINGS"),
+}).strict();
+
+async function optimizeActiveEbayListing(
+  userId,
+  collectionId,
+  { promoteListings, promotionAdRatePercent, token },
+) {
+  const card = await collectionStore.get(userId, collectionId);
+  const saved = card && await cloudServices.ebaySelling.draft(userId, collectionId);
+  if (!card || !saved?.ebayOfferId || !saved?.ebayListingId || saved.status !== "published") {
+    throw new Error("No active CardPilot eBay listing was found.");
+  }
+  const definitions = /^\d+$/.test(saved.categoryId) && ebayTaxonomy
+    ? await ebayTaxonomy.itemAspects(saved.categoryId)
+    : [];
+  const [front, back] = await Promise.all([
+    collectionStore.image(userId, collectionId, "front"),
+    collectionStore.image(userId, collectionId, "back"),
+  ]);
+  if (!front) throw new Error("The saved front image is unavailable.");
+  const previousDraft = editableEbayDraft(saved);
+  const optimized = optimizedListingDetails(card, previousDraft, definitions, {
+    backAvailable: Boolean(back),
+  });
+  const nextDraft = {
+    ...previousDraft,
+    title: optimized.title,
+    aspects: optimized.aspects,
+    listingImages: optimized.listingImages,
+    promoteListing: promoteListings || previousDraft.promoteListing,
+    promotionAdRatePercent: promoteListings
+      ? promotionAdRatePercent
+      : previousDraft.promotionAdRatePercent,
+  };
+  const savedNextDraft = await cloudServices.ebaySelling.saveDraft(
+    userId,
+    collectionId,
+    nextDraft,
+    ebaySellEnvironment,
+  );
+  const imageUrls = ebayListingImageUrls(
+    userId,
+    card,
+    savedNextDraft,
+    { front, back },
+  );
+  const sku = `cardpilot-${card.collectionId}`;
+  const inventoryCondition = inventoryConditionForCard({
+    categoryId: nextDraft.categoryId,
+    isGraded: card.grading?.isGraded,
+    condition: nextDraft.condition,
+  });
+  try {
+    await ebaySelling.request(
+      token,
+      `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
+      {
+        method: "PUT",
+        body: {
+          availability: { shipToLocationAvailability: { quantity: 1 } },
+          ...inventoryCondition,
+          conditionDescription: nextDraft.conditionDescription,
+          product: {
+            title: nextDraft.title,
+            description: nextDraft.description,
+            aspects: nextDraft.aspects,
+            imageUrls,
+          },
+        },
+      },
+    );
+  } catch (error) {
+    await cloudServices.ebaySelling.saveDraft(
+      userId,
+      collectionId,
+      previousDraft,
+      ebaySellEnvironment,
+    );
+    throw error;
+  }
+  let promotion = previousDraft.promotion ?? null;
+  if (promoteListings && promotion?.status !== "promoted") {
+    try {
+      promotion = await promoteEbayListing(
+        token,
+        saved.ebayListingId,
+        collectionId,
+        promotionAdRatePercent,
+      );
+    } catch (error) {
+      promotion = {
+        status: "failed",
+        error: error.message ?? "The listing details were improved, but eBay could not promote it.",
+        adRatePercent: promotionAdRatePercent,
+      };
+    }
+  }
+  const finalDraft = await cloudServices.ebaySelling.saveDraft(
+    userId,
+    collectionId,
+    { ...nextDraft, promotion },
+    ebaySellEnvironment,
+  );
+  return {
+    collectionId,
+    listingId: saved.ebayListingId,
+    title: finalDraft.title,
+    changes: optimized.changes,
+    promotion,
+  };
+}
+
+app.post("/api/ebay/listings/optimize", async (request, response) => {
+  try {
+    const input = EbayActiveOptimizationSchema.parse(request.body);
+    const userId = request.cardPilotUser.id;
+    if (input.promoteListings) {
+      const connection = await cloudServices.ebaySelling.connection(userId);
+      const marketingAuthorized = String(connection?.scopes ?? "")
+        .split(/\s+/)
+        .includes("https://api.ebay.com/oauth/api_scope/sell.marketing");
+      if (!marketingAuthorized) {
+        return response.status(409).json({
+          error: "Reconnect eBay permissions before promoting active listings.",
+        });
+      }
+    }
+    const token = await ebaySellerAccessToken(userId);
+    const results = [];
+    for (const collectionId of [...new Set(input.collectionIds)]) {
+      try {
+        results.push({
+          ok: true,
+          ...(await optimizeActiveEbayListing(userId, collectionId, {
+            ...input,
+            token,
+          })),
+        });
+      } catch (error) {
+        results.push({
+          ok: false,
+          collectionId,
+          error: error.message ?? "The active listing could not be optimized.",
+        });
+      }
+    }
+    const updated = results.filter((result) => result.ok).length;
+    response.status(updated ? 200 : 502).json({
+      requested: results.length,
+      updated,
+      failed: results.length - updated,
+      results,
+    });
+  } catch (error) {
+    response.status(error instanceof ZodError ? 400 : 502).json({
+      error: error instanceof ZodError
+        ? "Choose active listings and explicitly confirm the optimization."
+        : error.message ?? "CardPilot could not optimize the active listings.",
+    });
+  }
+});
 
 app.post("/api/collection/:collectionId/ebay-publish", async (request, response) => {
   if (request.body?.confirmation !== "PUBLISH") {

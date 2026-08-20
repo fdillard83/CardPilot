@@ -23,6 +23,13 @@ export const EbayListingDraftSchema = z.object({
   pricingStrategy: z.enum(["sell_faster", "balanced", "maximize_value"]).default("balanced"),
   promoteListing: z.boolean().default(false),
   promotionAdRatePercent: z.number().min(1).max(100).default(2),
+  promotion: z.object({
+    status: z.enum(["promoted", "failed"]),
+    error: z.string().max(1000).optional(),
+    campaignId: z.string().max(200).optional(),
+    adId: z.string().max(200).nullable().optional(),
+    adRatePercent: z.number().min(1).max(100).optional(),
+  }).nullable().optional(),
   automationStatus: z.enum(["preview", "needs_attention", "ready", "publishing", "published", "failed"]).default("preview"),
   automationReason: z.string().max(1000).nullable().default(null),
   automationUpdatedAt: z.string().datetime().nullable().default(null),

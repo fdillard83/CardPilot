@@ -2601,6 +2601,25 @@ main {
 .ebay-queue-list article > div { display: grid; gap: 4px; min-width: 0; }
 .ebay-queue-list h3, .ebay-queue-list p { margin: 0; }
 .ebay-queue-list p, .ebay-queue-list small { color: var(--muted); font-size: 11px; }
+.ebay-optimization-panel { display: grid; gap: 12px; margin: 0 0 14px; padding: 16px; border: 1px solid rgba(183, 238, 79, .3); border-radius: 15px; background: rgba(183, 238, 79, .06); }
+.ebay-optimization-panel > div:first-child { display: grid; gap: 4px; }
+.ebay-optimization-panel > div:first-child > span { color: var(--lime); font-size: 10px; font-weight: 850; text-transform: uppercase; letter-spacing: .08em; }
+.ebay-optimization-panel small, .ebay-optimization-panel p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.ebay-optimization-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.ebay-optimization-actions label { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 11px; }
+.ebay-optimization-actions input[type="number"] { width: 68px; }
+.ebay-listing-health { margin-top: 8px; padding: 10px; border: 1px solid rgba(121, 201, 255, .2); border-radius: 11px; background: rgba(121, 201, 255, .045); }
+.ebay-listing-health > div:first-child { display: flex; align-items: center; gap: 8px; }
+.health-score { padding: 3px 7px; border-radius: 999px; font-size: 10px; font-weight: 900; }
+.health-strong { color: var(--lime); background: rgba(183, 238, 79, .11); }
+.health-watch { color: #ffd76b; background: rgba(255, 215, 107, .11); }
+.health-weak { color: #ff8a8a; background: rgba(255, 107, 107, .11); }
+.ebay-listing-health ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.ebay-title-preview { display: grid; gap: 3px; margin-top: 5px; padding: 7px 8px; border-left: 2px solid var(--lime); background: rgba(183, 238, 79, .045); }
+.ebay-title-preview span, .ebay-health-meta span { color: var(--muted); font-size: 9px; }
+.ebay-title-preview strong { font-size: 11px; line-height: 1.35; }
+.ebay-health-meta { display: flex !important; flex-wrap: wrap; gap: 5px 10px !important; margin-top: 4px; }
+.ebay-optimize-select { display: flex; align-items: center; gap: 6px; margin-top: 5px; color: #a9dcff; font-size: 10px; font-weight: 800; }
 
 .admin-feedback-section {
   display: grid;
@@ -2787,6 +2806,7 @@ main {
   .ebay-readiness ul { grid-template-columns: 1fr; }
   .ebay-queue-launch { align-items: stretch; flex-direction: column; }
   .ebay-queue-list article { grid-template-columns: 62px 1fr; }
+  .ebay-queue-list article > div:last-child { grid-column: 1 / -1; }
   .ebay-queue-list article > button { grid-column: 1 / -1; }
   .ebay-proceeds { grid-template-columns: 1fr; }
   .ebay-proceeds p { grid-column: auto; }

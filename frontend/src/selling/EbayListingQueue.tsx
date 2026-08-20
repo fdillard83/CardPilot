@@ -12,8 +12,20 @@ type QueueItem = {
   viewCount?: number | null; impressionCount?: number | null; watcherCount?: number | null;
   paymentStatus?: string | null; fulfillmentStatus?: string | null;
   saleId?: string | null; shippingCarrierCode?: string | null; trackingNumber?: string | null; shippedAt?: string | null;
+  promotionRequested?: boolean;
+  promotion?: { status: "promoted" | "failed"; error?: string; adRatePercent?: number } | null;
+  health?: {
+    score: number; diagnosis: string; issues: string[]; ageDays: number;
+    clickThroughRate: number | null; aspectCompleteness: number | null;
+    referenceValueCents: number | null; priceDifferencePercent: number | null;
+    hasChanges: boolean; needsAttention: boolean;
+    optimized: {
+      title: string;
+      changes: { title: { from: string; to: string } | null; aspects: string[]; addBackImage: boolean };
+    };
+  } | null;
 };
-type QueuePayload = { environment: string; productionPublishingEnabled: boolean; fulfillmentWriteAuthorized: boolean; analyticsAuthorized: boolean; engagementUpdatedAt?: string | null; items: QueueItem[] };
+type QueuePayload = { environment: string; productionPublishingEnabled: boolean; fulfillmentWriteAuthorized: boolean; analyticsAuthorized: boolean; marketingAuthorized: boolean; engagementUpdatedAt?: string | null; items: QueueItem[] };
 
 export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
   cards: SavedCollectionCard[]; onOpenDraft: (card: SavedCollectionCard) => void; onClose: () => void;
@@ -27,6 +39,11 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
   const [shippingCarrierCode, setShippingCarrierCode] = useState("USPS");
   const [trackingNumber, setTrackingNumber] = useState("");
   const [shippingBusy, setShippingBusy] = useState(false);
+  const [selectedOptimizationIds, setSelectedOptimizationIds] = useState<string[]>([]);
+  const [optimizationBusy, setOptimizationBusy] = useState(false);
+  const [promoteOptimized, setPromoteOptimized] = useState(false);
+  const [promotionAdRate, setPromotionAdRate] = useState(2);
+  const [optimizationMessage, setOptimizationMessage] = useState<string | null>(null);
   const [tab, setTab] = useState<"all" | "draft" | "scheduled" | "active" | "sold" | "ended">("all");
 
   const load = () => fetch("/api/ebay/listing-queue").then(async (response) => {
@@ -84,6 +101,48 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
     finally { setShippingBusy(false); }
   };
 
+  const activeNeedingOptimization = payload?.items.filter(
+    (item) => item.status === "published" && item.health?.needsAttention,
+  ) ?? [];
+  const toggleOptimization = (collectionId: string) => {
+    setSelectedOptimizationIds((current) => current.includes(collectionId)
+      ? current.filter((id) => id !== collectionId)
+      : [...current, collectionId]);
+  };
+  const optimizeSelected = async () => {
+    if (!selectedOptimizationIds.length || optimizationBusy) return;
+    const promotionText = promoteOptimized
+      ? ` and enroll them in eBay promotion at ${promotionAdRate.toFixed(1)}%`
+      : "";
+    if (!window.confirm(
+      `Revise ${selectedOptimizationIds.length} active eBay listing${selectedOptimizationIds.length === 1 ? "" : "s"} with the reviewed titles, item specifics, and available photos${promotionText}? These are real public listing changes.`,
+    )) return;
+    setOptimizationBusy(true);
+    setError(null);
+    setOptimizationMessage(null);
+    try {
+      const response = await fetch("/api/ebay/listings/optimize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          collectionIds: selectedOptimizationIds,
+          promoteListings: promoteOptimized,
+          promotionAdRatePercent: promotionAdRate,
+          confirmation: "OPTIMIZE_ACTIVE_LISTINGS",
+        }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error ?? "The active listings could not be optimized.");
+      setOptimizationMessage(`${body.updated} active listing${body.updated === 1 ? " was" : "s were"} improved${body.failed ? `; ${body.failed} could not be changed` : ""}.`);
+      setSelectedOptimizationIds([]);
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The active listings could not be optimized.");
+    } finally {
+      setOptimizationBusy(false);
+    }
+  };
+
   return <div className="ebay-draft-backdrop" role="presentation">
     <section className="ebay-draft-panel ebay-queue-panel" role="dialog" aria-modal="true" aria-labelledby="ebay-queue-title">
       <header><div><span>eBay selling</span><h2 id="ebay-queue-title">Listings and drafts</h2></div><div><a className="button-link" href="/api/ebay/sales/export.csv">Download sales CSV</a><button type="button" disabled={syncing} onClick={() => { setSyncing(true); setError(null); void fetch("/api/ebay/sales/sync", { method: "POST" }).then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(body.error); await load(); }).catch((caught) => setError(caught instanceof Error ? caught.message : "Sales sync failed.")).finally(() => setSyncing(false)); }}>{syncing ? "Syncing..." : "Sync eBay sales"}</button><button type="button" onClick={onClose}>Close</button></div></header>
@@ -94,25 +153,37 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
           <strong>{payload.environment === "sandbox" ? "Sandbox test mode" : "Production mode"}</strong>
           <span>{payload.environment === "sandbox" ? "Nothing in this queue can become a real eBay listing." : "Publishing can create a real public listing and may incur eBay fees."}</span>
         </div>
-        {(!payload.fulfillmentWriteAuthorized || (payload.environment === "production" && !payload.analyticsAuthorized)) && <div className="ebay-permission-notice" role="status">
+        {(!payload.fulfillmentWriteAuthorized || !payload.marketingAuthorized || (payload.environment === "production" && !payload.analyticsAuthorized)) && <div className="ebay-permission-notice" role="status">
           <strong>One-time eBay permission update</strong>
           <span>
             Reconnect eBay to enable {[
               !payload.analyticsAuthorized && payload.environment === "production" ? "listing views" : null,
               !payload.fulfillmentWriteAuthorized ? "shipment tracking" : null,
+              !payload.marketingAuthorized ? "active listing promotion" : null,
             ].filter(Boolean).join(" and ")}. Your active listings and drafts will not be changed or republished.
           </span>
           {!payload.analyticsAuthorized && payload.environment === "production" && <small>Watchers can still appear when eBay provides them.</small>}
           <button type="button" disabled={reconnecting} onClick={() => void reconnectEbay()}>{reconnecting ? "Opening eBay..." : "Update eBay permissions"}</button>
         </div>}
         <div className="ebay-queue-tabs" role="tablist" aria-label="Listing status">{(["all", "draft", "scheduled", "active", "sold", "ended"] as const).map((state) => <button type="button" role="tab" aria-selected={tab === state} className={tab === state ? "active" : ""} key={state} onClick={() => setTab(state)}>{state[0].toUpperCase() + state.slice(1)} {state === "all" ? payload.items.length : counts[state]}</button>)}</div>
+        {activeNeedingOptimization.length > 0 && (tab === "all" || tab === "active") && <section className="ebay-optimization-panel">
+          <div><span>Active listing health</span><strong>{activeNeedingOptimization.length} listing{activeNeedingOptimization.length === 1 ? " needs" : "s need"} discoverability improvements</strong><small>Review the proposed title and details on each card below. CardPilot will not revise eBay until you confirm.</small></div>
+          <div className="ebay-optimization-actions">
+            <button type="button" disabled={optimizationBusy} onClick={() => setSelectedOptimizationIds(activeNeedingOptimization.map((item) => item.collectionId))}>Select all needing improvements</button>
+            <label><input type="checkbox" checked={promoteOptimized} disabled={!payload.marketingAuthorized || optimizationBusy} onChange={(event) => setPromoteOptimized(event.target.checked)} /> Promote selected listings</label>
+            {promoteOptimized && <label>Ad rate <input type="number" min="1" max="100" step="0.1" value={promotionAdRate} onChange={(event) => setPromotionAdRate(Number(event.target.value))} />%</label>}
+            <button type="button" disabled={optimizationBusy || selectedOptimizationIds.length === 0 || (promoteOptimized && (!payload.marketingAuthorized || promotionAdRate < 1 || promotionAdRate > 100))} onClick={() => void optimizeSelected()}>{optimizationBusy ? "Updating eBay..." : `Optimize ${selectedOptimizationIds.length || "selected"}`}</button>
+          </div>
+          {!payload.marketingAuthorized && <small>Reconnect eBay permissions before adding promotion. Title, detail, and photo improvements remain available.</small>}
+          {optimizationMessage && <p role="status">{optimizationMessage}</p>}
+        </section>}
         {payload.items.length === 0 ? <div className="collection-empty"><strong>No saved eBay drafts yet</strong><span>Open a card and choose Sell on eBay, then save its draft.</span></div> :
           visibleItems.length === 0 ? <div className="collection-empty"><strong>No {tab} listings</strong><span>Choose another status above.</span></div> : <div className="ebay-queue-list">{visibleItems.map((item) => {
             const card = cards.find((candidate) => candidate.collectionId === item.collectionId);
             const missing = [...item.checks.filter((check) => !check.ready).map((check) => check.label), ...item.missingAspects];
             return <article key={item.collectionId}>
               <img src={item.imageUrl} alt="" />
-              <div><span className={`ebay-queue-state ${item.ready ? "ready" : "waiting"}`}>{item.status === "published" ? "Active" : item.status === "sold" ? "Sold" : item.status === "ended" ? "Ended" : item.automationStatus === "publishing" ? "Publishing" : item.automationStatus === "failed" ? "Autopilot stopped" : item.automationStatus === "needs_attention" ? "Needs attention" : item.scheduleStatus === "scheduled" ? "Scheduled" : item.scheduleStatus === "failed" ? "Schedule failed" : item.ready ? "Ready" : "Needs attention"}</span><h3>{item.title}</h3><strong>{item.currency} {(item.priceCents / 100).toFixed(2)}</strong><small>Updated {new Date(item.updatedAt).toLocaleString()}</small>{item.automationReason && item.status === "draft" && <p>{item.automationReason}</p>}{item.publishedAt && item.status === "published" && <p>Active since {new Date(item.publishedAt).toLocaleString()}</p>}{item.status === "published" && (item.viewCount != null || item.watcherCount != null) && <p><strong>{item.viewCount ?? "—"}</strong> views · <strong>{item.watcherCount ?? "—"}</strong> watchers{item.impressionCount != null ? ` · ${item.impressionCount} impressions` : ""}</p>}{item.soldAt && <p>Sold {new Date(item.soldAt).toLocaleString()}{item.soldAmountCents != null ? ` for ${item.soldCurrency ?? "USD"} ${(item.soldAmountCents / 100).toFixed(2)}` : ""}</p>}{item.status === "sold" && <p>{item.paymentStatus === "PAID" ? "Buyer paid" : `Payment: ${item.paymentStatus ?? "check eBay"}`} · {item.shippedAt || item.fulfillmentStatus === "FULFILLED" ? "Shipped" : "Needs shipment"}</p>}{item.shippedAt && <p>Shipped {new Date(item.shippedAt).toLocaleString()} · {item.shippingCarrierCode} {item.trackingNumber}</p>}{item.listingUrl && <a href={item.listingUrl} target="_blank" rel="noreferrer">View on eBay</a>}{item.scheduleStatus === "scheduled" && item.scheduledPublishAt && <p>Publishes automatically {new Date(item.scheduledPublishAt).toLocaleString()}{item.desiredEndAt ? ` · Expected end ${new Date(item.desiredEndAt).toLocaleString()}` : ""}</p>}{item.scheduleError && <p>{item.scheduleError}</p>}{missing.length > 0 && item.status === "draft" && <p>Still needed: {missing.join(", ")}.</p>}{shippingId === item.collectionId && <div className="ebay-shipment-form"><label>Carrier<select value={shippingCarrierCode} onChange={(event) => setShippingCarrierCode(event.target.value)}><option value="USPS">USPS</option><option value="UPS">UPS</option><option value="FedEx">FedEx</option><option value="DHL">DHL</option></select></label><label>Tracking number<input value={trackingNumber} maxLength={100} autoComplete="off" onChange={(event) => setTrackingNumber(event.target.value)} /></label><button type="button" disabled={shippingBusy || trackingNumber.trim().length < 3} onClick={() => void confirmShipment(item)}>{shippingBusy ? "Sending to eBay..." : "Confirm shipped and send tracking"}</button><button type="button" disabled={shippingBusy} onClick={() => { setShippingId(null); setTrackingNumber(""); }}>Cancel</button></div>}</div>
+              <div><span className={`ebay-queue-state ${item.ready ? "ready" : "waiting"}`}>{item.status === "published" ? "Active" : item.status === "sold" ? "Sold" : item.status === "ended" ? "Ended" : item.automationStatus === "publishing" ? "Publishing" : item.automationStatus === "failed" ? "Autopilot stopped" : item.automationStatus === "needs_attention" ? "Needs attention" : item.scheduleStatus === "scheduled" ? "Scheduled" : item.scheduleStatus === "failed" ? "Schedule failed" : item.ready ? "Ready" : "Needs attention"}</span><h3>{item.title}</h3><strong>{item.currency} {(item.priceCents / 100).toFixed(2)}</strong><small>Updated {new Date(item.updatedAt).toLocaleString()}</small>{item.automationReason && item.status === "draft" && <p>{item.automationReason}</p>}{item.publishedAt && item.status === "published" && <p>Active since {new Date(item.publishedAt).toLocaleString()}</p>}{item.status === "published" && (item.viewCount != null || item.watcherCount != null || item.impressionCount != null) && <p><strong>{item.impressionCount ?? "—"}</strong> impressions · <strong>{item.viewCount ?? "—"}</strong> views · <strong>{item.watcherCount ?? "—"}</strong> watchers{item.health?.clickThroughRate != null ? ` · ${(item.health.clickThroughRate * 100).toFixed(1)}% click-through` : ""}</p>}{item.soldAt && <p>Sold {new Date(item.soldAt).toLocaleString()}{item.soldAmountCents != null ? ` for ${item.soldCurrency ?? "USD"} ${(item.soldAmountCents / 100).toFixed(2)}` : ""}</p>}{item.status === "sold" && <p>{item.paymentStatus === "PAID" ? "Buyer paid" : `Payment: ${item.paymentStatus ?? "check eBay"}`} · {item.shippedAt || item.fulfillmentStatus === "FULFILLED" ? "Shipped" : "Needs shipment"}</p>}{item.shippedAt && <p>Shipped {new Date(item.shippedAt).toLocaleString()} · {item.shippingCarrierCode} {item.trackingNumber}</p>}{item.listingUrl && <a href={item.listingUrl} target="_blank" rel="noreferrer">View on eBay</a>}{item.scheduleStatus === "scheduled" && item.scheduledPublishAt && <p>Publishes automatically {new Date(item.scheduledPublishAt).toLocaleString()}{item.desiredEndAt ? ` · Expected end ${new Date(item.desiredEndAt).toLocaleString()}` : ""}</p>}{item.scheduleError && <p>{item.scheduleError}</p>}{missing.length > 0 && item.status === "draft" && <p>Still needed: {missing.join(", ")}.</p>}{shippingId === item.collectionId && <div className="ebay-shipment-form"><label>Carrier<select value={shippingCarrierCode} onChange={(event) => setShippingCarrierCode(event.target.value)}><option value="USPS">USPS</option><option value="UPS">UPS</option><option value="FedEx">FedEx</option><option value="DHL">DHL</option></select></label><label>Tracking number<input value={trackingNumber} maxLength={100} autoComplete="off" onChange={(event) => setTrackingNumber(event.target.value)} /></label><button type="button" disabled={shippingBusy || trackingNumber.trim().length < 3} onClick={() => void confirmShipment(item)}>{shippingBusy ? "Sending to eBay..." : "Confirm shipped and send tracking"}</button><button type="button" disabled={shippingBusy} onClick={() => { setShippingId(null); setTrackingNumber(""); }}>Cancel</button></div>}{item.health && <div className="ebay-listing-health"><div><span className={`health-score health-${item.health.score >= 80 ? "strong" : item.health.score >= 60 ? "watch" : "weak"}`}>{item.health.score}/100</span><strong>{item.health.diagnosis}</strong></div>{item.health.issues.length > 0 && <ul>{item.health.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>}{item.health.optimized.changes.title && <div className="ebay-title-preview"><span>Proposed searchable title</span><strong>{item.health.optimized.title}</strong></div>}<div className="ebay-health-meta">{item.health.aspectCompleteness != null && <span>{Math.round(item.health.aspectCompleteness * 100)}% important specifics complete</span>}{item.health.optimized.changes.aspects.length > 0 && <span>{item.health.optimized.changes.aspects.length} specifics improved</span>}{item.health.optimized.changes.addBackImage && <span>Back photo will be added</span>}{item.promotion?.status === "promoted" && <span>Promoted at {item.promotion.adRatePercent ?? "saved"}%</span>}</div>{item.health.hasChanges && <label className="ebay-optimize-select"><input type="checkbox" checked={selectedOptimizationIds.includes(item.collectionId)} onChange={() => toggleOptimization(item.collectionId)} /> Include in active listing optimization</label>}</div>}</div>
               <div>{item.status === "draft" && item.scheduleStatus !== "scheduled" && <button className="account-delete-button" type="button" disabled={deletingId === item.collectionId} onClick={() => void deleteDraft(item)}>{deletingId === item.collectionId ? "Deleting..." : "Delete draft"}</button>}{item.status === "sold" && !item.shippedAt && item.fulfillmentStatus !== "FULFILLED" && payload.environment === "production" && <a className="button-link" href="https://www.ebay.com/sh/ord" target="_blank" rel="noreferrer">Buy discounted label on eBay</a>}{item.status === "sold" && !item.shippedAt && item.fulfillmentStatus !== "FULFILLED" && item.saleId && <button type="button" disabled={!payload.fulfillmentWriteAuthorized} onClick={() => setShippingId(item.collectionId)}>Add tracking bought elsewhere</button>}<button type="button" disabled={!card} onClick={() => card && onOpenDraft(card)}>{item.status === "published" ? "View listing" : "Review draft"}</button></div>
             </article>;
           })}</div>}

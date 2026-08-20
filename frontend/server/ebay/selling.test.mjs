@@ -65,6 +65,11 @@ test("listing drafts require an editable title and positive price", () => {
   const promoted = EbayListingDraftSchema.parse({ ...base, promoteListing: true, promotionAdRatePercent: 3.5, pricingStrategy: "sell_faster" });
   assert.equal(promoted.promoteListing, true);
   assert.equal(promoted.promotionAdRatePercent, 3.5);
+  const promotionRecorded = EbayListingDraftSchema.parse({
+    ...base,
+    promotion: { status: "promoted", campaignId: "campaign-1", adId: "ad-1", adRatePercent: 3.5 },
+  });
+  assert.equal(promotionRecorded.promotion.status, "promoted");
   assert.equal(EbayListingDraftSchema.safeParse({ ...base, priceCents: 0 }).success, false);
   const auction = EbayListingDraftSchema.parse({ ...base, listingFormat: "AUCTION", auctionStartPriceCents: 500, auctionReservePriceCents: 1000 });
   assert.deepEqual(auction.listingImages, ["front"]);
