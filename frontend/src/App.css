@@ -2197,6 +2197,13 @@ main {
   text-transform: uppercase;
 }
 
+.collection-summary-note {
+  margin: 8px 4px 0;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .collection-toolbar {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) repeat(3, minmax(150px, 0.28fr));

@@ -1959,6 +1959,9 @@ app.get("/api/collection", async (request, response) => {
       publishedAt: draft.publishedAt ?? null, endedAt: draft.endedAt ?? null,
       soldAt: draft.soldAt ?? null, soldAmountCents: draft.soldAmountCents ?? null,
       soldCurrency: draft.soldCurrency ?? null,
+      promotionAdRatePercent: draft.promotion?.status === "promoted"
+        ? Number(draft.promotion.adRatePercent ?? draft.promotionAdRatePercent ?? 0) || null
+        : null,
     }]));
     response.json({
       cards: cards.map((card) => ({ ...card, selling: sellingByCard.get(card.collectionId) })),

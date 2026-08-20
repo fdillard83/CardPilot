@@ -713,6 +713,7 @@ export type SavedCollectionCard = {
       soldAt: string | null;
       soldAmountCents: number | null;
       soldCurrency: string | null;
+      promotionAdRatePercent: number | null;
     };
   };
 

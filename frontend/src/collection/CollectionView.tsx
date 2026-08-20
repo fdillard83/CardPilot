@@ -1421,19 +1421,44 @@ export function CollectionView({
 
   const collectionValuation = useMemo(() => {
     const valuedCards = cards.filter((card) => card.confirmedValuation);
+    const activeListings = cards.filter((card) => card.selling?.status === "published");
     const currencies = new Set(
       valuedCards.map((card) => card.confirmedValuation?.currency),
     );
     const currency = currencies.size === 1 ? [...currencies][0] : null;
+    const activeCurrencies = new Set(activeListings.map((card) => card.selling?.currency));
+    const activeCurrency = activeCurrencies.size === 1 ? [...activeCurrencies][0] : null;
     const totalAmountCents = valuedCards.reduce(
       (total, card) => total + (card.confirmedValuation?.amountCents ?? 0),
       0,
     );
+    const activeAskingTotalCents = activeListings.reduce(
+      (total, card) => total + (card.selling?.priceCents ?? 0),
+      0,
+    );
+    const activePotentialProfitCents = activeListings.reduce((total, card) => {
+      const priceCents = card.selling?.priceCents ?? 0;
+      const ebayFeeCents = Math.round(priceCents * 0.1325 + 30);
+      const promotionFeeCents = Math.round(
+        priceCents * ((card.selling?.promotionAdRatePercent ?? 0) / 100),
+      );
+      return total + Math.max(0, priceCents - ebayFeeCents - promotionFeeCents);
+    }, 0);
     return {
       valuedCount: valuedCards.length,
       unvaluedCount: cards.length - valuedCards.length,
       staleCount: cards.filter((card) => valuationIsStale(card)).length,
-      listedCount: cards.filter((card) => card.selling?.status === "published").length,
+      listedCount: activeListings.length,
+      activeAskingTotalLabel: activeListings.length === 0
+        ? formatPrice(0, "USD")
+        : activeCurrency
+          ? formatPrice(activeAskingTotalCents, activeCurrency)
+          : "Mixed currencies",
+      activePotentialProfitLabel: activeListings.length === 0
+        ? formatPrice(0, "USD")
+        : activeCurrency
+          ? formatPrice(activePotentialProfitCents, activeCurrency)
+          : "Mixed currencies",
       soldCount: cards.filter((card) => card.selling?.status === "sold").length,
       soldTotalLabel: formatPrice(cards.reduce((total, card) => total + (card.selling?.soldAmountCents ?? 0), 0), "USD"),
       totalLabel:
@@ -2547,8 +2572,11 @@ export function CollectionView({
         <div><strong>{collectionValuation.unvaluedCount}</strong><span>Need a value</span></div>
         <div><strong>{collectionValuation.staleCount}</strong><span>Pricing out of date</span></div>
         <div><strong>{collectionValuation.listedCount}</strong><span>Listed on eBay</span></div>
+        <div><strong>{collectionValuation.activeAskingTotalLabel}</strong><span>Active eBay asking total</span></div>
+        <div><strong>{collectionValuation.activePotentialProfitLabel}</strong><span>Potential profit — active eBay</span></div>
         <div><strong>{collectionValuation.soldTotalLabel}</strong><span>Total sold value</span></div>
       </div>
+      <p className="collection-summary-note">Potential profit estimates subtract an illustrative 13.25% eBay fee plus $0.30 per sale and any active promotion rate. Card cost, shipping, taxes, returns, and other expenses are not included.</p>
       <div className="ebay-queue-launch"><div><strong>eBay listings and drafts</strong><span>See drafts, scheduled listings, active listings, ended listings, and synchronized sales.</span></div><button type="button" onClick={() => setListingQueueOpen(true)}>Open Listings and drafts</button></div>
 
       {(bulkRefreshing || bulkValuationResults.length > 0) && (
