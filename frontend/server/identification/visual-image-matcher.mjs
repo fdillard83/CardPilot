@@ -318,14 +318,17 @@ function compare(source, candidate) {
 }
 
 export function isVisualMismatch(visualMatch, visualMatchStatus = null) {
-  if (visualMatchStatus === "not_evaluated" || visualMatchStatus === "unavailable") return true;
+  // A missing or uninspected image is unknown evidence, not negative evidence.
+  // Only a completed comparison can veto an otherwise strong text match.
+  if (visualMatchStatus === "not_evaluated" || visualMatchStatus === "unavailable") return false;
   if (!Number.isFinite(visualMatch?.score)) return false;
   const structureScore = Number.isFinite(visualMatch.structureScore)
     ? visualMatch.structureScore
     : null;
-  if (visualMatch.score < 0.55) return true;
-  if (structureScore === null) return visualMatch.score < 0.62;
-  return structureScore < 0.35 || (visualMatch.score < 0.68 && structureScore < 0.55);
+  if (structureScore === null) return visualMatch.score < 0.5;
+  return visualMatch.score < 0.4 ||
+    structureScore < 0.25 ||
+    (visualMatch.score < 0.58 && structureScore < 0.38);
 }
 
 export class VisualImageMatcher {

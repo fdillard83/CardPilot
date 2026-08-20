@@ -190,7 +190,7 @@ test("sold comps reject known visual mismatches but retain exact text fallbacks"
   );
 });
 
-test("sold comps do not use an unverified image to rescue a broader title", () => {
+test("sold comps use strong card-number text when a broader image is unavailable", () => {
   const snapshot = buildSoldCompsSnapshot({
     fields,
     grading: raw,
@@ -201,7 +201,7 @@ test("sold comps do not use an unverified image to rescue a broader title", () =
     })])],
   });
   assert.equal(snapshot.exactMatchedCount, 0);
-  assert.equal(snapshot.broaderMatchedCount, 0);
+  assert.equal(snapshot.broaderMatchedCount, 1);
 });
 
 test("an unavailable sold image needs a card-design identifier in the title", () => {

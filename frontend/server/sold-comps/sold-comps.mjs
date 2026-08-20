@@ -91,14 +91,6 @@ function titleMatchVisualOptions(sale) {
     : { visualMatch: null, visualMatchStatus: null };
 }
 
-function broaderVisualEligible(sale) {
-  return !sale.visualMatchStatus || (
-    sale.visualMatchStatus === "matched" &&
-    Number.isFinite(sale.visualMatch?.score) &&
-    !isVisualMismatch(sale.visualMatch, sale.visualMatchStatus)
-  );
-}
-
 function exactTextFallbackEligible(sale, match) {
   if (!sale.visualMatchStatus || sale.visualMatchStatus === "matched") return true;
   return match.matchedSignals.some((signal) => [
@@ -109,6 +101,18 @@ function exactTextFallbackEligible(sale, match) {
     "print_run",
     "set",
   ].includes(signal));
+}
+
+function broaderTextFallbackEligible(sale, match) {
+  if (!sale.visualMatchStatus || sale.visualMatchStatus === "matched") return true;
+  const signals = new Set(match.matchedSignals);
+  if (signals.has("card_number")) return true;
+  return signals.has("set") && [
+    "parallel",
+    "finish",
+    "promo",
+    "print_run",
+  ].some((signal) => signals.has(signal));
 }
 
 function sourceImageCacheKey(sourceImageDataUrl) {
@@ -203,14 +207,14 @@ export function buildSoldCompsSnapshot({
     exactSales.length < 3
       ? eligible.flatMap((sale, index) => {
           if (exactIds.has(saleId(sale, index))) return [];
-          if (!broaderVisualEligible(sale)) return [];
           const match = evaluateCardTitleMatch(sale.title, fields, {
             broader: true,
             identityConsensus,
-            visualMatch: sale.visualMatch,
-            visualMatchStatus: sale.visualMatchStatus,
+            ...titleMatchVisualOptions(sale),
           });
-          return match ? [fromMatch(sale, match, "broader", index)] : [];
+          return match && broaderTextFallbackEligible(sale, match)
+            ? [fromMatch(sale, match, "broader", index)]
+            : [];
         })
       : [];
 
@@ -259,7 +263,7 @@ export function buildSoldCompsSnapshot({
           fields,
           valuationProfile,
           observationType: "completed_sale",
-          observations: eligible.filter(broaderVisualEligible).map((sale, index) => ({
+          observations: eligible.filter((sale) => !knownVisualMismatch(sale)).map((sale, index) => ({
             id: saleId(sale, index),
             title: sale.title,
             amountCents: cents(sale.price),

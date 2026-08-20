@@ -404,6 +404,17 @@ test("a different photographed card is rejected even when its title matches", ()
   assert.equal(match, null);
 });
 
+test("a strong title match survives an unavailable or uninspected image", () => {
+  const title =
+    "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85";
+  assert.ok(evaluateCardTitleMatch(title, fields, {
+    visualMatchStatus: "unavailable",
+  }));
+  assert.ok(evaluateCardTitleMatch(title, fields, {
+    visualMatchStatus: "not_evaluated",
+  }));
+});
+
 test("active exclusions remove exact and broader comparisons from summaries", () => {
   const candidates = [
     candidate({

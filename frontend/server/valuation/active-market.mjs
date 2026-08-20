@@ -941,8 +941,21 @@ export class ActiveMarketService {
     if (hasFreshCache) return snapshotFrom(cached);
 
     const result = await marketRequest;
+    const prioritizeForVisualInspection = (candidate) => {
+      if (confirmedReferenceItemId && candidate.itemId === confirmedReferenceItemId) return 2;
+      return (
+        evaluateCardTitleMatch(candidate.title, fields, { identityConsensus: resolvedIdentityConsensus })
+        ?? evaluateCardTitleMatch(candidate.title, fields, {
+          broader: true,
+          identityConsensus: resolvedIdentityConsensus,
+        })
+      )?.score ?? 0;
+    };
+    const prioritize = (values) => [...values].sort(
+      (left, right) => prioritizeForVisualInspection(right) - prioritizeForVisualInspection(left),
+    );
     let candidates = sourceImageDataUrl && this.visualMatcher
-      ? await this.visualMatcher.rank({ sourceImageDataUrl, candidates: result.candidates, limit: 20 })
+      ? await this.visualMatcher.rank({ sourceImageDataUrl, candidates: prioritize(result.candidates), limit: 20 })
       : result.candidates;
     const queriesUsed = [query];
     const searchedAt = new Date(this.now()).toISOString();
@@ -975,7 +988,7 @@ export class ActiveMarketService {
       );
       candidates = [...unique.values()];
       if (sourceImageDataUrl && this.visualMatcher) {
-        candidates = await this.visualMatcher.rank({ sourceImageDataUrl, candidates, limit: 20 });
+        candidates = await this.visualMatcher.rank({ sourceImageDataUrl, candidates: prioritize(candidates), limit: 20 });
       }
       queriesUsed.push(discoveryQuery);
       snapshot = buildActiveMarketSnapshot({

@@ -117,8 +117,14 @@ test("visual matcher marks candidates outside its inspection budget", async () =
   });
   assert.equal(candidates[0].visualMatchStatus, "matched");
   assert.equal(candidates[1].visualMatchStatus, "not_evaluated");
-  assert.equal(isVisualMismatch(null, candidates[1].visualMatchStatus), true);
-  assert.equal(isVisualMismatch(null, "unavailable"), true);
+  assert.equal(isVisualMismatch(null, candidates[1].visualMatchStatus), false);
+  assert.equal(isVisualMismatch(null, "unavailable"), false);
+});
+
+test("visual rejection requires a confident measured mismatch", () => {
+  assert.equal(isVisualMismatch({ score: 0.48, structureScore: 0.22 }, "matched"), true);
+  assert.equal(isVisualMismatch({ score: 0.52, structureScore: 0.62 }, "matched"), false);
+  assert.equal(isVisualMismatch({ score: 0.72, structureScore: 0.18 }, "matched"), true);
 });
 
 test("visual matcher accepts only approved marketplace and sold-provider image hosts", () => {
