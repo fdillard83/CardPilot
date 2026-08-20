@@ -112,6 +112,15 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
   const selectedOptimizationItems = activeActionableListings.filter((item) =>
     selectedOptimizationIds.includes(item.collectionId),
   );
+  const optimizationActionLabel = (item: QueueItem) => {
+    const actions = [
+      item.health?.optimized.changes.title ? "searchable title" : null,
+      item.health?.optimized.changes.aspects.length ? `${item.health.optimized.changes.aspects.length} card detail${item.health.optimized.changes.aspects.length === 1 ? "" : "s"}` : null,
+      item.health?.optimized.changes.addBackImage ? "back photo" : null,
+      promoteOptimized ? "promotion" : null,
+    ].filter(Boolean);
+    return actions.join(", ") || "visibility";
+  };
   const toggleOptimization = (collectionId: string) => {
     setOptimizationReviewOpen(false);
     setOptimizationMessage(null);
@@ -139,6 +148,7 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
       if (!response.ok) throw new Error(body?.error ?? "The active listings could not be optimized.");
       setOptimizationMessage(`${body.updated} active listing${body.updated === 1 ? " was" : "s were"} improved${body.failed ? `; ${body.failed} could not be changed` : ""}.`);
       setSelectedOptimizationIds([]);
+      setPromoteOptimized(false);
       setOptimizationReviewOpen(false);
       await load();
     } catch (caught) {
@@ -196,11 +206,7 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
             </div>
             <ul>{selectedOptimizationItems.map((item) => <li key={item.collectionId}>
               <strong>{item.title}</strong>
-              <span>{[
-                item.health?.optimized.changes.title ? "searchable title" : null,
-                item.health?.optimized.changes.aspects.length ? `${item.health.optimized.changes.aspects.length} card detail${item.health.optimized.changes.aspects.length === 1 ? "" : "s"}` : null,
-                item.health?.optimized.changes.addBackImage ? "back photo" : null,
-              ].filter(Boolean).join(", ") || "visibility and promotion"}</span>
+              <span>{optimizationActionLabel(item)}</span>
             </li>)}</ul>
             {payload.marketingAuthorized ? <>
               <label className="ebay-promotion-choice"><input type="checkbox" checked={promoteOptimized} disabled={optimizationBusy} onChange={(event) => setPromoteOptimized(event.target.checked)} /> Add eBay promotion to these listings</label>
