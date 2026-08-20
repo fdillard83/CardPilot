@@ -175,7 +175,7 @@ export function ebayShippingPolicyResource(shippingCostCents, shippingService = 
   };
 }
 
-const SELL_SCOPES = [
+export const EBAY_SELLING_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
   "https://api.ebay.com/oauth/api_scope/sell.account",
@@ -184,6 +184,11 @@ const SELL_SCOPES = [
   "https://api.ebay.com/oauth/api_scope/sell.marketing",
   "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
 ];
+
+export function resolvedEbaySellingScopes(tokenScope) {
+  const returnedScopes = typeof tokenScope === "string" ? tokenScope.trim() : "";
+  return returnedScopes || EBAY_SELLING_SCOPES.join(" ");
+}
 
 function tokenKey(secret) {
   if (!secret) throw new Error("EBAY_TOKEN_ENCRYPTION_KEY is required for eBay selling.");
@@ -224,7 +229,7 @@ export class EbaySellingClient {
       client_id: this.clientId,
       redirect_uri: this.redirectUriName,
       response_type: "code",
-      scope: SELL_SCOPES.join(" "),
+      scope: EBAY_SELLING_SCOPES.join(" "),
       state,
     });
     return `${this.authRoot}/oauth2/authorize?${query}`;
@@ -234,7 +239,7 @@ export class EbaySellingClient {
     return this.#token({ grant_type: "authorization_code", code, redirect_uri: this.redirectUriName });
   }
 
-  async refresh(refreshToken, scopes = SELL_SCOPES.join(" ")) {
+  async refresh(refreshToken, scopes = EBAY_SELLING_SCOPES.join(" ")) {
     return this.#token({ grant_type: "refresh_token", refresh_token: refreshToken, scope: scopes });
   }
 
@@ -310,5 +315,3 @@ export class EbaySellingClient {
     return payload;
   }
 }
-
-export { SELL_SCOPES };

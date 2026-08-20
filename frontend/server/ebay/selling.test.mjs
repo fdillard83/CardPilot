@@ -12,6 +12,7 @@ import {
   ebayShippingPolicyResource,
   encryptSellerToken,
   inventoryConditionForCard,
+  resolvedEbaySellingScopes,
 } from "./selling.mjs";
 
 test("seller refresh tokens are encrypted and authenticated", () => {
@@ -43,6 +44,14 @@ test("sandbox seller authorization uses the configured RuName and CSRF state", (
   assert.match(url.searchParams.get("scope"), /sell\.inventory/);
   assert.match(url.searchParams.get("scope"), /sell\.marketing/);
   assert.match(url.searchParams.get("scope"), /sell\.analytics\.readonly/);
+});
+
+test("seller permissions survive an OAuth response that omits its scope field", () => {
+  const expected = resolvedEbaySellingScopes(undefined);
+  assert.match(expected, /sell\.inventory/);
+  assert.match(expected, /sell\.marketing/);
+  assert.match(expected, /sell\.analytics\.readonly/);
+  assert.equal(resolvedEbaySellingScopes(" custom.scope "), "custom.scope");
 });
 
 test("listing drafts require an editable title and positive price", () => {

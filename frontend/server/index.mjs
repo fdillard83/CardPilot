@@ -30,6 +30,7 @@ import {
   ebayShippingPolicyResource,
   encryptSellerToken,
   inventoryConditionForCard,
+  resolvedEbaySellingScopes,
 } from "./ebay/selling.mjs";
 import { CatalogCandidateGenerator, RemoteCatalogCandidateGenerator } from "./identification/candidate-generator.mjs";
 import { OpenAIEvidenceEngine } from "./identification/evidence-engine.mjs";
@@ -726,7 +727,7 @@ app.get("/api/ebay/selling/callback", async (request, response) => {
         token.refresh_token,
         process.env.EBAY_TOKEN_ENCRYPTION_KEY,
       ),
-      scopes: token.scope ?? "",
+      scopes: resolvedEbaySellingScopes(token.scope),
     });
     response.append("Set-Cookie", `${EBAY_STATE_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
     response.append("Set-Cookie", `${EBAY_RETURN_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);

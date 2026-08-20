@@ -182,7 +182,7 @@ export function listingHealth({ card, draft, definitions = [], engagement = {}, 
     aspectCompleteness,
     referenceValueCents,
     priceDifferencePercent,
-    hasChanges: needsAttention,
+    hasChanges,
     needsAttention,
     optimized,
   };

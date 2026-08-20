@@ -58,7 +58,10 @@ test("health separates missing exposure from weak click-through", () => {
       publishedAt: "2026-08-18T12:00:00Z",
     },
   };
-  assert.equal(listingHealth({ ...base, engagement: { impressionCount: 0, viewCount: 0, watcherCount: 0 } }).diagnosis, "Not being shown");
+  const notShown = listingHealth({ ...base, engagement: { impressionCount: 0, viewCount: 0, watcherCount: 0 } });
+  assert.equal(notShown.diagnosis, "Not being shown");
+  assert.equal(notShown.hasChanges, false);
+  assert.equal(notShown.needsAttention, true);
   const clicked = listingHealth({ ...base, engagement: { impressionCount: 200, viewCount: 1, watcherCount: 0 } });
   assert.equal(clicked.diagnosis, "Shown but rarely opened");
   assert.equal(clicked.clickThroughRate, 0.005);
