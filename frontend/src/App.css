@@ -2620,6 +2620,10 @@ main {
 .collection-price-positioning small, .collection-price-positioning p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .collection-price-positioning-actions, .collection-price-review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
 .collection-price-positioning-actions > strong { font-size: 12px; }
+.collection-price-progress { display: grid; gap: 7px; padding: 11px 12px; border: 1px solid rgba(121, 201, 255, .3); border-radius: 11px; background: rgba(121, 201, 255, .065); }
+.collection-price-progress > div { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.collection-price-progress > div span { color: #a9dcff; font-size: 11px; font-weight: 800; white-space: nowrap; }
+.collection-price-progress progress { width: 100%; height: 12px; accent-color: var(--lime); }
 .collection-price-review { display: grid; gap: 12px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: rgba(3, 10, 7, .44); }
 .collection-price-review > div:first-child { display: grid; gap: 3px; }
 .collection-price-review ul { display: grid; gap: 8px; max-height: 420px; margin: 0; padding: 0; overflow: auto; list-style: none; }

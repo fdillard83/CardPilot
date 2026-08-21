@@ -1422,6 +1422,9 @@ export function CollectionView({
   const [pricePositions, setPricePositions] = useState<DeliveredPricePosition[]>([]);
   const [selectedPriceApplyIds, setSelectedPriceApplyIds] = useState<string[]>([]);
   const [pricePositionBusy, setPricePositionBusy] = useState(false);
+  const [pricePositionCompletedCount, setPricePositionCompletedCount] = useState(0);
+  const [pricePositionTotalCount, setPricePositionTotalCount] = useState(0);
+  const [pricePositionCurrentTitle, setPricePositionCurrentTitle] = useState<string | null>(null);
   const [priceApplyBusy, setPriceApplyBusy] = useState(false);
   const [pricePositionMessage, setPricePositionMessage] = useState<string | null>(null);
 
@@ -1438,27 +1441,64 @@ export function CollectionView({
 
   const checkDeliveredPricePositions = async (collectionIds = selectedPricePositionIds) => {
     if (!collectionIds.length || pricePositionBusy || priceApplyBusy) return;
+    const uniqueCollectionIds = [...new Set(collectionIds)];
     setPricePositionBusy(true);
+    setPricePositionCompletedCount(0);
+    setPricePositionTotalCount(uniqueCollectionIds.length);
+    setPricePositionCurrentTitle(null);
     setActionError(null);
     setPricePositionMessage(null);
     setPricePositions([]);
     setSelectedPriceApplyIds([]);
     try {
-      const response = await fetch("/api/ebay/listings/price-positioning", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collectionIds }),
-      });
-      const payload = await response.json().catch(() => null) as { results?: DeliveredPricePosition[]; error?: string } | null;
-      if (!response.ok || !payload?.results) throw new Error(payload?.error ?? "CardPilot could not compare delivered prices.");
-      setSelectedPricePositionIds(collectionIds);
-      setPricePositions(payload.results);
-      setSelectedPriceApplyIds(payload.results.filter(canApplyDeliveredPricePosition).map((position) => position.collectionId));
+      const results = new Map<string, DeliveredPricePosition>();
+      let nextIndex = 0;
+      const compareNextCard = async () => {
+        while (nextIndex < uniqueCollectionIds.length) {
+          const index = nextIndex;
+          nextIndex += 1;
+          const collectionId = uniqueCollectionIds[index];
+          const cardTitle = cards.find((card) => card.collectionId === collectionId)?.title ?? "Active listing";
+          setPricePositionCurrentTitle(cardTitle);
+          try {
+            const response = await fetch("/api/ebay/listings/price-positioning", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ collectionIds: [collectionId] }),
+            });
+            const payload = await response.json().catch(() => null) as { results?: DeliveredPricePosition[]; error?: string } | null;
+            if (!response.ok || !payload?.results?.[0]) throw new Error(payload?.error ?? "CardPilot could not compare this delivered price.");
+            results.set(collectionId, payload.results[0]);
+          } catch (caught) {
+            results.set(collectionId, {
+              ok: false,
+              collectionId,
+              title: cardTitle,
+              error: caught instanceof Error ? caught.message : "CardPilot could not compare this delivered price.",
+            });
+          } finally {
+            setPricePositionCompletedCount((current) => current + 1);
+          }
+        }
+      };
+      await Promise.all(Array.from(
+        { length: Math.min(3, uniqueCollectionIds.length) },
+        () => compareNextCard(),
+      ));
+      const orderedResults = uniqueCollectionIds.map((collectionId) => results.get(collectionId) ?? ({
+        ok: false,
+        collectionId,
+        error: "CardPilot could not compare this delivered price.",
+      }));
+      setSelectedPricePositionIds(uniqueCollectionIds);
+      setPricePositions(orderedResults);
+      setSelectedPriceApplyIds(orderedResults.filter(canApplyDeliveredPricePosition).map((position) => position.collectionId));
       window.requestAnimationFrame(() => document.getElementById("delivered-price-title")?.scrollIntoView({ behavior: "smooth", block: "start" }));
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : "CardPilot could not compare delivered prices.");
     } finally {
       setPricePositionBusy(false);
+      setPricePositionCurrentTitle(null);
     }
   };
 
@@ -2688,11 +2728,16 @@ export function CollectionView({
           <small>CardPilot compares the full amount a buyer pays: item price plus shipping. The default target is 5¢ below; your saved Account setting controls the exact amount. CardPilot changes only the item price—your eBay shipping charge and shipping policy stay exactly as they are.</small>
         </div>
         <div className="collection-price-positioning-actions">
-          <button className="primary-action" type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions(activeListingCards.map((card) => card.collectionId))}>{pricePositionBusy ? "Finding exact matches..." : `Compare all ${activeListingCards.length} active listing${activeListingCards.length === 1 ? "" : "s"}`}</button>
+          <button className="primary-action" type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions(activeListingCards.map((card) => card.collectionId))}>{pricePositionBusy ? `Finding exact matches ${pricePositionCompletedCount} of ${pricePositionTotalCount}...` : `Compare all ${activeListingCards.length} active listing${activeListingCards.length === 1 ? "" : "s"}`}</button>
           {selectedPricePositionIds.length > 0 && <button type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions()}>{`Compare only ${selectedPricePositionIds.length} selected below`}</button>}
           {selectedPricePositionIds.length > 0 && <button type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => { setSelectedPricePositionIds([]); setPricePositions([]); setSelectedPriceApplyIds([]); }}>Clear selected subset</button>}
           <a className="button-link" href="https://www.ebay.com/sh/lst/active" target="_blank" rel="noreferrer">Open eBay eligible offers</a>
         </div>
+        {pricePositionBusy && <div className="collection-price-progress" role="status" aria-live="polite">
+          <div><strong>Finding the lowest exact-card buyer totals</strong><span>{pricePositionCompletedCount} of {pricePositionTotalCount} checked</span></div>
+          <progress value={pricePositionCompletedCount} max={Math.max(1, pricePositionTotalCount)} aria-label={`${pricePositionCompletedCount} of ${pricePositionTotalCount} listings checked`} />
+          <small>{pricePositionCurrentTitle ? `Now checking: ${pricePositionCurrentTitle}` : "Preparing exact-card comparisons..."}</small>
+        </div>}
         {pricePositions.length === 0 && <small>Compare every active listing with one click, or select individual cards below for a smaller comparison. Comparing prices does not change anything on eBay.</small>}
         {pricePositions.length > 0 && <div className="collection-price-review">
           <div><strong>Choose the changes to send to eBay</strong><small>Available changes start checked. Uncheck any card you do not want repriced. Only the remaining checked cards will change. {selectedApplicablePricePositions.length} of {applicablePricePositions.length} selected.</small></div>
