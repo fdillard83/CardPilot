@@ -14,6 +14,16 @@ export function fulfillmentBuyerShippingCents(policy) {
   return Number.isFinite(value) ? Math.max(0, Math.round(value * 100)) : null;
 }
 
+export function fulfillmentShippingService(policy) {
+  const domestic = (policy?.shippingOptions ?? []).find((option) =>
+    option?.optionType === "DOMESTIC" || option?.costType,
+  );
+  const code = String(domestic?.shippingServices?.[0]?.shippingServiceCode ?? "").toLowerCase();
+  if (code.includes("standardenvelope")) return "STANDARD_ENVELOPE";
+  if (code.includes("priority")) return "PRIORITY";
+  return "GROUND";
+}
+
 function matchingExactGroups(snapshot, grading) {
   const expectedGrade = `${grading?.company ?? ""} ${grading?.grade ?? ""}`.trim().toLowerCase();
   return (snapshot?.groups ?? []).filter((group) => {

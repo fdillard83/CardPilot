@@ -15,7 +15,7 @@ import { EbayApiError, EbayOAuthClient } from "./ebay/oauth-client.mjs";
 import { EbayTaxonomyClient } from "./ebay/taxonomy.mjs";
 import { listingReadiness } from "./ebay/listing-readiness.mjs";
 import { calculateAuctionSchedule } from "./ebay/auction-schedule.mjs";
-import { deliveredPricePosition, fulfillmentBuyerShippingCents } from "./ebay/price-positioning.mjs";
+import { deliveredPricePosition, fulfillmentBuyerShippingCents, fulfillmentShippingService } from "./ebay/price-positioning.mjs";
 import {
   EBAY_ANALYTICS_SCOPE,
   EbayListingEngagementService,
@@ -893,21 +893,26 @@ const EbayShippingChargeSchema = z.object({
   confirmation: z.enum(["CREATE_SANDBOX_SHIPPING", "CREATE_PRODUCTION_SHIPPING"]),
 }).strict();
 
+async function ensureEbayShippingPolicy(token, shippingCostCents, shippingService) {
+  const resource = ebayShippingPolicyResource(shippingCostCents, shippingService, ebayMarketplaceId, ebaySellEnvironment);
+  let setup = await loadEbaySellerSetup(token);
+  let policy = setup.fulfillmentPolicies.find((item) => item.name === resource.name);
+  if (!policy) {
+    await createEbaySandboxResource("Shipping policy", () => ebaySelling.request(token, "/sell/account/v1/fulfillment_policy", { method: "POST", body: resource }));
+    setup = await loadEbaySellerSetup(token);
+    policy = setup.fulfillmentPolicies.find((item) => item.name === resource.name);
+  }
+  if (!policy) throw new Error("eBay created the shipping policy but did not return it yet. Wait a moment and retry.");
+  return { setup, policy };
+}
+
 app.post("/api/ebay/selling/shipping-policy", async (request, response) => {
   try {
     const input = EbayShippingChargeSchema.parse(request.body);
     const expected = ebaySellEnvironment === "production" ? "CREATE_PRODUCTION_SHIPPING" : "CREATE_SANDBOX_SHIPPING";
     if (input.confirmation !== expected) return response.status(400).json({ error: "Explicit shipping-policy confirmation is required." });
     const token = await ebaySellerAccessToken(request.cardPilotUser.id);
-    const resource = ebayShippingPolicyResource(input.shippingCostCents, input.shippingService, ebayMarketplaceId, ebaySellEnvironment);
-    let setup = await loadEbaySellerSetup(token);
-    let policy = setup.fulfillmentPolicies.find((item) => item.name === resource.name);
-    if (!policy) {
-      await createEbaySandboxResource("Shipping policy", () => ebaySelling.request(token, "/sell/account/v1/fulfillment_policy", { method: "POST", body: resource }));
-      setup = await loadEbaySellerSetup(token);
-      policy = setup.fulfillmentPolicies.find((item) => item.name === resource.name);
-    }
-    if (!policy) throw new Error("eBay created the shipping policy but did not return it yet. Wait a moment and retry.");
+    const { setup, policy } = await ensureEbayShippingPolicy(token, input.shippingCostCents, input.shippingService);
     response.json({ ...setup, selectedFulfillmentPolicyId: policy.id });
   } catch (error) {
     response.status(error instanceof ZodError ? 400 : 502).json({ error: error.message ?? "CardPilot could not create that shipping charge." });
@@ -1754,7 +1759,14 @@ const EbayApplyPositioningSchema = z.object({
     collectionId: z.string().min(1).max(100),
     expectedCurrentPriceCents: z.number().int().min(1).max(100_000_000),
     proposedPriceCents: z.number().int().min(1).max(100_000_000),
-  }).strict()).min(1).max(500),
+    expectedShippingCostCents: z.number().int().min(0).max(10_000),
+    shippingCostCents: z.number().int().min(0).max(10_000).optional(),
+    shippingService: z.enum(["STANDARD_ENVELOPE", "GROUND", "PRIORITY"]).optional(),
+  }).strict().superRefine((change, context) => {
+    if ((change.shippingCostCents === undefined) !== (change.shippingService === undefined)) {
+      context.addIssue({ code: "custom", path: ["shippingCostCents"], message: "Choose both a shipping charge and shipping method." });
+    }
+  })).min(1).max(500),
   confirmation: z.literal("APPLY_EXACT_DELIVERED_PRICE_CHANGES"),
 }).strict();
 
@@ -1849,7 +1861,13 @@ async function positioningForActiveListing(userId, card, draft, preferences, tok
     currency: draft.currency,
   });
   if (!position) throw new Error("No compatible exact-card active listing with a delivered price was found.");
-  return { collectionId: card.collectionId, title: draft.title || card.title, listingId: draft.ebayListingId, ...position };
+  return {
+    collectionId: card.collectionId,
+    title: draft.title || card.title,
+    listingId: draft.ebayListingId,
+    ownShippingService: fulfillmentShippingService(policy),
+    ...position,
+  };
 }
 
 app.post("/api/ebay/listings/price-positioning", async (request, response) => {
@@ -1902,46 +1920,85 @@ app.post("/api/ebay/listings/apply-price-positioning", async (request, response)
         if (!card || !saved) throw new Error("The active listing was not found.");
         if (saved.priceCents !== requested.expectedCurrentPriceCents) throw new Error("The live price changed after this review. Check its position again.");
         const position = await positioningForActiveListing(userId, card, saved, preferences, token, policyCache);
+        if (position.ownShippingCostCents !== requested.expectedShippingCostCents) {
+          throw new Error("The live shipping charge changed after this review. Check its position again.");
+        }
         if (!position.safeToReprice) throw new Error("The exact-card evidence is not strong enough for a live price change.");
-        if (position.limitedByMinimum) throw new Error("Your account minimum prevents the requested exact delivered-price position.");
-        if (!position.shouldLower || position.proposedItemPriceCents !== requested.proposedPriceCents) {
+        const requestedShippingChange = requested.shippingCostCents !== undefined;
+        const nextShippingCostCents = requested.shippingCostCents ?? position.ownShippingCostCents;
+        const exactTargetItemPriceCents = position.lowestCompetitorDeliveredPriceCents - position.undercutCents - nextShippingCostCents;
+        if (exactTargetItemPriceCents < position.minimumPriceCents) {
+          throw new Error("Your account minimum prevents the requested exact delivered-price position.");
+        }
+        if (requestedShippingChange && requested.shippingService === "STANDARD_ENVELOPE" && exactTargetItemPriceCents >= 2_000) {
+          throw new Error("eBay Standard Envelope requires an eligible item price below $20.");
+        }
+        if (position.currentDeliveredPriceCents <= position.lowestCompetitorDeliveredPriceCents - position.undercutCents ||
+          exactTargetItemPriceCents !== requested.proposedPriceCents) {
           throw new Error("The market position changed after this review. Check it again before applying.");
         }
-        const bulkResult = await ebaySelling.request(token, "/sell/inventory/v1/bulk_update_price_quantity", {
-          method: "POST",
-          body: { requests: [{
-            sku: `cardpilot-${card.collectionId}`,
-            shipToLocationAvailability: { quantity: 1 },
-            offers: [{
-              offerId: saved.ebayOfferId,
+        let nextFulfillmentPolicyId = saved.fulfillmentPolicyId;
+        if (requestedShippingChange) {
+          const { policy } = await ensureEbayShippingPolicy(token, nextShippingCostCents, requested.shippingService);
+          nextFulfillmentPolicyId = policy.id;
+          await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(saved.ebayOfferId)}`, {
+            method: "PUT",
+            body: {
+              sku: `cardpilot-${card.collectionId}`,
+              marketplaceId: ebayMarketplaceId,
+              format: saved.listingFormat,
               availableQuantity: 1,
-              price: { value: (position.proposedItemPriceCents / 100).toFixed(2), currency: saved.currency },
-            }],
-          }] },
-        });
-        const failed = bulkResult?.responses?.find((item) => Number(item.statusCode) >= 300 || item.errors?.length);
-        if (failed) throw new Error(failed.errors?.[0]?.message ?? "eBay could not apply the delivered-price change.");
+              categoryId: saved.categoryId,
+              merchantLocationKey: saved.merchantLocationKey,
+              listingDuration: "GTC",
+              listingPolicies: {
+                fulfillmentPolicyId: nextFulfillmentPolicyId,
+                paymentPolicyId: saved.paymentPolicyId,
+                returnPolicyId: saved.returnPolicyId,
+              },
+              pricingSummary: { price: { value: (exactTargetItemPriceCents / 100).toFixed(2), currency: saved.currency } },
+            },
+          });
+        } else {
+          const bulkResult = await ebaySelling.request(token, "/sell/inventory/v1/bulk_update_price_quantity", {
+            method: "POST",
+            body: { requests: [{
+              sku: `cardpilot-${card.collectionId}`,
+              shipToLocationAvailability: { quantity: 1 },
+              offers: [{
+                offerId: saved.ebayOfferId,
+                availableQuantity: 1,
+                price: { value: (exactTargetItemPriceCents / 100).toFixed(2), currency: saved.currency },
+              }],
+            }] },
+          });
+          const failed = bulkResult?.responses?.find((item) => Number(item.statusCode) >= 300 || item.errors?.length);
+          if (failed) throw new Error(failed.errors?.[0]?.message ?? "eBay could not apply the delivered-price change.");
+        }
         const now = new Date().toISOString();
         const editable = editableEbayDraft(saved);
         const before = interventionMetrics(engagement.byListingId.get(String(saved.ebayListingId)), saved);
         await cloudServices.ebaySelling.saveDraft(userId, card.collectionId, {
           ...editable,
-          priceCents: position.proposedItemPriceCents,
+          priceCents: exactTargetItemPriceCents,
+          fulfillmentPolicyId: nextFulfillmentPolicyId,
           automationRepricedAt: now,
-          automationReason: `Price changed to $${(position.proposedItemPriceCents / 100).toFixed(2)}, ${position.undercutCents}-cent exact delivered-price positioning applied.`,
+          automationReason: `Buyer total positioned ${position.undercutCents} cents below the lowest exact match${requestedShippingChange ? ", including the confirmed shipping change" : ""}.`,
           automationUpdatedAt: now,
           interventionHistory: appendIntervention(editable, {
             id: randomUUID(),
             type: "price_undercut",
             source: "manual",
             createdAt: now,
-            summary: `Changed from $${(saved.priceCents / 100).toFixed(2)} to $${(position.proposedItemPriceCents / 100).toFixed(2)} against the lowest exact delivered price.`,
+            summary: `Changed item price from $${(saved.priceCents / 100).toFixed(2)} to $${(exactTargetItemPriceCents / 100).toFixed(2)}${requestedShippingChange ? ` and shipping from $${(position.ownShippingCostCents / 100).toFixed(2)} to $${(nextShippingCostCents / 100).toFixed(2)}` : ""}.`,
             before,
             change: {
               previousPriceCents: saved.priceCents,
-              priceCents: position.proposedItemPriceCents,
+              priceCents: exactTargetItemPriceCents,
               lowestCompetitorDeliveredPriceCents: position.lowestCompetitorDeliveredPriceCents,
-              ownShippingCostCents: position.ownShippingCostCents,
+              previousShippingCostCents: position.ownShippingCostCents,
+              shippingCostCents: nextShippingCostCents,
+              shippingService: requested.shippingService ?? position.ownShippingService,
               undercutCents: position.undercutCents,
               exactMatchCount: position.exactMatchCount,
               confidence: position.confidence,
@@ -1949,7 +2006,7 @@ app.post("/api/ebay/listings/apply-price-positioning", async (request, response)
             outcomes: [],
           }),
         }, ebaySellEnvironment);
-        results.push({ ok: true, collectionId: card.collectionId, previousPriceCents: saved.priceCents, priceCents: position.proposedItemPriceCents });
+        results.push({ ok: true, collectionId: card.collectionId, previousPriceCents: saved.priceCents, priceCents: exactTargetItemPriceCents, shippingCostCents: nextShippingCostCents });
       } catch (error) {
         results.push({ ok: false, collectionId: requested.collectionId, error: error.message ?? "The price could not be changed." });
       }

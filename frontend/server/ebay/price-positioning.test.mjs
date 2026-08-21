@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deliveredPricePosition, fulfillmentBuyerShippingCents } from "./price-positioning.mjs";
+import { deliveredPricePosition, fulfillmentBuyerShippingCents, fulfillmentShippingService } from "./price-positioning.mjs";
 
 const listing = (overrides = {}) => ({
   itemId: "competitor-1",
@@ -52,4 +52,11 @@ test("price positioning excludes the seller's own listing and respects the accou
 test("shipping policies expose the amount paid by the buyer", () => {
   assert.equal(fulfillmentBuyerShippingCents({ shippingOptions: [{ optionType: "DOMESTIC", shippingServices: [{ shippingCost: { value: "1.25" } }] }] }), 125);
   assert.equal(fulfillmentBuyerShippingCents({ shippingOptions: [{ optionType: "DOMESTIC", shippingServices: [{ freeShipping: true, shippingCost: { value: "9.99" } }] }] }), 0);
+});
+
+test("shipping policies expose a supported shipping method for safe replacement", () => {
+  const policy = (shippingServiceCode) => ({ shippingOptions: [{ optionType: "DOMESTIC", shippingServices: [{ shippingServiceCode }] }] });
+  assert.equal(fulfillmentShippingService(policy("USPSStandardEnvelope")), "STANDARD_ENVELOPE");
+  assert.equal(fulfillmentShippingService(policy("USPSPriorityMail")), "PRIORITY");
+  assert.equal(fulfillmentShippingService(policy("USPSGroundAdvantage")), "GROUND");
 });

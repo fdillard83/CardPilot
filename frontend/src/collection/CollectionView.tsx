@@ -59,12 +59,14 @@ type DeliveredPricePosition = {
   currency?: string;
   currentItemPriceCents?: number;
   ownShippingCostCents?: number;
+  ownShippingService?: "STANDARD_ENVELOPE" | "GROUND" | "PRIORITY";
   currentDeliveredPriceCents?: number;
   lowestCompetitorDeliveredPriceCents?: number;
   differenceCents?: number;
   proposedItemPriceCents?: number;
   proposedDeliveredPriceCents?: number;
   undercutCents?: number;
+  minimumPriceCents?: number;
   exactMatchCount?: number;
   confidence?: "low" | "medium" | "high";
   safeToReprice?: boolean;
@@ -73,10 +75,41 @@ type DeliveredPricePosition = {
   lowestCompetitor?: { title: string; itemWebUrl: string | null };
 };
 
+type DeliveredPriceShippingChoice = {
+  enabled: boolean;
+  amount: string;
+  service: "STANDARD_ENVELOPE" | "GROUND" | "PRIORITY";
+};
+
+function reviewedDeliveredPriceChange(
+  position: DeliveredPricePosition,
+  shippingChoice?: DeliveredPriceShippingChoice,
+) {
+  if (!position.ok || !position.safeToReprice ||
+    !Number.isInteger(position.currentItemPriceCents) ||
+    !Number.isInteger(position.ownShippingCostCents) ||
+    !Number.isInteger(position.currentDeliveredPriceCents) ||
+    !Number.isInteger(position.lowestCompetitorDeliveredPriceCents)) return null;
+  const shippingCostCents = shippingChoice?.enabled
+    ? amountCentsFromInput(shippingChoice.amount)
+    : position.ownShippingCostCents ?? null;
+  if (shippingCostCents === null || shippingCostCents > 10_000) return null;
+  const targetDeliveredPriceCents = (position.lowestCompetitorDeliveredPriceCents ?? 0) - (position.undercutCents ?? 5);
+  const proposedItemPriceCents = targetDeliveredPriceCents - shippingCostCents;
+  if (targetDeliveredPriceCents >= (position.currentDeliveredPriceCents ?? 0) ||
+    proposedItemPriceCents < (position.minimumPriceCents ?? 1)) return null;
+  if (shippingChoice?.enabled && shippingChoice.service === "STANDARD_ENVELOPE" && proposedItemPriceCents >= 2_000) return null;
+  return {
+    proposedItemPriceCents,
+    shippingCostCents,
+    targetDeliveredPriceCents,
+    shippingChanged: shippingChoice?.enabled === true,
+    shippingService: shippingChoice?.service ?? position.ownShippingService ?? "GROUND",
+  };
+}
+
 function canApplyDeliveredPricePosition(position: DeliveredPricePosition) {
-  return position.ok && position.safeToReprice && position.shouldLower &&
-    !position.limitedByMinimum && Number.isInteger(position.currentItemPriceCents) &&
-    Number.isInteger(position.proposedItemPriceCents);
+  return reviewedDeliveredPriceChange(position) !== null;
 }
 
 function searchableText(card: SavedCollectionCard) {
@@ -1421,6 +1454,7 @@ export function CollectionView({
   const [selectedPricePositionIds, setSelectedPricePositionIds] = useState<string[]>([]);
   const [pricePositions, setPricePositions] = useState<DeliveredPricePosition[]>([]);
   const [selectedPriceApplyIds, setSelectedPriceApplyIds] = useState<string[]>([]);
+  const [priceShippingChoices, setPriceShippingChoices] = useState<Record<string, DeliveredPriceShippingChoice>>({});
   const [pricePositionBusy, setPricePositionBusy] = useState(false);
   const [pricePositionCompletedCount, setPricePositionCompletedCount] = useState(0);
   const [pricePositionTotalCount, setPricePositionTotalCount] = useState(0);
@@ -1450,6 +1484,7 @@ export function CollectionView({
     setPricePositionMessage(null);
     setPricePositions([]);
     setSelectedPriceApplyIds([]);
+    setPriceShippingChoices({});
     try {
       const results = new Map<string, DeliveredPricePosition>();
       let nextIndex = 0;
@@ -1493,6 +1528,11 @@ export function CollectionView({
       setSelectedPricePositionIds(uniqueCollectionIds);
       setPricePositions(orderedResults);
       setSelectedPriceApplyIds(orderedResults.filter(canApplyDeliveredPricePosition).map((position) => position.collectionId));
+      setPriceShippingChoices(Object.fromEntries(orderedResults.filter((position) => position.ok).map((position) => [position.collectionId, {
+        enabled: false,
+        amount: amountInputFromCents(position.ownShippingCostCents ?? 0),
+        service: position.ownShippingService ?? "GROUND",
+      }])));
       window.requestAnimationFrame(() => document.getElementById("delivered-price-title")?.scrollIntoView({ behavior: "smooth", block: "start" }));
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : "CardPilot could not compare delivered prices.");
@@ -1502,10 +1542,10 @@ export function CollectionView({
     }
   };
 
-  const applicablePricePositions = pricePositions.filter(canApplyDeliveredPricePosition);
-  const selectedApplicablePricePositions = applicablePricePositions.filter((position) =>
-    selectedPriceApplyIds.includes(position.collectionId),
+  const applicablePricePositions = pricePositions.filter((position) =>
+    reviewedDeliveredPriceChange(position, priceShippingChoices[position.collectionId]) !== null,
   );
+  const selectedApplicablePricePositions = applicablePricePositions.filter((position) => selectedPriceApplyIds.includes(position.collectionId));
 
   const applyDeliveredPricePositions = async () => {
     if (!selectedApplicablePricePositions.length || priceApplyBusy) return;
@@ -1518,11 +1558,20 @@ export function CollectionView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           confirmation: "APPLY_EXACT_DELIVERED_PRICE_CHANGES",
-          changes: selectedApplicablePricePositions.map((position) => ({
-            collectionId: position.collectionId,
-            expectedCurrentPriceCents: position.currentItemPriceCents,
-            proposedPriceCents: position.proposedItemPriceCents,
-          })),
+          changes: selectedApplicablePricePositions.map((position) => {
+            const choice = priceShippingChoices[position.collectionId];
+            const reviewed = reviewedDeliveredPriceChange(position, choice)!;
+            return {
+              collectionId: position.collectionId,
+              expectedCurrentPriceCents: position.currentItemPriceCents,
+              expectedShippingCostCents: position.ownShippingCostCents,
+              proposedPriceCents: reviewed.proposedItemPriceCents,
+              ...(reviewed.shippingChanged ? {
+                shippingCostCents: reviewed.shippingCostCents,
+                shippingService: reviewed.shippingService,
+              } : {}),
+            };
+          }),
         }),
       });
       const payload = await response.json().catch(() => null) as { updated?: number; failed?: number; error?: string } | null;
@@ -1531,6 +1580,7 @@ export function CollectionView({
       setPricePositions([]);
       setSelectedPricePositionIds([]);
       setSelectedPriceApplyIds([]);
+      setPriceShippingChoices({});
       const collectionResponse = await fetch("/api/collection");
       const collectionPayload = await collectionResponse.json().catch(() => null) as { cards?: SavedCollectionCard[] } | null;
       if (collectionResponse.ok && collectionPayload?.cards) onCardsChange(collectionPayload.cards);
@@ -2725,12 +2775,12 @@ export function CollectionView({
         <div>
           <span>Match the lowest exact-card buyer total</span>
           <strong id="delivered-price-title">Set selected buyer totals below the closest exact match</strong>
-          <small>CardPilot compares the full amount a buyer pays: item price plus shipping. The default target is 5¢ below; your saved Account setting controls the exact amount. CardPilot changes only the item price—your eBay shipping charge and shipping policy stay exactly as they are.</small>
+          <small>CardPilot compares the full amount a buyer pays: item price plus shipping. The default target is 5¢ below; your saved Account setting controls the exact amount. By default CardPilot changes only the item price, but you can explicitly choose a different shipping charge for an individual card during review.</small>
         </div>
         <div className="collection-price-positioning-actions">
           <button className="primary-action" type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions(activeListingCards.map((card) => card.collectionId))}>{pricePositionBusy ? `Finding exact matches ${pricePositionCompletedCount} of ${pricePositionTotalCount}...` : `Compare all ${activeListingCards.length} active listing${activeListingCards.length === 1 ? "" : "s"}`}</button>
           {selectedPricePositionIds.length > 0 && <button type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions()}>{`Compare only ${selectedPricePositionIds.length} selected below`}</button>}
-          {selectedPricePositionIds.length > 0 && <button type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => { setSelectedPricePositionIds([]); setPricePositions([]); setSelectedPriceApplyIds([]); }}>Clear selected subset</button>}
+          {selectedPricePositionIds.length > 0 && <button type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => { setSelectedPricePositionIds([]); setPricePositions([]); setSelectedPriceApplyIds([]); setPriceShippingChoices({}); }}>Clear selected subset</button>}
           <a className="button-link" href="https://www.ebay.com/sh/lst/active" target="_blank" rel="noreferrer">Open eBay eligible offers</a>
         </div>
         {pricePositionBusy && <div className="collection-price-progress" role="status" aria-live="polite">
@@ -2746,9 +2796,16 @@ export function CollectionView({
             <button type="button" disabled={priceApplyBusy || selectedApplicablePricePositions.length === 0} onClick={() => setSelectedPriceApplyIds([])}>Uncheck all</button>
           </div>}
           <ul>{pricePositions.map((position) => {
-            const canApply = canApplyDeliveredPricePosition(position);
+            const shippingChoice = priceShippingChoices[position.collectionId] ?? {
+              enabled: false,
+              amount: amountInputFromCents(position.ownShippingCostCents ?? 0),
+              service: position.ownShippingService ?? "GROUND",
+            };
+            const reviewedChange = reviewedDeliveredPriceChange(position, shippingChoice);
+            const canApply = reviewedChange !== null;
             const checked = canApply && selectedPriceApplyIds.includes(position.collectionId);
             const currency = position.currency ?? "USD";
+            const targetBuyerTotal = (position.lowestCompetitorDeliveredPriceCents ?? 0) - (position.undercutCents ?? 5);
             return <li className={`${position.ok ? "" : "unavailable"}${checked ? " selected" : ""}`} key={position.collectionId}>
               <label className="collection-price-review-choice">
                 <input type="checkbox" checked={checked} disabled={!canApply || priceApplyBusy} onChange={() => setSelectedPriceApplyIds((current) => current.includes(position.collectionId) ? current.filter((id) => id !== position.collectionId) : [...current, position.collectionId])} />
@@ -2758,22 +2815,27 @@ export function CollectionView({
                 <div className="collection-price-math">
                   <span><small>Your current buyer total</small><strong>{formatPrice(position.currentDeliveredPriceCents ?? 0, currency)}</strong></span>
                   <span><small>Lowest exact-match buyer total</small><strong>{formatPrice(position.lowestCompetitorDeliveredPriceCents ?? 0, currency)}</strong></span>
-                  <span><small>New buyer total</small><strong>{formatPrice(position.proposedDeliveredPriceCents ?? 0, currency)}</strong></span>
+                  <span><small>New buyer total</small><strong>{formatPrice(targetBuyerTotal, currency)}</strong></span>
                 </div>
-                <strong className="collection-price-equation">New item price {formatPrice(position.proposedItemPriceCents ?? 0, currency)} + unchanged shipping {formatPrice(position.ownShippingCostCents ?? 0, currency)} = {formatPrice(position.proposedDeliveredPriceCents ?? 0, currency)}</strong>
+                <label className="collection-shipping-change-choice"><input type="checkbox" checked={shippingChoice.enabled} disabled={!position.safeToReprice || priceApplyBusy} onChange={(event) => setPriceShippingChoices((current) => ({ ...current, [position.collectionId]: { ...shippingChoice, enabled: event.target.checked } }))} /> Change the shipping charge for this card</label>
+                {shippingChoice.enabled && <div className="collection-shipping-change-fields">
+                  <label><span>New buyer shipping charge</span><div className="account-inline-unit"><span>$</span><input type="text" inputMode="decimal" value={shippingChoice.amount} disabled={priceApplyBusy} onChange={(event) => setPriceShippingChoices((current) => ({ ...current, [position.collectionId]: { ...shippingChoice, amount: event.target.value } }))} /></div></label>
+                  <label><span>Shipping method</span><select value={shippingChoice.service} disabled={priceApplyBusy} onChange={(event) => setPriceShippingChoices((current) => ({ ...current, [position.collectionId]: { ...shippingChoice, service: event.target.value as DeliveredPriceShippingChoice["service"] } }))}><option value="STANDARD_ENVELOPE">eBay Standard Envelope</option><option value="GROUND">USPS Ground Advantage</option><option value="PRIORITY">USPS Priority Mail</option></select></label>
+                </div>}
+                {reviewedChange && <strong className="collection-price-equation">New item price {formatPrice(reviewedChange.proposedItemPriceCents, currency)} + {reviewedChange.shippingChanged ? "new" : "unchanged"} shipping {formatPrice(reviewedChange.shippingCostCents, currency)} = {formatPrice(reviewedChange.targetDeliveredPriceCents, currency)}</strong>}
                 <small>{formatPrice(position.undercutCents ?? 5, currency)} below the lowest exact-match buyer total · {position.exactMatchCount} exact match{position.exactMatchCount === 1 ? "" : "es"} · {position.confidence} confidence</small>
                 {position.lowestCompetitor?.itemWebUrl && <a href={position.lowestCompetitor.itemWebUrl} target="_blank" rel="noreferrer">Inspect the matching listing used</a>}
                 {!position.safeToReprice && <small>Not selectable: the exact-card evidence is not strong enough.</small>}
-                {position.safeToReprice && position.limitedByMinimum && <small>Not selectable: your account minimum prevents a buyer total below this exact match.</small>}
-                {position.safeToReprice && !position.limitedByMinimum && !position.shouldLower && <small>Not selectable: your buyer total is already at or below this position.</small>}
+                {position.safeToReprice && !reviewedChange && (position.currentDeliveredPriceCents ?? 0) <= targetBuyerTotal && <small>Not selectable: your buyer total is already at or below this position.</small>}
+                {position.safeToReprice && !reviewedChange && (position.currentDeliveredPriceCents ?? 0) > targetBuyerTotal && <small>Not selectable: enter a valid shipping charge that keeps the item price above your account minimum. Standard Envelope also requires an item price below $20.</small>}
               </>}
             </li>;
           })}</ul>
           <div className="collection-price-review-actions">
-            <button className="primary-action" type="button" disabled={!selectedApplicablePricePositions.length || priceApplyBusy} onClick={() => void applyDeliveredPricePositions()}>{priceApplyBusy ? "Changing selected item prices..." : `Change ${selectedApplicablePricePositions.length} selected item price${selectedApplicablePricePositions.length === 1 ? "" : "s"} on eBay`}</button>
-            <button type="button" disabled={priceApplyBusy} onClick={() => { setPricePositions([]); setSelectedPriceApplyIds([]); }}>Close without changes</button>
+            <button className="primary-action" type="button" disabled={!selectedApplicablePricePositions.length || priceApplyBusy} onClick={() => void applyDeliveredPricePositions()}>{priceApplyBusy ? "Applying selected buyer-total changes..." : `Apply ${selectedApplicablePricePositions.length} selected buyer-total change${selectedApplicablePricePositions.length === 1 ? "" : "s"} on eBay`}</button>
+            <button type="button" disabled={priceApplyBusy} onClick={() => { setPricePositions([]); setSelectedPriceApplyIds([]); setPriceShippingChoices({}); }}>Close without changes</button>
           </div>
-          <small>Shipping charges and shipping policies will not be modified.</small>
+          <small>Shipping changes occur only where “Change the shipping charge for this card” is checked. CardPilot creates or reuses a matching eBay shipping policy for that listing.</small>
         </div>}
         {pricePositionMessage && <p role="status">{pricePositionMessage}</p>}
       </section>}
@@ -3167,6 +3229,7 @@ export function CollectionView({
                         {card.selling.status === "published" && <label className="collection-price-select"><input type="checkbox" checked={selectedPricePositionIds.includes(card.collectionId)} disabled={pricePositionBusy || priceApplyBusy} onChange={() => {
                           setPricePositions([]);
                           setSelectedPriceApplyIds([]);
+                          setPriceShippingChoices({});
                           setSelectedPricePositionIds((current) => current.includes(card.collectionId) ? current.filter((id) => id !== card.collectionId) : [...current, card.collectionId].slice(0, 500));
                         }} /> {selectedPricePositionIds.includes(card.collectionId) ? "Selected for delivered-price review" : "Select for delivered-price review"}</label>}
                       </div>

@@ -2639,6 +2639,11 @@ main {
 .collection-price-math > span { display: grid; gap: 2px; padding: 7px; border-radius: 8px; background: rgba(255, 255, 255, .035); }
 .collection-price-math strong { font-size: 13px; }
 .collection-price-equation { color: #cce9ff; font-size: 11px; line-height: 1.45; }
+.collection-shipping-change-choice { display: flex; align-items: center; gap: 7px; width: fit-content; margin-top: 5px; color: #a9dcff; font-size: 11px; font-weight: 800; }
+.collection-shipping-change-choice input { width: 17px; height: 17px; }
+.collection-shipping-change-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 8px; margin: 5px 0; padding: 9px; border: 1px solid rgba(121, 201, 255, .2); border-radius: 9px; background: rgba(121, 201, 255, .04); }
+.collection-shipping-change-fields label { display: grid; gap: 4px; color: var(--muted); font-size: 10px; }
+.collection-shipping-change-fields input, .collection-shipping-change-fields select { width: 100%; min-height: 36px; }
 .collection-price-review .price-above { color: #ffd76b; font-weight: 800; }
 .collection-price-review .price-below { color: var(--lime); font-weight: 800; }
 .collection-price-select { display: flex; align-items: center; gap: 6px; margin-top: 5px; color: #a9dcff; font-size: 10px; font-weight: 800; }
