@@ -47,6 +47,13 @@ export function AccountSettings({
   const [autoRepriceEnabled, setAutoRepriceEnabled] = useState(preferences.autoRepriceEnabled);
   const [autoRepriceAfterDays, setAutoRepriceAfterDays] = useState(String(preferences.autoRepriceAfterDays));
   const [autoRepriceFloorPercent, setAutoRepriceFloorPercent] = useState(String(preferences.autoRepriceFloorPercent));
+  const [autoListingOptimizationEnabled, setAutoListingOptimizationEnabled] = useState(preferences.autoListingOptimizationEnabled);
+  const [exactPriceUndercutCents, setExactPriceUndercutCents] = useState(String(preferences.exactPriceUndercutCents));
+  const [listingLowImpressionDays, setListingLowImpressionDays] = useState(String(preferences.listingLowImpressionDays));
+  const [listingLowImpressionCount, setListingLowImpressionCount] = useState(String(preferences.listingLowImpressionCount));
+  const [listingCtrMinimumImpressions, setListingCtrMinimumImpressions] = useState(String(preferences.listingCtrMinimumImpressions));
+  const [listingLowCtrPercent, setListingLowCtrPercent] = useState(String(preferences.listingLowCtrPercent));
+  const [listingViewsWithoutWatchers, setListingViewsWithoutWatchers] = useState(String(preferences.listingViewsWithoutWatchers));
   const [autoValueEnabled, setAutoValueEnabled] = useState(
     preferences.autoValueEnabled,
   );
@@ -112,6 +119,12 @@ export function AccountSettings({
     const minimumConfidence = Number(autopilotMinConfidence);
     const repriceDays = Number(autoRepriceAfterDays);
     const repriceFloorPercent = Number(autoRepriceFloorPercent);
+    const undercutCents = Number(exactPriceUndercutCents);
+    const lowImpressionDays = Number(listingLowImpressionDays);
+    const lowImpressionCount = Number(listingLowImpressionCount);
+    const ctrMinimumImpressions = Number(listingCtrMinimumImpressions);
+    const lowCtrPercent = Number(listingLowCtrPercent);
+    const viewsWithoutWatchers = Number(listingViewsWithoutWatchers);
     const fasterBelowDollars = sellFasterBelow.trim() ? Number(sellFasterBelow) : null;
     const adRate = Number(promotionAdRate);
     if (autoValueEnabled && (!Number.isFinite(dollars) || dollars <= 0)) {
@@ -146,6 +159,22 @@ export function AccountSettings({
       setPreferenceError("Choose a repricing floor from 50% through 100% of the original listing price.");
       return;
     }
+    if (!Number.isInteger(undercutCents) || undercutCents < 1 || undercutCents > 500) {
+      setPreferenceError("Choose an exact-card undercut from 1 through 500 cents.");
+      return;
+    }
+    if (!Number.isInteger(lowImpressionDays) || lowImpressionDays < 1 || lowImpressionDays > 90 || !Number.isInteger(lowImpressionCount) || lowImpressionCount < 0 || lowImpressionCount > 100000) {
+      setPreferenceError("Choose valid low-impression days and impression limits.");
+      return;
+    }
+    if (!Number.isInteger(ctrMinimumImpressions) || ctrMinimumImpressions < 1 || ctrMinimumImpressions > 100000 || !Number.isFinite(lowCtrPercent) || lowCtrPercent < 0.1 || lowCtrPercent > 25) {
+      setPreferenceError("Choose valid click-through impression and percentage limits.");
+      return;
+    }
+    if (!Number.isInteger(viewsWithoutWatchers) || viewsWithoutWatchers < 1 || viewsWithoutWatchers > 100000) {
+      setPreferenceError("Choose a valid view threshold.");
+      return;
+    }
     setIsSavingPreferences(true);
     setPreferenceError(null);
     setPreferenceStatus(null);
@@ -161,6 +190,13 @@ export function AccountSettings({
           autoRepriceEnabled,
           autoRepriceAfterDays: repriceDays,
           autoRepriceFloorPercent: repriceFloorPercent,
+          autoListingOptimizationEnabled,
+          exactPriceUndercutCents: undercutCents,
+          listingLowImpressionDays: lowImpressionDays,
+          listingLowImpressionCount: lowImpressionCount,
+          listingCtrMinimumImpressions: ctrMinimumImpressions,
+          listingLowCtrPercent: lowCtrPercent,
+          listingViewsWithoutWatchers: viewsWithoutWatchers,
           autoValueEnabled,
           autoValueMaxCents: autoValueEnabled ? Math.round(dollars * 100) : null,
           ebayConnectPromptDismissed: preferences.ebayConnectPromptDismissed,
@@ -440,6 +476,41 @@ export function AccountSettings({
                     </label>
                   </>}
                 </>}
+                <div className="account-rule-heading">
+                  <strong>Active-listing intervention rules</strong>
+                  <small>Suggested defaults. CardPilot uses these to diagnose listings; automatic price changes still require the automation switch above.</small>
+                </div>
+                <label className="account-toggle-row">
+                  <input type="checkbox" checked={autoListingOptimizationEnabled} onChange={(event) => setAutoListingOptimizationEnabled(event.target.checked)} />
+                  Automatically apply safe title, card-detail, photo, and default-promotion improvements when these thresholds are reached
+                </label>
+                {autoListingOptimizationEnabled && <small>Only evidence-backed changes are applied. Promotion is added automatically only when “Promote new eligible listings” is enabled below.</small>}
+                <label>
+                  Flag low visibility after this many days
+                  <input type="number" min="1" max="90" step="1" value={listingLowImpressionDays} onChange={(event) => setListingLowImpressionDays(event.target.value)} />
+                </label>
+                <label>
+                  Low visibility means fewer than this many impressions
+                  <input type="number" min="0" max="100000" step="1" value={listingLowImpressionCount} onChange={(event) => setListingLowImpressionCount(event.target.value)} />
+                </label>
+                <label>
+                  Evaluate click-through after this many impressions
+                  <input type="number" min="1" max="100000" step="1" value={listingCtrMinimumImpressions} onChange={(event) => setListingCtrMinimumImpressions(event.target.value)} />
+                </label>
+                <label>
+                  Flag click-through below
+                  <input type="number" min="0.1" max="25" step="0.1" value={listingLowCtrPercent} onChange={(event) => setListingLowCtrPercent(event.target.value)} />
+                  <small>Percent of impressions that become listing views.</small>
+                </label>
+                <label>
+                  Flag interest after this many views with no watchers
+                  <input type="number" min="1" max="100000" step="1" value={listingViewsWithoutWatchers} onChange={(event) => setListingViewsWithoutWatchers(event.target.value)} />
+                </label>
+                <label>
+                  Price below the lowest exact delivered price by
+                  <div className="account-inline-unit"><input type="number" min="1" max="500" step="1" value={exactPriceUndercutCents} onChange={(event) => setExactPriceUndercutCents(event.target.value)} /><span>cents</span></div>
+                  <small>CardPilot subtracts your buyer-paid shipping before calculating the live item price.</small>
+                </label>
               </div>
             </section>
 

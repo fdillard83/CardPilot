@@ -15,6 +15,7 @@ import { EbayApiError, EbayOAuthClient } from "./ebay/oauth-client.mjs";
 import { EbayTaxonomyClient } from "./ebay/taxonomy.mjs";
 import { listingReadiness } from "./ebay/listing-readiness.mjs";
 import { calculateAuctionSchedule } from "./ebay/auction-schedule.mjs";
+import { deliveredPricePosition, fulfillmentBuyerShippingCents } from "./ebay/price-positioning.mjs";
 import {
   EBAY_ANALYTICS_SCOPE,
   EbayListingEngagementService,
@@ -74,7 +75,7 @@ import {
   importLocalCollection,
   localImportStatus,
 } from "./supabase/local-import.mjs";
-import { assessAutopilot, autopilotRepriceCents, shouldAutomaticallySaveValuation } from "./autopilot/decision.mjs";
+import { assessAutopilot, shouldAutomaticallySaveValuation } from "./autopilot/decision.mjs";
 import { MarketFeedbackSubmissionSchema } from "./supabase/market-feedback.mjs";
 import { listingHealth, optimizedListingDetails } from "./ebay/listing-health.mjs";
 
@@ -489,25 +490,70 @@ async function runAutopilotRepricing(now = Date.now()) {
     const userId = connection.user_id;
     try {
       const preferences = await cloudServices.preferences.get(userId);
-      if (!preferences.autoRepriceEnabled) continue;
+      if (!preferences.autoRepriceEnabled && !preferences.autoListingOptimizationEnabled) continue;
       const drafts = await cloudServices.ebaySelling.drafts(userId);
       const token = await ebaySellerAccessToken(userId);
+      const sellerConnection = await cloudServices.ebaySelling.connection(userId);
+      const engagement = await ebayEngagementForDrafts(userId, drafts, sellerConnection);
+      const policyCache = new Map();
+      const marketingAuthorized = String(sellerConnection?.scopes ?? "").split(/\s+/).includes("https://api.ebay.com/oauth/api_scope/sell.marketing");
       for (const saved of drafts.filter((draft) => draft.status === "published" && draft.listingFormat === "FIXED_PRICE" && draft.ebayOfferId)) {
         const lastPriceDecisionAt = saved.automationRepricedAt ?? saved.publishedAt;
-        if (!lastPriceDecisionAt || now - new Date(lastPriceDecisionAt).getTime() < preferences.autoRepriceAfterDays * 86_400_000) continue;
+        if (!lastPriceDecisionAt) continue;
         const card = await collectionStore.get(userId, saved.collectionId);
         if (!card) continue;
-        const snapshot = await valuationRecommendations.snapshot(card);
-        if (!snapshot.recommendation || snapshot.recommendation.confidence === "low" || !snapshot.saleStrategyOptions?.sell_faster) continue;
+        const listingEngagement = engagement.byListingId.get(String(saved.ebayListingId)) ?? {};
+        const ageDays = saved.publishedAt ? (now - Date.parse(saved.publishedAt)) / 86_400_000 : 0;
+        const impressions = Number.isFinite(Number(listingEngagement.impressionCount)) ? Number(listingEngagement.impressionCount) : null;
+        const views = Number.isFinite(Number(listingEngagement.viewCount)) ? Number(listingEngagement.viewCount) : null;
+        const watchers = Number.isFinite(Number(listingEngagement.watcherCount)) ? Number(listingEngagement.watcherCount) : null;
+        const lowVisibility = ageDays >= preferences.listingLowImpressionDays && impressions !== null && impressions < preferences.listingLowImpressionCount;
+        const lowClickThrough = impressions !== null && views !== null && impressions >= preferences.listingCtrMinimumImpressions && views / impressions < preferences.listingLowCtrPercent / 100;
+        const viewedWithoutInterest = views !== null && views >= preferences.listingViewsWithoutWatchers && (watchers ?? 0) === 0;
+
+        if (preferences.autoListingOptimizationEnabled && (lowVisibility || lowClickThrough || viewedWithoutInterest)) {
+          let definitions = [];
+          if (/^\d+$/.test(saved.categoryId) && ebayTaxonomy) {
+            try { definitions = await ebayTaxonomy.itemAspects(saved.categoryId); } catch { /* title and photo checks remain available */ }
+          }
+          const health = listingHealth({
+            card,
+            draft: saved,
+            definitions,
+            engagement: listingEngagement,
+            backAvailable: Boolean(card.images.backUrl),
+            now,
+            rules: {
+              lowImpressionDays: preferences.listingLowImpressionDays,
+              lowImpressionCount: preferences.listingLowImpressionCount,
+              ctrMinimumImpressions: preferences.listingCtrMinimumImpressions,
+              lowCtrPercent: preferences.listingLowCtrPercent,
+              viewsWithoutWatchers: preferences.listingViewsWithoutWatchers,
+            },
+          });
+          const shouldPromote = preferences.ebaySellingDefaults.promoteListings && marketingAuthorized && saved.promotion?.status !== "promoted";
+          if (health.hasChanges || shouldPromote) {
+            const optimized = await optimizeActiveEbayListing(userId, saved.collectionId, {
+              promoteListings: shouldPromote,
+              promotionAdRatePercent: preferences.ebaySellingDefaults.promotionAdRatePercent,
+              token,
+              engagement: listingEngagement,
+              source: "automatic",
+            });
+            results.push({ userId, collectionId: card.collectionId, action: "listing_optimization", title: optimized.title });
+            continue;
+          }
+        }
+
+        if (!preferences.autoRepriceEnabled || (!lowClickThrough && !viewedWithoutInterest)) continue;
+        if (now - new Date(lastPriceDecisionAt).getTime() < preferences.autoRepriceAfterDays * 86_400_000) continue;
         const draft = editableEbayDraft(saved);
-        const nextPriceCents = autopilotRepriceCents({
-          currentPriceCents: draft.priceCents,
-          originalPriceCents: draft.automationOriginalPriceCents ?? draft.priceCents,
-          marketFloorCents: snapshot.saleStrategyOptions.sell_faster.amountCents,
-          accountMinimumCents: preferences.autopilotMinimumPriceCents,
-          floorPercent: preferences.autoRepriceFloorPercent,
-        });
-        if (nextPriceCents === null) continue;
+        const position = await positioningForActiveListing(userId, card, saved, preferences, token, policyCache);
+        if (!position.safeToReprice || !position.shouldLower) continue;
+        const originalPriceCents = draft.automationOriginalPriceCents ?? draft.priceCents;
+        const originalPriceFloorCents = Math.ceil(originalPriceCents * preferences.autoRepriceFloorPercent / 100);
+        const nextPriceCents = Math.max(position.proposedItemPriceCents, originalPriceFloorCents, preferences.autopilotMinimumPriceCents);
+        if (nextPriceCents >= draft.priceCents) continue;
         const sku = `cardpilot-${card.collectionId}`;
         const bulkResult = await ebaySelling.request(token, "/sell/inventory/v1/bulk_update_price_quantity", {
           method: "POST",
@@ -520,12 +566,31 @@ async function runAutopilotRepricing(now = Date.now()) {
         const failed = bulkResult?.responses?.find((item) => Number(item.statusCode) >= 300 || item.errors?.length);
         if (failed) throw new Error(failed.errors?.[0]?.message ?? "eBay could not apply the automatic price update.");
         const repricedAt = new Date(now).toISOString();
+        const before = interventionMetrics(listingEngagement, saved);
         await cloudServices.ebaySelling.saveDraft(userId, card.collectionId, {
           ...draft,
           priceCents: nextPriceCents,
           automationRepricedAt: repricedAt,
-          automationReason: `Autopilot repriced this listing from $${(draft.priceCents / 100).toFixed(2)} to $${(nextPriceCents / 100).toFixed(2)} using current compatible market evidence.`,
+          automationReason: `Autopilot repriced this listing from $${(draft.priceCents / 100).toFixed(2)} to $${(nextPriceCents / 100).toFixed(2)} using exact delivered-price evidence.`,
           automationUpdatedAt: repricedAt,
+          interventionHistory: appendIntervention(draft, {
+            id: randomUUID(),
+            type: "price_undercut",
+            source: "automatic",
+            createdAt: repricedAt,
+            summary: `Automatically changed from $${(draft.priceCents / 100).toFixed(2)} to $${(nextPriceCents / 100).toFixed(2)} using exact delivered-price positioning.`,
+            before,
+            change: {
+              previousPriceCents: draft.priceCents,
+              priceCents: nextPriceCents,
+              lowestCompetitorDeliveredPriceCents: position.lowestCompetitorDeliveredPriceCents,
+              ownShippingCostCents: position.ownShippingCostCents,
+              undercutCents: preferences.exactPriceUndercutCents,
+              exactMatchCount: position.exactMatchCount,
+              confidence: position.confidence,
+            },
+            outcomes: [],
+          }),
         }, ebaySellEnvironment);
         results.push({ userId, collectionId: card.collectionId, previousPriceCents: draft.priceCents, priceCents: nextPriceCents });
       }
@@ -618,6 +683,13 @@ app.get("/api/account/preferences", async (request, response) => {
       autoRepriceEnabled: false,
       autoRepriceAfterDays: 14,
       autoRepriceFloorPercent: 90,
+      autoListingOptimizationEnabled: false,
+      exactPriceUndercutCents: 5,
+      listingLowImpressionDays: 7,
+      listingLowImpressionCount: 25,
+      listingCtrMinimumImpressions: 100,
+      listingLowCtrPercent: 1,
+      listingViewsWithoutWatchers: 10,
       autoValueEnabled: false,
       autoValueMaxCents: null,
       ebayConnectPromptDismissed: true,
@@ -650,7 +722,9 @@ app.put("/api/account/preferences", async (request, response) => {
       console.error("Account preferences update failed", error);
     }
     response.status(400).json({
-      error: "Choose a valid automatic-value limit, or turn the rule off.",
+      error: error instanceof ZodError
+        ? error.issues[0]?.message ?? "Check the account-setting values and try again."
+        : "CardPilot could not save these account settings.",
     });
   }
 });
@@ -1104,16 +1178,22 @@ app.delete("/api/collection/:collectionId/ebay-draft", async (request, response)
 app.get("/api/ebay/listing-queue", async (request, response) => {
   try {
     const userId = request.cardPilotUser.id;
-    const [drafts, cards, sales, connection] = await Promise.all([
+    const [drafts, cards, sales, connection, preferences] = await Promise.all([
       cloudServices.ebaySelling.drafts(userId),
       collectionStore.list(userId),
       cloudServices.ebaySelling.sales(userId),
       cloudServices.ebaySelling.connection(userId),
+      cloudServices.preferences.get(userId),
     ]);
     const saleByCollectionId = new Map(sales.map((sale) => [sale.collection_id, sale]));
     const cardById = new Map(cards.map((card) => [card.collectionId, card]));
     const engagement = await ebayEngagementForDrafts(userId, drafts, connection);
-    const items = await Promise.all(drafts.map(async (draft) => {
+    const buyerShippingByPolicy = await buyerShippingForDrafts(userId, drafts);
+    const trackedDrafts = await captureDueInterventionOutcomes(userId, drafts, engagement);
+    let interventionLearning = { personal: [], community: [] };
+    try { interventionLearning = await cloudServices.ebaySelling.interventionLearning(userId); }
+    catch (error) { console.warn("Listing intervention learning was unavailable", error?.message ?? error); }
+    const items = await Promise.all(trackedDrafts.map(async (draft) => {
       const card = cardById.get(draft.collectionId);
       if (!card) return null;
       const sale = saleByCollectionId.get(draft.collectionId);
@@ -1134,6 +1214,13 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
             definitions,
             engagement: listingEngagement,
             backAvailable: Boolean(card.images.backUrl),
+            rules: {
+              lowImpressionDays: preferences.listingLowImpressionDays,
+              lowImpressionCount: preferences.listingLowImpressionCount,
+              ctrMinimumImpressions: preferences.listingCtrMinimumImpressions,
+              lowCtrPercent: preferences.listingLowCtrPercent,
+              viewsWithoutWatchers: preferences.listingViewsWithoutWatchers,
+            },
           })
         : null;
       return {
@@ -1141,6 +1228,7 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
         title: draft.title || card.title,
         priceCents: draft.priceCents,
         currency: draft.currency,
+        buyerShippingCostCents: buyerShippingByPolicy.get(draft.fulfillmentPolicyId) ?? null,
         status: draft.status,
         scheduleStatus: draft.scheduleStatus,
         scheduledPublishAt: draft.scheduledPublishAt,
@@ -1173,6 +1261,7 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
         health,
         promotionRequested: draft.promoteListing === true,
         promotion: draft.promotion ?? null,
+        interventionHistory: draft.interventionHistory ?? [],
       };
     }));
     response.json({
@@ -1182,6 +1271,15 @@ app.get("/api/ebay/listing-queue", async (request, response) => {
       analyticsAuthorized: engagement.analyticsAuthorized,
       marketingAuthorized: String(connection?.scopes ?? "").split(/\s+/).includes("https://api.ebay.com/oauth/api_scope/sell.marketing"),
       engagementUpdatedAt: engagement.viewsUpdatedAt ?? engagement.fetchedAt,
+      interventionRules: {
+        lowImpressionDays: preferences.listingLowImpressionDays,
+        lowImpressionCount: preferences.listingLowImpressionCount,
+        ctrMinimumImpressions: preferences.listingCtrMinimumImpressions,
+        lowCtrPercent: preferences.listingLowCtrPercent,
+        viewsWithoutWatchers: preferences.listingViewsWithoutWatchers,
+        exactPriceUndercutCents: preferences.exactPriceUndercutCents,
+      },
+      interventionLearning,
       items: items.filter(Boolean),
     });
   } catch (error) {
@@ -1223,6 +1321,30 @@ async function ebaySellerAccessToken(userId) {
   if (connection.environment !== ebaySellEnvironment) throw new Error(`Reconnect your eBay ${ebaySellEnvironment} seller account before continuing.`);
   const refreshToken = decryptSellerToken(connection.encrypted_refresh_token, process.env.EBAY_TOKEN_ENCRYPTION_KEY);
   return (await ebaySelling.refresh(refreshToken, connection.scopes || undefined)).access_token;
+}
+
+const buyerShippingPolicyCache = new Map();
+async function buyerShippingForDrafts(userId, drafts) {
+  const policyIds = [...new Set(drafts
+    .filter((draft) => draft.status === "published" && draft.fulfillmentPolicyId)
+    .map((draft) => draft.fulfillmentPolicyId))];
+  if (!policyIds.length) return new Map();
+  try {
+    const token = await ebaySellerAccessToken(userId);
+    const entries = await Promise.all(policyIds.map(async (policyId) => {
+      const key = `${userId}:${policyId}`;
+      const cached = buyerShippingPolicyCache.get(key);
+      if (cached && cached.expiresAt > Date.now()) return [policyId, cached.amountCents];
+      const policy = await ebaySelling.request(token, `/sell/account/v1/fulfillment_policy/${encodeURIComponent(policyId)}`);
+      const amountCents = fulfillmentBuyerShippingCents(policy);
+      buyerShippingPolicyCache.set(key, { amountCents, expiresAt: Date.now() + 10 * 60 * 1000 });
+      return [policyId, amountCents];
+    }));
+    return new Map(entries);
+  } catch (error) {
+    console.warn("Buyer shipping charges could not be loaded", error?.message ?? error);
+    return new Map();
+  }
 }
 
 async function ebayEngagementForDrafts(userId, drafts, existingConnection = null) {
@@ -1429,7 +1551,7 @@ const EbayActiveOptimizationSchema = z.object({
 async function optimizeActiveEbayListing(
   userId,
   collectionId,
-  { promoteListings, promotionAdRatePercent, token },
+  { promoteListings, promotionAdRatePercent, token, engagement, source = "manual" },
 ) {
   const card = await collectionStore.get(userId, collectionId);
   const saved = card && await cloudServices.ebaySelling.draft(userId, collectionId);
@@ -1521,10 +1643,41 @@ async function optimizeActiveEbayListing(
       };
     }
   }
+  const interventionAt = new Date().toISOString();
+  let interventionHistory = previousDraft.interventionHistory ?? [];
+  const contentChanges = [
+    optimized.changes.title ? "title" : null,
+    ...optimized.changes.aspects.map((name) => `item specific: ${name}`),
+    optimized.changes.addBackImage ? "back photo" : null,
+  ].filter(Boolean);
+  if (contentChanges.length) {
+    interventionHistory = appendIntervention({ interventionHistory }, {
+      id: randomUUID(),
+      type: "listing_optimization",
+      source,
+      createdAt: interventionAt,
+      summary: `Updated ${contentChanges.join(", ")}.`,
+      before: interventionMetrics(engagement, previousDraft),
+      change: { contentChanges },
+      outcomes: [],
+    });
+  }
+  if (promoteListings && promotion?.status === "promoted" && previousDraft.promotion?.status !== "promoted") {
+    interventionHistory = appendIntervention({ interventionHistory }, {
+      id: randomUUID(),
+      type: "promotion",
+      source,
+      createdAt: interventionAt,
+      summary: `Added eBay promotion at ${promotionAdRatePercent}%.`,
+      before: interventionMetrics(engagement, previousDraft),
+      change: { promotionAdRatePercent },
+      outcomes: [],
+    });
+  }
   const finalDraft = await cloudServices.ebaySelling.saveDraft(
     userId,
     collectionId,
-    { ...nextDraft, promotion },
+    { ...nextDraft, promotion, interventionHistory },
     ebaySellEnvironment,
   );
   return {
@@ -1552,6 +1705,9 @@ app.post("/api/ebay/listings/optimize", async (request, response) => {
       }
     }
     const token = await ebaySellerAccessToken(userId);
+    const allDrafts = await cloudServices.ebaySelling.drafts(userId);
+    const connection = await cloudServices.ebaySelling.connection(userId);
+    const listingEngagement = await ebayEngagementForDrafts(userId, allDrafts, connection);
     const results = [];
     for (const collectionId of [...new Set(input.collectionIds)]) {
       try {
@@ -1560,6 +1716,9 @@ app.post("/api/ebay/listings/optimize", async (request, response) => {
           ...(await optimizeActiveEbayListing(userId, collectionId, {
             ...input,
             token,
+            engagement: listingEngagement.byListingId.get(String(
+              allDrafts.find((draft) => draft.collectionId === collectionId)?.ebayListingId,
+            )),
           })),
         });
       } catch (error) {
@@ -1583,6 +1742,224 @@ app.post("/api/ebay/listings/optimize", async (request, response) => {
         ? "Choose active listings and explicitly confirm the optimization."
         : error.message ?? "CardPilot could not optimize the active listings.",
     });
+  }
+});
+
+const EbayPricePositioningSchema = z.object({
+  collectionIds: z.array(z.string().min(1).max(100)).min(1).max(20),
+}).strict();
+
+const EbayApplyPositioningSchema = z.object({
+  changes: z.array(z.object({
+    collectionId: z.string().min(1).max(100),
+    expectedCurrentPriceCents: z.number().int().min(1).max(100_000_000),
+    proposedPriceCents: z.number().int().min(1).max(100_000_000),
+  }).strict()).min(1).max(20),
+  confirmation: z.literal("APPLY_EXACT_DELIVERED_PRICE_CHANGES"),
+}).strict();
+
+function interventionMetrics(engagement = {}, draft = {}) {
+  const impressions = Number.isFinite(Number(engagement?.impressionCount)) ? Number(engagement.impressionCount) : null;
+  const views = Number.isFinite(Number(engagement?.viewCount)) ? Number(engagement.viewCount) : null;
+  return {
+    priceCents: Number(draft.priceCents) || null,
+    impressionCount: impressions,
+    viewCount: views,
+    watcherCount: Number.isFinite(Number(engagement?.watcherCount)) ? Number(engagement.watcherCount) : null,
+    clickThroughRate: impressions && views !== null ? views / impressions : null,
+    status: draft.status ?? null,
+    soldAmountCents: draft.soldAmountCents ?? null,
+  };
+}
+
+function appendIntervention(draft, entry) {
+  return [...(draft.interventionHistory ?? []), entry].slice(-100);
+}
+
+async function captureDueInterventionOutcomes(userId, drafts, engagement, now = Date.now()) {
+  return Promise.all(drafts.map(async (saved) => {
+    if (!(saved.interventionHistory?.length)) return saved;
+    let changed = false;
+    const outcomesFor = interventionMetrics(
+      engagement.byListingId.get(String(saved.ebayListingId)),
+      saved,
+    );
+    const history = saved.interventionHistory.map((entry) => {
+      const elapsedDays = (now - Date.parse(entry.createdAt)) / 86_400_000;
+      const outcomes = [...(entry.outcomes ?? [])];
+      for (const days of [3, 7, 14]) {
+        if (elapsedDays < days || outcomes.some((outcome) => outcome.days === days)) continue;
+        outcomes.push({ days, capturedAt: new Date(now).toISOString(), metrics: outcomesFor });
+        changed = true;
+      }
+      return { ...entry, outcomes };
+    });
+    if (!changed) return saved;
+    try {
+      const updated = await cloudServices.ebaySelling.saveDraft(userId, saved.collectionId, {
+        ...editableEbayDraft(saved),
+        interventionHistory: history,
+      }, ebaySellEnvironment);
+      return updated;
+    } catch (error) {
+      console.warn("Listing intervention outcome could not be recorded", error?.message ?? error);
+      return saved;
+    }
+  }));
+}
+
+async function positioningForActiveListing(userId, card, draft, preferences, token, policyCache = new Map()) {
+  if (!activeMarket) throw new Error("Active eBay market search is unavailable.");
+  if (!draft?.ebayListingId || !draft?.ebayOfferId || draft.status !== "published" || draft.listingFormat !== "FIXED_PRICE") {
+    throw new Error("An active Buy It Now CardPilot listing is required.");
+  }
+  let policyPromise = policyCache.get(draft.fulfillmentPolicyId);
+  if (!policyPromise) {
+    policyPromise = ebaySelling.request(token, `/sell/account/v1/fulfillment_policy/${encodeURIComponent(draft.fulfillmentPolicyId)}`);
+    policyCache.set(draft.fulfillmentPolicyId, policyPromise);
+  }
+  const policy = await policyPromise;
+  const ownShippingCostCents = fulfillmentBuyerShippingCents(policy);
+  if (ownShippingCostCents === null) throw new Error("CardPilot could not determine the buyer-paid shipping charge for this listing.");
+  const marketIdentity = await marketIdentityContext(userId, card);
+  let learnedIds = [];
+  try {
+    learnedIds = (await cloudServices.marketFeedback?.learnedExclusions({
+      userId,
+      collectionId: card.collectionId,
+      source: "active_market",
+      targetTitle: card.title,
+    }))?.ids ?? [];
+  } catch { /* pricing can continue without learned exclusions */ }
+  const snapshot = await activeMarket.snapshot(card.fields, {
+    confirmedReferenceItemId: card.ebayReference?.itemId ?? null,
+    grading: card.grading,
+    valuationProfile: card.valuationProfile,
+    excludedObservationIds: learnedIds,
+    ...marketIdentity,
+  });
+  const position = deliveredPricePosition({
+    snapshot,
+    grading: card.grading,
+    ownListingId: draft.ebayListingId,
+    currentItemPriceCents: draft.priceCents,
+    ownShippingCostCents,
+    minimumPriceCents: preferences.autopilotMinimumPriceCents,
+    undercutCents: preferences.exactPriceUndercutCents,
+    currency: draft.currency,
+  });
+  if (!position) throw new Error("No compatible exact-card active listing with a delivered price was found.");
+  return { collectionId: card.collectionId, title: draft.title || card.title, listingId: draft.ebayListingId, ...position };
+}
+
+app.post("/api/ebay/listings/price-positioning", async (request, response) => {
+  try {
+    const input = EbayPricePositioningSchema.parse(request.body);
+    const userId = request.cardPilotUser.id;
+    const preferences = await cloudServices.preferences.get(userId);
+    const token = await ebaySellerAccessToken(userId);
+    const policyCache = new Map();
+    const results = [];
+    for (const collectionId of [...new Set(input.collectionIds)]) {
+      try {
+        const [card, draft] = await Promise.all([
+          collectionStore.get(userId, collectionId),
+          cloudServices.ebaySelling.draft(userId, collectionId),
+        ]);
+        if (!card) throw new Error("The saved card was not found.");
+        results.push({ ok: true, ...(await positioningForActiveListing(userId, card, draft, preferences, token, policyCache)) });
+      } catch (error) {
+        results.push({ ok: false, collectionId, error: error.message ?? "Price positioning could not be calculated." });
+      }
+    }
+    response.json({
+      undercutCents: preferences.exactPriceUndercutCents,
+      minimumPriceCents: preferences.autopilotMinimumPriceCents,
+      results,
+    });
+  } catch (error) {
+    response.status(error instanceof ZodError ? 400 : 502).json({ error: error.message ?? "CardPilot could not compare delivered prices." });
+  }
+});
+
+app.post("/api/ebay/listings/apply-price-positioning", async (request, response) => {
+  try {
+    const input = EbayApplyPositioningSchema.parse(request.body);
+    const userId = request.cardPilotUser.id;
+    const preferences = await cloudServices.preferences.get(userId);
+    const token = await ebaySellerAccessToken(userId);
+    const policyCache = new Map();
+    const drafts = await cloudServices.ebaySelling.drafts(userId);
+    const connection = await cloudServices.ebaySelling.connection(userId);
+    const engagement = await ebayEngagementForDrafts(userId, drafts, connection);
+    const results = [];
+    for (const requested of input.changes) {
+      try {
+        const [card, saved] = await Promise.all([
+          collectionStore.get(userId, requested.collectionId),
+          cloudServices.ebaySelling.draft(userId, requested.collectionId),
+        ]);
+        if (!card || !saved) throw new Error("The active listing was not found.");
+        if (saved.priceCents !== requested.expectedCurrentPriceCents) throw new Error("The live price changed after this review. Check its position again.");
+        const position = await positioningForActiveListing(userId, card, saved, preferences, token, policyCache);
+        if (!position.safeToReprice) throw new Error("The exact-card evidence is not strong enough for a live price change.");
+        if (!position.shouldLower || position.proposedItemPriceCents !== requested.proposedPriceCents) {
+          throw new Error("The market position changed after this review. Check it again before applying.");
+        }
+        const bulkResult = await ebaySelling.request(token, "/sell/inventory/v1/bulk_update_price_quantity", {
+          method: "POST",
+          body: { requests: [{
+            sku: `cardpilot-${card.collectionId}`,
+            shipToLocationAvailability: { quantity: 1 },
+            offers: [{
+              offerId: saved.ebayOfferId,
+              availableQuantity: 1,
+              price: { value: (position.proposedItemPriceCents / 100).toFixed(2), currency: saved.currency },
+            }],
+          }] },
+        });
+        const failed = bulkResult?.responses?.find((item) => Number(item.statusCode) >= 300 || item.errors?.length);
+        if (failed) throw new Error(failed.errors?.[0]?.message ?? "eBay could not apply the delivered-price change.");
+        const now = new Date().toISOString();
+        const editable = editableEbayDraft(saved);
+        const before = interventionMetrics(engagement.byListingId.get(String(saved.ebayListingId)), saved);
+        await cloudServices.ebaySelling.saveDraft(userId, card.collectionId, {
+          ...editable,
+          priceCents: position.proposedItemPriceCents,
+          automationRepricedAt: now,
+          automationReason: `Price changed to $${(position.proposedItemPriceCents / 100).toFixed(2)}, ${position.undercutCents}-cent exact delivered-price positioning applied.`,
+          automationUpdatedAt: now,
+          interventionHistory: appendIntervention(editable, {
+            id: randomUUID(),
+            type: "price_undercut",
+            source: "manual",
+            createdAt: now,
+            summary: `Changed from $${(saved.priceCents / 100).toFixed(2)} to $${(position.proposedItemPriceCents / 100).toFixed(2)} against the lowest exact delivered price.`,
+            before,
+            change: {
+              previousPriceCents: saved.priceCents,
+              priceCents: position.proposedItemPriceCents,
+              lowestCompetitorDeliveredPriceCents: position.lowestCompetitorDeliveredPriceCents,
+              ownShippingCostCents: position.ownShippingCostCents,
+              undercutCents: position.undercutCents,
+              exactMatchCount: position.exactMatchCount,
+              confidence: position.confidence,
+            },
+            outcomes: [],
+          }),
+        }, ebaySellEnvironment);
+        results.push({ ok: true, collectionId: card.collectionId, previousPriceCents: saved.priceCents, priceCents: position.proposedItemPriceCents });
+      } catch (error) {
+        results.push({ ok: false, collectionId: requested.collectionId, error: error.message ?? "The price could not be changed." });
+      }
+    }
+    response.status(results.some((result) => result.ok) ? 200 : 502).json({
+      updated: results.filter((result) => result.ok).length,
+      failed: results.filter((result) => !result.ok).length,
+      results,
+    });
+  } catch (error) {
+    response.status(error instanceof ZodError ? 400 : 502).json({ error: error.message ?? "CardPilot could not apply delivered-price changes." });
   }
 });
 
@@ -1946,6 +2323,7 @@ app.get("/api/collection", async (request, response) => {
     const userId = collectionUserId(request);
     const cards = await collectionStore.list(userId);
     const drafts = cloudServices ? await cloudServices.ebaySelling.drafts(userId) : [];
+    const buyerShippingByPolicy = cloudServices ? await buyerShippingForDrafts(userId, drafts) : new Map();
     const engagement = cloudServices
       ? await ebayEngagementForDrafts(userId, drafts)
       : { byListingId: new Map() };
@@ -1953,6 +2331,7 @@ app.get("/api/collection", async (request, response) => {
       status: draft.status, listingId: draft.ebayListingId ?? null,
       listingUrl: draft.ebayListingId ? `https://www.ebay.com/itm/${encodeURIComponent(draft.ebayListingId)}` : null,
       priceCents: draft.priceCents, currency: draft.currency,
+      buyerShippingCostCents: buyerShippingByPolicy.get(draft.fulfillmentPolicyId) ?? null,
       viewCount: engagement.byListingId.get(String(draft.ebayListingId))?.viewCount ?? null,
       impressionCount: engagement.byListingId.get(String(draft.ebayListingId))?.impressionCount ?? null,
       watcherCount: engagement.byListingId.get(String(draft.ebayListingId))?.watcherCount ?? null,

@@ -103,7 +103,16 @@ export function optimizedListingDetails(card, draft, definitions = [], { backAva
   };
 }
 
-export function listingHealth({ card, draft, definitions = [], engagement = {}, backAvailable = false, now = Date.now() }) {
+export const DEFAULT_LISTING_INTERVENTION_RULES = Object.freeze({
+  lowImpressionDays: 7,
+  lowImpressionCount: 25,
+  ctrMinimumImpressions: 100,
+  lowCtrPercent: 1,
+  viewsWithoutWatchers: 10,
+});
+
+export function listingHealth({ card, draft, definitions = [], engagement = {}, backAvailable = false, now = Date.now(), rules = DEFAULT_LISTING_INTERVENTION_RULES }) {
+  const thresholds = { ...DEFAULT_LISTING_INTERVENTION_RULES, ...rules };
   const optimized = optimizedListingDetails(card, draft, definitions, { backAvailable });
   const requiredAndRecommended = definitions.filter((definition) => definition.required || definition.recommended);
   const completedImportantAspects = requiredAndRecommended.filter((definition) =>
@@ -149,16 +158,16 @@ export function listingHealth({ card, draft, definitions = [], engagement = {}, 
     issues.push(`The listing price is ${Math.round(priceDifferencePercent * 100)}% above CardPilot's saved value.`);
     score -= 10;
   }
-  let diagnosis = ageDays < 1 ? "Collecting initial traffic" : "Traffic is developing";
-  if (ageDays >= 1 && impressions === 0) {
-    diagnosis = "Not being shown";
-    issues.push("eBay has reported no search impressions for this listing.");
+  let diagnosis = ageDays < thresholds.lowImpressionDays ? "Collecting initial traffic" : "Traffic is developing";
+  if (ageDays >= thresholds.lowImpressionDays && impressions !== null && impressions < thresholds.lowImpressionCount) {
+    diagnosis = "Not being shown enough";
+    issues.push(`After ${Math.floor(ageDays)} days, eBay has reported ${impressions} impression${impressions === 1 ? "" : "s"}; your account threshold is ${thresholds.lowImpressionCount}.`);
     score -= 28;
-  } else if (impressions !== null && impressions >= 20 && clickThroughRate !== null && clickThroughRate < 0.01) {
+  } else if (impressions !== null && impressions >= thresholds.ctrMinimumImpressions && clickThroughRate !== null && clickThroughRate < thresholds.lowCtrPercent / 100) {
     diagnosis = "Shown but rarely opened";
-    issues.push("The listing is appearing, but fewer than 1% of impressions become views.");
+    issues.push(`The listing is appearing, but fewer than ${thresholds.lowCtrPercent}% of impressions become views.`);
     score -= 20;
-  } else if (views !== null && views >= 5 && (watchers ?? 0) === 0) {
+  } else if (views !== null && views >= thresholds.viewsWithoutWatchers && (watchers ?? 0) === 0) {
     diagnosis = "Viewed but not gaining interest";
     issues.push("Buyers are opening the listing but have not watched it.");
     score -= 12;
@@ -169,7 +178,7 @@ export function listingHealth({ card, draft, definitions = [], engagement = {}, 
     optimized.changes.addBackImage,
   );
   const needsAttention = hasChanges || new Set([
-    "Not being shown",
+    "Not being shown enough",
     "Shown but rarely opened",
     "Viewed but not gaining interest",
   ]).has(diagnosis);

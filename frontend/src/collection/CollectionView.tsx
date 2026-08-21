@@ -51,6 +51,27 @@ type CollectionFilter =
   | "stale";
 type CollectionSort = "newest" | "oldest" | "value-high" | "value-low" | "title-az" | "title-za";
 
+type DeliveredPricePosition = {
+  ok: boolean;
+  collectionId: string;
+  title?: string;
+  error?: string;
+  currency?: string;
+  currentItemPriceCents?: number;
+  ownShippingCostCents?: number;
+  currentDeliveredPriceCents?: number;
+  lowestCompetitorDeliveredPriceCents?: number;
+  differenceCents?: number;
+  proposedItemPriceCents?: number;
+  proposedDeliveredPriceCents?: number;
+  exactMatchCount?: number;
+  confidence?: "low" | "medium" | "high";
+  safeToReprice?: boolean;
+  shouldLower?: boolean;
+  limitedByMinimum?: boolean;
+  lowestCompetitor?: { title: string; itemWebUrl: string | null };
+};
+
 function searchableText(card: SavedCollectionCard) {
   return Object.values(card.fields)
     .filter((value): value is string => typeof value === "string")
@@ -1390,6 +1411,11 @@ export function CollectionView({
   const [bulkValuationError, setBulkValuationError] = useState<string | null>(
     null,
   );
+  const [selectedPricePositionIds, setSelectedPricePositionIds] = useState<string[]>([]);
+  const [pricePositions, setPricePositions] = useState<DeliveredPricePosition[]>([]);
+  const [pricePositionBusy, setPricePositionBusy] = useState(false);
+  const [priceApplyBusy, setPriceApplyBusy] = useState(false);
+  const [pricePositionMessage, setPricePositionMessage] = useState<string | null>(null);
 
   const refreshCollectionAfterSelling = async () => {
     setSellingCard(null);
@@ -1399,6 +1425,68 @@ export function CollectionView({
       if (response.ok && payload?.cards) onCardsChange(payload.cards);
     } catch {
       // The next normal collection refresh will reconcile eBay lifecycle labels.
+    }
+  };
+
+  const checkDeliveredPricePositions = async (collectionIds = selectedPricePositionIds) => {
+    if (!collectionIds.length || pricePositionBusy || priceApplyBusy) return;
+    setPricePositionBusy(true);
+    setActionError(null);
+    setPricePositionMessage(null);
+    setPricePositions([]);
+    try {
+      const response = await fetch("/api/ebay/listings/price-positioning", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collectionIds }),
+      });
+      const payload = await response.json().catch(() => null) as { results?: DeliveredPricePosition[]; error?: string } | null;
+      if (!response.ok || !payload?.results) throw new Error(payload?.error ?? "CardPilot could not compare delivered prices.");
+      setSelectedPricePositionIds(collectionIds);
+      setPricePositions(payload.results);
+      window.requestAnimationFrame(() => document.getElementById("delivered-price-title")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "CardPilot could not compare delivered prices.");
+    } finally {
+      setPricePositionBusy(false);
+    }
+  };
+
+  const applicablePricePositions = pricePositions.filter((position) =>
+    position.ok && position.safeToReprice && position.shouldLower &&
+    position.currentItemPriceCents && position.proposedItemPriceCents,
+  );
+
+  const applyDeliveredPricePositions = async () => {
+    if (!applicablePricePositions.length || priceApplyBusy) return;
+    setPriceApplyBusy(true);
+    setActionError(null);
+    setPricePositionMessage(null);
+    try {
+      const response = await fetch("/api/ebay/listings/apply-price-positioning", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          confirmation: "APPLY_EXACT_DELIVERED_PRICE_CHANGES",
+          changes: applicablePricePositions.map((position) => ({
+            collectionId: position.collectionId,
+            expectedCurrentPriceCents: position.currentItemPriceCents,
+            proposedPriceCents: position.proposedItemPriceCents,
+          })),
+        }),
+      });
+      const payload = await response.json().catch(() => null) as { updated?: number; failed?: number; error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error ?? "CardPilot could not apply the reviewed prices.");
+      setPricePositionMessage(`${payload?.updated ?? 0} active listing${payload?.updated === 1 ? " was" : "s were"} repriced${payload?.failed ? `; ${payload.failed} need another review` : ""}.`);
+      setPricePositions([]);
+      setSelectedPricePositionIds([]);
+      const collectionResponse = await fetch("/api/collection");
+      const collectionPayload = await collectionResponse.json().catch(() => null) as { cards?: SavedCollectionCard[] } | null;
+      if (collectionResponse.ok && collectionPayload?.cards) onCardsChange(collectionPayload.cards);
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "CardPilot could not apply the reviewed prices.");
+    } finally {
+      setPriceApplyBusy(false);
     }
   };
 
@@ -1416,6 +1504,10 @@ export function CollectionView({
       Array.from(
         new Set(cards.map((card) => cardCategoryLabel(card.fields))),
       ).sort(),
+    [cards],
+  );
+  const activeListingCards = useMemo(
+    () => cards.filter((card) => card.selling?.status === "published"),
     [cards],
   );
 
@@ -2578,6 +2670,45 @@ export function CollectionView({
       </div>
       <p className="collection-summary-note">Potential profit estimates subtract an illustrative 13.25% eBay fee plus $0.30 per sale and any active promotion rate. Card cost, shipping, taxes, returns, and other expenses are not included.</p>
       <div className="ebay-queue-launch"><div><strong>eBay listings and drafts</strong><span>See drafts, scheduled listings, active listings, ended listings, and synchronized sales.</span></div><button type="button" onClick={() => setListingQueueOpen(true)}>Open Listings and drafts</button></div>
+      {activeListingCards.length > 0 && <section className="collection-price-positioning" aria-labelledby="delivered-price-title">
+        <div>
+          <span>Exact-card delivered pricing</span>
+          <strong id="delivered-price-title">Compare item price plus buyer-paid shipping</strong>
+          <small>CardPilot excludes your own listing and proposes a price below the lowest compatible exact-card delivered price. Nothing changes on eBay until you review and apply it.</small>
+        </div>
+        <div className="collection-price-positioning-actions">
+          <button type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => {
+            const allIds = activeListingCards.slice(0, 20).map((card) => card.collectionId);
+            setSelectedPricePositionIds(selectedPricePositionIds.length === allIds.length ? [] : allIds);
+            setPricePositions([]);
+          }}>{selectedPricePositionIds.length === Math.min(20, activeListingCards.length) ? "Clear selected" : "Select all active listings"}</button>
+          <strong>{selectedPricePositionIds.length} selected</strong>
+          <button type="button" disabled={!selectedPricePositionIds.length || pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions()}>{pricePositionBusy ? "Checking exact matches..." : "Check selected price positions"}</button>
+          <a className="button-link" href="https://www.ebay.com/sh/lst/active" target="_blank" rel="noreferrer">Open eBay eligible offers</a>
+        </div>
+        <small>eBay determines which watchers and cart shoppers are eligible for private offers. Use the Send offers — eligible filter after opening Seller Hub.</small>
+        {pricePositions.length > 0 && <div className="collection-price-review">
+          <div><strong>Review delivered-price positions</strong><small>{applicablePricePositions.length} safe price change{applicablePricePositions.length === 1 ? "" : "s"} available.</small></div>
+          <ul>{pricePositions.map((position) => <li className={position.ok ? "" : "unavailable"} key={position.collectionId}>
+            <strong>{position.title ?? cards.find((card) => card.collectionId === position.collectionId)?.title ?? "Active listing"}</strong>
+            {!position.ok ? <span>{position.error}</span> : <>
+              <span>Your delivered price: {formatPrice(position.currentDeliveredPriceCents ?? 0, position.currency ?? "USD")}</span>
+              <span>Lowest exact delivered price: {formatPrice(position.lowestCompetitorDeliveredPriceCents ?? 0, position.currency ?? "USD")}</span>
+              <span className={(position.differenceCents ?? 0) > 0 ? "price-above" : "price-below"}>{(position.differenceCents ?? 0) > 0 ? `${formatPrice(position.differenceCents ?? 0, position.currency ?? "USD")} above` : `${formatPrice(Math.abs(position.differenceCents ?? 0), position.currency ?? "USD")} below`} the lowest exact match</span>
+              <span>Proposed item price: {formatPrice(position.proposedItemPriceCents ?? 0, position.currency ?? "USD")} + {formatPrice(position.ownShippingCostCents ?? 0, position.currency ?? "USD")} buyer shipping</span>
+              <small>{position.exactMatchCount} exact match{position.exactMatchCount === 1 ? "" : "es"} · {position.confidence} confidence{position.limitedByMinimum ? " · limited by your account minimum" : ""}</small>
+              {position.lowestCompetitor?.itemWebUrl && <a href={position.lowestCompetitor.itemWebUrl} target="_blank" rel="noreferrer">Inspect lowest matching listing</a>}
+              {!position.safeToReprice && <small>Shown for reference only. CardPilot will not change the live price until the evidence is stronger.</small>}
+              {position.safeToReprice && !position.shouldLower && <small>Your listing is already at or below the proposed position.</small>}
+            </>}
+          </li>)}</ul>
+          <div className="collection-price-review-actions">
+            <button className="primary-action" type="button" disabled={!applicablePricePositions.length || priceApplyBusy} onClick={() => void applyDeliveredPricePositions()}>{priceApplyBusy ? "Applying reviewed prices..." : `Apply ${applicablePricePositions.length} reviewed price${applicablePricePositions.length === 1 ? "" : "s"} to eBay`}</button>
+            <button type="button" disabled={priceApplyBusy} onClick={() => setPricePositions([])}>Close review</button>
+          </div>
+        </div>}
+        {pricePositionMessage && <p role="status">{pricePositionMessage}</p>}
+      </section>}
 
       {(bulkRefreshing || bulkValuationResults.length > 0) && (
         <BulkValuationReview
@@ -2961,9 +3092,14 @@ export function CollectionView({
                       <div className="collection-card-value">
                         <div><span>eBay status</span><strong>{card.selling.status === "published" ? "Active" : card.selling.status[0].toUpperCase() + card.selling.status.slice(1)}</strong></div>
                         {isDetailsExpanded && card.selling.status === "published" && card.selling.publishedAt && <small>Active since {new Date(card.selling.publishedAt).toLocaleString()}</small>}
+                        {card.selling.status === "published" && <small>{card.selling.buyerShippingCostCents === null ? `Buyer total unavailable until eBay returns shipping (${formatPrice(card.selling.priceCents, card.selling.currency)} item price)` : `Buyer total: ${formatPrice(card.selling.priceCents + card.selling.buyerShippingCostCents, card.selling.currency)} (${formatPrice(card.selling.priceCents, card.selling.currency)} item + ${formatPrice(card.selling.buyerShippingCostCents, card.selling.currency)} shipping)`}</small>}
                         {isDetailsExpanded && card.selling.status === "published" && (card.selling.viewCount != null || card.selling.watcherCount != null) && <small>{card.selling.viewCount ?? "—"} views · {card.selling.watcherCount ?? "—"} watchers{card.selling.impressionCount != null ? ` · ${card.selling.impressionCount} impressions` : ""}</small>}
                         {isDetailsExpanded && card.selling.status === "sold" && card.selling.soldAmountCents !== null && <small>Sold for {formatPrice(card.selling.soldAmountCents, card.selling.soldCurrency ?? "USD")}</small>}
                         {isDetailsExpanded && card.selling.listingUrl && <a href={card.selling.listingUrl} target="_blank" rel="noreferrer">View on eBay</a>}
+                        {card.selling.status === "published" && <label className="collection-price-select"><input type="checkbox" checked={selectedPricePositionIds.includes(card.collectionId)} disabled={pricePositionBusy || priceApplyBusy} onChange={() => {
+                          setPricePositions([]);
+                          setSelectedPricePositionIds((current) => current.includes(card.collectionId) ? current.filter((id) => id !== card.collectionId) : [...current, card.collectionId].slice(0, 20));
+                        }} /> {selectedPricePositionIds.includes(card.collectionId) ? "Selected for delivered-price review" : "Select for delivered-price review"}</label>}
                       </div>
                     )}
                     <button
@@ -3027,6 +3163,11 @@ export function CollectionView({
                       >
                         {ebayCardActionLabel(card)}
                       </button>
+                      {card.selling?.status === "published" && <button
+                        type="button"
+                        disabled={pricePositionBusy || priceApplyBusy || marketBusy || soldBusy || valuationBusy}
+                        onClick={() => void checkDeliveredPricePositions([card.collectionId])}
+                      >{pricePositionBusy && selectedPricePositionIds.includes(card.collectionId) ? "Checking price..." : "Compare delivered price"}</button>}
                       <button
                         type="button"
                         disabled={

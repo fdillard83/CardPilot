@@ -35,6 +35,20 @@ export const EbayListingDraftSchema = z.object({
   automationUpdatedAt: z.string().datetime().nullable().default(null),
   automationRepricedAt: z.string().datetime().nullable().default(null),
   automationOriginalPriceCents: z.number().int().min(1).max(100_000_000).nullable().default(null),
+  interventionHistory: z.array(z.object({
+    id: z.string().min(1).max(100),
+    type: z.enum(["price_undercut", "listing_optimization", "promotion"]),
+    source: z.enum(["manual", "automatic"]),
+    createdAt: z.string().datetime(),
+    summary: z.string().min(1).max(500),
+    before: z.record(z.string(), z.unknown()).default({}),
+    change: z.record(z.string(), z.unknown()).default({}),
+    outcomes: z.array(z.object({
+      days: z.union([z.literal(3), z.literal(7), z.literal(14)]),
+      capturedAt: z.string().datetime(),
+      metrics: z.record(z.string(), z.unknown()),
+    }).strict()).max(3).default([]),
+  }).strict()).max(100).default([]),
 }).strict().superRefine((draft, context) => {
   if (draft.listingFormat === "AUCTION" && draft.auctionReservePriceCents > 0 && draft.auctionReservePriceCents <= draft.auctionStartPriceCents) {
     context.addIssue({ code: "custom", path: ["auctionReservePriceCents"], message: "The reserve price must be higher than the starting bid." });

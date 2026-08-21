@@ -705,6 +705,7 @@ export type SavedCollectionCard = {
       listingUrl: string | null;
       priceCents: number;
       currency: string;
+      buyerShippingCostCents: number | null;
       viewCount: number | null;
       impressionCount: number | null;
       watcherCount: number | null;

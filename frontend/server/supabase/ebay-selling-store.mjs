@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { EbayListingDraftSchema } from "../ebay/selling.mjs";
+import { aggregateInterventionLearning } from "../ebay/intervention-learning.mjs";
 
 function dbError(operation, error) {
   const wrapped = new Error(`Supabase ${operation} failed.`);
@@ -33,6 +34,12 @@ export class SupabaseEbaySellingStore {
     const { data, error } = await this.client.from("ebay_seller_connections").select("user_id").eq("environment", environment);
     if (error) throw dbError("eBay connections read", error);
     return data ?? [];
+  }
+
+  async interventionLearning(userId) {
+    const { data, error } = await this.client.from("ebay_listing_drafts").select("user_id,draft");
+    if (error) throw dbError("eBay intervention learning read", error);
+    return aggregateInterventionLearning(data ?? [], userId);
   }
 
   async draft(userId, collectionId) {

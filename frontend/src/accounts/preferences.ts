@@ -6,6 +6,13 @@ export type AccountPreferences = {
   autoRepriceEnabled: boolean;
   autoRepriceAfterDays: number;
   autoRepriceFloorPercent: number;
+  autoListingOptimizationEnabled: boolean;
+  exactPriceUndercutCents: number;
+  listingLowImpressionDays: number;
+  listingLowImpressionCount: number;
+  listingCtrMinimumImpressions: number;
+  listingLowCtrPercent: number;
+  listingViewsWithoutWatchers: number;
   autoValueEnabled: boolean;
   autoValueMaxCents: number | null;
   ebayConnectPromptDismissed: boolean;
@@ -29,6 +36,13 @@ export const defaultAccountPreferences: AccountPreferences = {
   autoRepriceEnabled: false,
   autoRepriceAfterDays: 14,
   autoRepriceFloorPercent: 90,
+  autoListingOptimizationEnabled: false,
+  exactPriceUndercutCents: 5,
+  listingLowImpressionDays: 7,
+  listingLowImpressionCount: 25,
+  listingCtrMinimumImpressions: 100,
+  listingLowCtrPercent: 1,
+  listingViewsWithoutWatchers: 10,
   autoValueEnabled: false,
   autoValueMaxCents: null,
   ebayConnectPromptDismissed: false,

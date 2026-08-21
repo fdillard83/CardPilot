@@ -389,6 +389,28 @@
   width: fit-content;
 }
 
+.account-rule-heading {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.account-rule-heading small,
+.account-settings-form label > small {
+  color: var(--muted);
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.account-inline-unit {
+  display: grid;
+  grid-template-columns: minmax(90px, 180px) auto;
+  align-items: center;
+  gap: 9px;
+}
+
 .account-inline-error,
 .account-inline-success {
   display: block;
@@ -2592,6 +2614,22 @@ main {
 .ebay-queue-launch { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 14px 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-soft); }
 .ebay-queue-launch div { display: grid; gap: 4px; }
 .ebay-queue-launch span { color: var(--muted); font-size: 12px; }
+.collection-price-positioning { display: grid; gap: 12px; margin: 14px 0 20px; padding: 16px; border: 1px solid rgba(121, 201, 255, .28); border-radius: 15px; background: rgba(121, 201, 255, .055); }
+.collection-price-positioning > div:first-child { display: grid; gap: 4px; }
+.collection-price-positioning > div:first-child > span { color: #a9dcff; font-size: 10px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+.collection-price-positioning small, .collection-price-positioning p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.collection-price-positioning-actions, .collection-price-review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.collection-price-positioning-actions > strong { font-size: 12px; }
+.collection-price-review { display: grid; gap: 12px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: rgba(3, 10, 7, .44); }
+.collection-price-review > div:first-child { display: grid; gap: 3px; }
+.collection-price-review ul { display: grid; gap: 8px; max-height: 420px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.collection-price-review li { display: grid; gap: 3px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+.collection-price-review li > span, .collection-price-review li > a { font-size: 10px; }
+.collection-price-review li.unavailable { border-color: rgba(255, 112, 92, .28); }
+.collection-price-review .price-above { color: #ffd76b; font-weight: 800; }
+.collection-price-review .price-below { color: var(--lime); font-weight: 800; }
+.collection-price-select { display: flex; align-items: center; gap: 6px; margin-top: 5px; color: #a9dcff; font-size: 10px; font-weight: 800; }
+.collection-price-select input { width: 16px; height: 16px; }
 .ebay-environment-guard { display: grid; gap: 4px; margin: 16px 0; padding: 14px; border-radius: 12px; }
 .ebay-environment-guard.sandbox { background: rgba(98, 170, 255, .12); border: 1px solid rgba(98, 170, 255, .32); }
 .ebay-environment-guard.production { background: rgba(255, 174, 75, .12); border: 1px solid rgba(255, 174, 75, .4); }
@@ -2603,6 +2641,9 @@ main {
 .ebay-queue-tabs { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0; }
 .ebay-queue-tabs button { padding: 7px 10px; border-radius: 999px; }
 .ebay-queue-tabs button.active { color: var(--panel); background: var(--lime); border-color: var(--lime); }
+.ebay-learning-summary { display: grid; gap: 6px; margin: 0 0 12px; padding: 12px 14px; border: 1px solid rgba(183, 238, 79, .22); border-radius: 12px; background: rgba(183, 238, 79, .045); }
+.ebay-learning-summary div { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.ebay-learning-summary span, .ebay-learning-summary small { color: var(--muted); font-size: 10px; }
 .ebay-queue-list article { display: grid; grid-template-columns: 72px 1fr auto; align-items: center; gap: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; }
 .ebay-queue-list img { width: 72px; height: 96px; object-fit: contain; border-radius: 7px; background: #fff; }
 .ebay-queue-list article > div { display: grid; gap: 4px; min-width: 0; }
@@ -2637,6 +2678,13 @@ main {
 .ebay-title-preview strong { font-size: 11px; line-height: 1.35; }
 .ebay-health-meta { display: flex !important; flex-wrap: wrap; gap: 5px 10px !important; margin-top: 4px; }
 .ebay-optimize-select { display: flex; align-items: center; gap: 6px; margin-top: 5px; color: #a9dcff; font-size: 10px; font-weight: 800; }
+.ebay-intervention-history { margin-top: 7px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 9px; }
+.ebay-intervention-history summary { cursor: pointer; color: #a9dcff; font-size: 10px; font-weight: 800; }
+.ebay-intervention-history ul { display: grid; gap: 7px; margin: 8px 0 0; padding: 0; list-style: none; }
+.ebay-intervention-history li { display: grid; gap: 2px; padding-top: 7px; border-top: 1px solid var(--line); }
+.ebay-intervention-history li:first-child { padding-top: 0; border-top: 0; }
+.ebay-intervention-history li strong { font-size: 10px; }
+.ebay-intervention-history li span, .ebay-intervention-history li small { color: var(--muted); font-size: 9px; }
 
 .admin-feedback-section {
   display: grid;

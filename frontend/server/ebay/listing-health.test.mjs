@@ -55,14 +55,25 @@ test("health separates missing exposure from weak click-through", () => {
       title: optimizedListingTitle(card),
       aspects: {},
       listingImages: ["front"],
-      publishedAt: "2026-08-18T12:00:00Z",
+      publishedAt: "2026-08-10T12:00:00Z",
     },
   };
   const notShown = listingHealth({ ...base, engagement: { impressionCount: 0, viewCount: 0, watcherCount: 0 } });
-  assert.equal(notShown.diagnosis, "Not being shown");
+  assert.equal(notShown.diagnosis, "Not being shown enough");
   assert.equal(notShown.hasChanges, false);
   assert.equal(notShown.needsAttention, true);
   const clicked = listingHealth({ ...base, engagement: { impressionCount: 200, viewCount: 1, watcherCount: 0 } });
   assert.equal(clicked.diagnosis, "Shown but rarely opened");
   assert.equal(clicked.clickThroughRate, 0.005);
+});
+
+test("health uses account-specific traffic thresholds", () => {
+  const result = listingHealth({
+    card,
+    draft: { title: optimizedListingTitle(card), aspects: {}, listingImages: ["front"], publishedAt: "2026-08-18T12:00:00Z" },
+    engagement: { impressionCount: 30, viewCount: 1, watcherCount: 0 },
+    now: Date.parse("2026-08-20T12:00:00Z"),
+    rules: { lowImpressionDays: 2, lowImpressionCount: 40, ctrMinimumImpressions: 100, lowCtrPercent: 1, viewsWithoutWatchers: 10 },
+  });
+  assert.equal(result.diagnosis, "Not being shown enough");
 });
