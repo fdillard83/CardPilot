@@ -2688,19 +2688,14 @@ export function CollectionView({
           <small>CardPilot compares the full amount a buyer pays: item price plus shipping. The default target is 5¢ below; your saved Account setting controls the exact amount. CardPilot changes only the item price—your eBay shipping charge and shipping policy stay exactly as they are.</small>
         </div>
         <div className="collection-price-positioning-actions">
-          <button type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => {
-            const allIds = activeListingCards.slice(0, 20).map((card) => card.collectionId);
-            setSelectedPricePositionIds(selectedPricePositionIds.length === allIds.length ? [] : allIds);
-            setPricePositions([]);
-            setSelectedPriceApplyIds([]);
-          }}>{selectedPricePositionIds.length === Math.min(20, activeListingCards.length) ? "Clear card selection" : "Select all active cards"}</button>
-          <strong>{selectedPricePositionIds.length} card{selectedPricePositionIds.length === 1 ? "" : "s"} selected</strong>
-          <button type="button" disabled={!selectedPricePositionIds.length || pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions()}>{pricePositionBusy ? "Finding exact matches..." : `Compare ${selectedPricePositionIds.length || "selected"} card${selectedPricePositionIds.length === 1 ? "" : "s"}`}</button>
+          <button className="primary-action" type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions(activeListingCards.map((card) => card.collectionId))}>{pricePositionBusy ? "Finding exact matches..." : `Compare all ${activeListingCards.length} active listing${activeListingCards.length === 1 ? "" : "s"}`}</button>
+          {selectedPricePositionIds.length > 0 && <button type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions()}>{`Compare only ${selectedPricePositionIds.length} selected below`}</button>}
+          {selectedPricePositionIds.length > 0 && <button type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => { setSelectedPricePositionIds([]); setPricePositions([]); setSelectedPriceApplyIds([]); }}>Clear selected subset</button>}
           <a className="button-link" href="https://www.ebay.com/sh/lst/active" target="_blank" rel="noreferrer">Open eBay eligible offers</a>
         </div>
-        {pricePositions.length === 0 && <small>Select cards from your collection below, or select all active cards here. Comparing prices does not change anything on eBay.</small>}
+        {pricePositions.length === 0 && <small>Compare every active listing with one click, or select individual cards below for a smaller comparison. Comparing prices does not change anything on eBay.</small>}
         {pricePositions.length > 0 && <div className="collection-price-review">
-          <div><strong>Choose the changes to send to eBay</strong><small>Only checked cards will change. {selectedApplicablePricePositions.length} of {applicablePricePositions.length} available price changes selected.</small></div>
+          <div><strong>Choose the changes to send to eBay</strong><small>Available changes start checked. Uncheck any card you do not want repriced. Only the remaining checked cards will change. {selectedApplicablePricePositions.length} of {applicablePricePositions.length} selected.</small></div>
           {applicablePricePositions.length > 0 && <div className="collection-price-review-selection">
             <button type="button" disabled={priceApplyBusy} onClick={() => setSelectedPriceApplyIds(applicablePricePositions.map((position) => position.collectionId))}>Check all available</button>
             <button type="button" disabled={priceApplyBusy || selectedApplicablePricePositions.length === 0} onClick={() => setSelectedPriceApplyIds([])}>Uncheck all</button>
@@ -3127,7 +3122,7 @@ export function CollectionView({
                         {card.selling.status === "published" && <label className="collection-price-select"><input type="checkbox" checked={selectedPricePositionIds.includes(card.collectionId)} disabled={pricePositionBusy || priceApplyBusy} onChange={() => {
                           setPricePositions([]);
                           setSelectedPriceApplyIds([]);
-                          setSelectedPricePositionIds((current) => current.includes(card.collectionId) ? current.filter((id) => id !== card.collectionId) : [...current, card.collectionId].slice(0, 20));
+                          setSelectedPricePositionIds((current) => current.includes(card.collectionId) ? current.filter((id) => id !== card.collectionId) : [...current, card.collectionId].slice(0, 500));
                         }} /> {selectedPricePositionIds.includes(card.collectionId) ? "Selected for delivered-price review" : "Select for delivered-price review"}</label>}
                       </div>
                     )}

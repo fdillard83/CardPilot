@@ -1542,7 +1542,7 @@ async function promoteEbayListing(token, listingId, collectionId, adRatePercent)
 }
 
 const EbayActiveOptimizationSchema = z.object({
-  collectionIds: z.array(z.string().min(1).max(100)).min(1).max(100),
+  collectionIds: z.array(z.string().min(1).max(100)).min(1).max(500),
   promoteListings: z.boolean().default(false),
   promotionAdRatePercent: z.number().min(1).max(100).default(2),
   confirmation: z.literal("OPTIMIZE_ACTIVE_LISTINGS"),
@@ -1746,7 +1746,7 @@ app.post("/api/ebay/listings/optimize", async (request, response) => {
 });
 
 const EbayPricePositioningSchema = z.object({
-  collectionIds: z.array(z.string().min(1).max(100)).min(1).max(20),
+  collectionIds: z.array(z.string().min(1).max(100)).min(1).max(100),
 }).strict();
 
 const EbayApplyPositioningSchema = z.object({
@@ -1754,7 +1754,7 @@ const EbayApplyPositioningSchema = z.object({
     collectionId: z.string().min(1).max(100),
     expectedCurrentPriceCents: z.number().int().min(1).max(100_000_000),
     proposedPriceCents: z.number().int().min(1).max(100_000_000),
-  }).strict()).min(1).max(20),
+  }).strict()).min(1).max(500),
   confirmation: z.literal("APPLY_EXACT_DELIVERED_PRICE_CHANGES"),
 }).strict();
 
