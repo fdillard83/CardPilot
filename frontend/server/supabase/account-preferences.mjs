@@ -43,7 +43,7 @@ export const AccountPreferencesSchema = z
       pricingStrategy: z.enum(["sell_faster", "balanced", "maximize_value"]),
       sellFasterBelowCents: z.number().int().min(1).max(100_000_000).nullable(),
       promoteListings: z.boolean(),
-      promotionAdRatePercent: z.number().min(1).max(100),
+      promotionAdRatePercent: z.number().int().min(1).max(50),
     }).strict(),
   })
   .strict()

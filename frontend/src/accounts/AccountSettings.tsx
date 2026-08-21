@@ -65,7 +65,9 @@ export function AccountSettings({
       : (preferences.ebaySellingDefaults.sellFasterBelowCents / 100).toFixed(2),
   );
   const [promoteListings, setPromoteListings] = useState(preferences.ebaySellingDefaults.promoteListings);
-  const [promotionAdRate, setPromotionAdRate] = useState(String(preferences.ebaySellingDefaults.promotionAdRatePercent));
+  const [promotionAdRate, setPromotionAdRate] = useState(String(
+    Math.min(50, Math.max(1, Math.round(preferences.ebaySellingDefaults.promotionAdRatePercent))),
+  ));
   const [ebayStatus, setEbayStatus] = useState<EbayConnectionStatus | null>(null);
   const [ebayBusy, setEbayBusy] = useState(false);
   const [ebayError, setEbayError] = useState<string | null>(null);
@@ -120,8 +122,8 @@ export function AccountSettings({
       setPreferenceError("Enter a valid low-value quick-sale limit or leave it blank.");
       return;
     }
-    if (promoteListings && (!Number.isFinite(adRate) || adRate < 1 || adRate > 100)) {
-      setPreferenceError("Choose an eBay promotion ad rate from 1% through 100%.");
+    if (promoteListings && (!Number.isInteger(adRate) || adRate < 1 || adRate > 50)) {
+      setPreferenceError("Choose a whole-number eBay promotion ad rate from 1% through 50%.");
       return;
     }
     if (!Number.isFinite(minimumConfidence) || minimumConfidence < 0.8 || minimumConfidence > 1) {
@@ -468,7 +470,9 @@ export function AccountSettings({
                 </label>
                 {promoteListings && <label>
                   Promoted Listings ad rate
-                  <input type="number" min="1" max="100" step="0.1" value={promotionAdRate} onChange={(event) => setPromotionAdRate(event.target.value)} />
+                  <select value={promotionAdRate} onChange={(event) => setPromotionAdRate(event.target.value)}>
+                    {Array.from({ length: 50 }, (_, index) => index + 1).map((rate) => <option key={rate} value={rate}>{rate}%</option>)}
+                  </select>
                   <small>Percent of the sale charged by eBay when a promoted interaction receives sale attribution.</small>
                 </label>}
                 <label className="account-toggle-row">

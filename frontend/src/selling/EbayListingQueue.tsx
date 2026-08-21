@@ -212,7 +212,7 @@ export function EbayListingQueue({ cards, onOpenDraft, onClose }: {
               <label className="ebay-promotion-choice"><input type="checkbox" checked={promoteOptimized} disabled={optimizationBusy} onChange={(event) => setPromoteOptimized(event.target.checked)} /> Add eBay promotion to these listings</label>
               {promoteOptimized && <label className="ebay-promotion-rate">Promotion rate
                 <select value={promotionAdRate} disabled={optimizationBusy} onChange={(event) => setPromotionAdRate(Number(event.target.value))}>
-                  {Array.from({ length: 20 }, (_, index) => index + 1).map((rate) => <option value={rate} key={rate}>{rate}%</option>)}
+                  {Array.from({ length: 50 }, (_, index) => index + 1).map((rate) => <option value={rate} key={rate}>{rate}%</option>)}
                 </select>
               </label>}
             </> : <small>Promotion is unavailable until the one-time eBay permission update is complete.</small>}
