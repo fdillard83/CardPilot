@@ -48,6 +48,31 @@ function texturedCardPhoto() {
   return { data, width, height, corners };
 }
 
+function roundedCardPhoto() {
+  const width = 270;
+  const height = 300;
+  const bounds = { left: 49, top: 28, right: 221, bottom: 270 };
+  const radius = 18;
+  const data = new Uint8ClampedArray(width * height * 4);
+  const insideRoundedCard = (x, y) => {
+    if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) return false;
+    const nearestX = Math.max(bounds.left + radius, Math.min(bounds.right - radius, x));
+    const nearestY = Math.max(bounds.top + radius, Math.min(bounds.bottom - radius, y));
+    return Math.hypot(x - nearestX, y - nearestY) <= radius;
+  };
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      const inside = insideRoundedCard(x, y);
+      data[index] = inside ? 238 : 94;
+      data[index + 1] = inside ? 220 - (x % 17) : 72;
+      data[index + 2] = inside ? 166 + (y % 21) : 56;
+      data[index + 3] = 255;
+    }
+  }
+  return { data, width, height, bounds };
+}
+
 test("finds and straightens a card on a textured 3:4 camera background", () => {
   const fixture = texturedCardPhoto();
   const detection = detectCardBoundary(fixture.data, fixture.width, fixture.height);
@@ -78,4 +103,27 @@ test("does not invent a card boundary on a textured background alone", () => {
     detectCardBoundary(fixture.data, fixture.width, fixture.height),
     null,
   );
+});
+
+test("infers square edge intersections behind rounded trading-card corners", () => {
+  const fixture = roundedCardPhoto();
+  const detection = detectCardBoundary(fixture.data, fixture.width, fixture.height);
+  assert.ok(detection);
+  const expected = [
+    { x: fixture.bounds.left, y: fixture.bounds.top },
+    { x: fixture.bounds.right, y: fixture.bounds.top },
+    { x: fixture.bounds.right, y: fixture.bounds.bottom },
+    { x: fixture.bounds.left, y: fixture.bounds.bottom },
+  ];
+  for (let index = 0; index < expected.length; index += 1) {
+    assert.ok(
+      Math.hypot(
+        detection.corners[index].x - expected[index].x,
+        detection.corners[index].y - expected[index].y,
+      ) < 7,
+      `corner ${index}: ${JSON.stringify(detection.corners[index])}`,
+    );
+  }
+  assert.ok(detection.metrics.oppositeWidthBalance > 0.97);
+  assert.ok(detection.metrics.oppositeHeightBalance > 0.97);
 });

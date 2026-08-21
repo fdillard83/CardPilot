@@ -137,7 +137,7 @@ function morphMask(
 function largestComponent(mask: Uint8Array, width: number, height: number) {
   const visited = new Uint8Array(mask.length);
   const queue = new Int32Array(mask.length);
-  let best: { count: number; corners: CardBoundaryQuad } | null = null;
+  let best: { count: number; corners: CardBoundaryQuad; pixels: number[] } | null = null;
 
   for (let start = 0; start < mask.length; start += 1) {
     if (!mask[start] || visited[start]) continue;
@@ -146,6 +146,7 @@ function largestComponent(mask: Uint8Array, width: number, height: number) {
     queue[tail++] = start;
     visited[start] = 1;
     let count = 0;
+    const pixels: number[] = [];
     let topLeft = { x: width, y: height };
     let topRight = { x: 0, y: height };
     let bottomRight = { x: 0, y: 0 };
@@ -162,6 +163,7 @@ function largestComponent(mask: Uint8Array, width: number, height: number) {
       const sum = x + y;
       const difference = x - y;
       count += 1;
+      pixels.push(index);
       if (sum < minimumSum) {
         minimumSum = sum;
         topLeft = { x, y };
@@ -200,10 +202,126 @@ function largestComponent(mask: Uint8Array, width: number, height: number) {
       best = {
         count,
         corners: [topLeft, topRight, bottomRight, bottomLeft],
+        pixels,
       };
     }
   }
   return best;
+}
+
+function boundaryPoints(
+  pixels: number[],
+  mask: Uint8Array,
+  width: number,
+  height: number,
+) {
+  return pixels.flatMap((index) => {
+    const x = index % width;
+    const y = Math.floor(index / width);
+    if (x === 0 || y === 0 || x === width - 1 || y === height - 1) return [{ x, y }];
+    return !mask[index - 1] || !mask[index + 1] || !mask[index - width] || !mask[index + width]
+      ? [{ x, y }]
+      : [];
+  });
+}
+
+type FittedLine = { point: CardBoundaryPoint; direction: CardBoundaryPoint };
+
+function fitStraightEdge(
+  points: CardBoundaryPoint[],
+  start: CardBoundaryPoint,
+  end: CardBoundaryPoint,
+  center: CardBoundaryPoint,
+): FittedLine | null {
+  const edgeX = end.x - start.x;
+  const edgeY = end.y - start.y;
+  const edgeLength = Math.hypot(edgeX, edgeY);
+  if (edgeLength < 8) return null;
+  const direction = { x: edgeX / edgeLength, y: edgeY / edgeLength };
+  let outward = { x: -direction.y, y: direction.x };
+  if ((center.x - start.x) * outward.x + (center.y - start.y) * outward.y > 0) {
+    outward = { x: -outward.x, y: -outward.y };
+  }
+  const candidates = points.flatMap((point) => {
+    const relativeX = point.x - start.x;
+    const relativeY = point.y - start.y;
+    const along = (relativeX * direction.x + relativeY * direction.y) / edgeLength;
+    const normalDistance = Math.abs(relativeX * outward.x + relativeY * outward.y);
+    return along >= 0.14 && along <= 0.86 && normalDistance <= Math.max(7, edgeLength * 0.075)
+      ? [{ point, outwardDistance: point.x * outward.x + point.y * outward.y }]
+      : [];
+  });
+  if (candidates.length < 5) return null;
+  const outermost = Math.max(...candidates.map((candidate) => candidate.outwardDistance));
+  const edgePoints = candidates
+    .filter((candidate) => candidate.outwardDistance >= outermost - 2.25)
+    .map((candidate) => candidate.point);
+  if (edgePoints.length < 4) return null;
+
+  const average = edgePoints.reduce(
+    (total, point) => ({ x: total.x + point.x / edgePoints.length, y: total.y + point.y / edgePoints.length }),
+    { x: 0, y: 0 },
+  );
+  const covariance = edgePoints.reduce(
+    (total, point) => {
+      const x = point.x - average.x;
+      const y = point.y - average.y;
+      return { xx: total.xx + x * x, xy: total.xy + x * y, yy: total.yy + y * y };
+    },
+    { xx: 0, xy: 0, yy: 0 },
+  );
+  const angle = 0.5 * Math.atan2(2 * covariance.xy, covariance.xx - covariance.yy);
+  let fittedDirection = { x: Math.cos(angle), y: Math.sin(angle) };
+  if (fittedDirection.x * direction.x + fittedDirection.y * direction.y < 0) {
+    fittedDirection = { x: -fittedDirection.x, y: -fittedDirection.y };
+  }
+  // Fitting only the straight middle section recovers the tangent intersection
+  // hidden behind a rounded corner without allowing the curve to invent skew.
+  return { point: average, direction: fittedDirection };
+}
+
+function lineIntersection(first: FittedLine, second: FittedLine) {
+  const cross = first.direction.x * second.direction.y - first.direction.y * second.direction.x;
+  if (Math.abs(cross) < 0.02) return null;
+  const offsetX = second.point.x - first.point.x;
+  const offsetY = second.point.y - first.point.y;
+  const distance = (offsetX * second.direction.y - offsetY * second.direction.x) / cross;
+  return {
+    x: first.point.x + first.direction.x * distance,
+    y: first.point.y + first.direction.y * distance,
+  };
+}
+
+function recoverStraightEdgeCorners(
+  roughCorners: CardBoundaryQuad,
+  points: CardBoundaryPoint[],
+  width: number,
+  height: number,
+): CardBoundaryQuad {
+  const center = roughCorners.reduce(
+    (total, point) => ({ x: total.x + point.x / 4, y: total.y + point.y / 4 }),
+    { x: 0, y: 0 },
+  );
+  const lines = roughCorners.map((start, index) =>
+    fitStraightEdge(points, start, roughCorners[(index + 1) % 4], center),
+  );
+  if (lines.some((line) => !line)) return roughCorners;
+  const [top, right, bottom, left] = lines as [FittedLine, FittedLine, FittedLine, FittedLine];
+  const recovered = [
+    lineIntersection(top, left),
+    lineIntersection(top, right),
+    lineIntersection(bottom, right),
+    lineIntersection(bottom, left),
+  ];
+  if (recovered.some((point) => !point || !Number.isFinite(point.x) || !Number.isFinite(point.y))) return roughCorners;
+  const maximumCorrection = Math.min(width, height) * 0.12;
+  if (recovered.some((point, index) => distance(point as CardBoundaryPoint, roughCorners[index]) > maximumCorrection)) {
+    return roughCorners;
+  }
+  return recovered.map((point) => ({
+    x: Math.max(0, Math.min(width - 1, (point as CardBoundaryPoint).x)),
+    y: Math.max(0, Math.min(height - 1, (point as CardBoundaryPoint).y)),
+  })) as CardBoundaryQuad;
 }
 
 function expandQuad(
@@ -233,7 +351,13 @@ function candidateFromMask(mask: Uint8Array, width: number, height: number) {
 
   let foregroundCount = 0;
   for (const value of closedMask) foregroundCount += value;
-  const corners = expandQuad(component.corners, width, height);
+  const recoveredCorners = recoverStraightEdgeCorners(
+    component.corners,
+    boundaryPoints(component.pixels, closedMask, width, height),
+    width,
+    height,
+  );
+  const corners = expandQuad(recoveredCorners, width, height);
   const area = quadArea(corners);
   const areaRatio = area / (width * height);
   const topWidth = distance(corners[0], corners[1]);
