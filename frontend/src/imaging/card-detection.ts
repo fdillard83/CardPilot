@@ -6,6 +6,7 @@ export type CardDetectionMetrics = {
   oppositeWidthBalance: number;
   oppositeHeightBalance: number;
   diagonalBalance: number;
+  borderClearanceRatio: number;
   frameShortLongRatio: number;
   confidence: number;
 };
@@ -46,6 +47,11 @@ export function isReliableCardDetection(metrics: CardDetectionMetrics) {
     metrics.oppositeWidthBalance >= 0.72 &&
     metrics.oppositeHeightBalance >= 0.72 &&
     metrics.diagonalBalance >= 0.76;
+  // A complete card needs visible background around every recovered corner.
+  // When a corner lands on the photo frame, the mask has usually merged the
+  // card with a tabletop or fabric pattern; warping that guess stretches the
+  // card toward the edge. Keeping the original is safer and still identifiable.
+  const completeCornersAreVisible = metrics.borderClearanceRatio >= 0.008;
 
   return !(
     metrics.areaRatio < 0.28 ||
@@ -54,6 +60,7 @@ export function isReliableCardDetection(metrics: CardDetectionMetrics) {
     metrics.shortLongRatio > 0.84 ||
     metrics.fillRatio < 0.48 ||
     metrics.foregroundShare < 0.7 ||
+    !completeCornersAreVisible ||
     !geometryIsStable ||
     metrics.confidence < 0.66 ||
     (frameAlreadyLooksCardShaped && metrics.areaRatio < 0.72)

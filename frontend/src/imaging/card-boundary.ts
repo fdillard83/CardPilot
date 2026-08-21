@@ -382,6 +382,14 @@ function candidateFromMask(mask: Uint8Array, width: number, height: number) {
     Math.min(firstDiagonal, secondDiagonal) /
     Math.max(1, Math.max(firstDiagonal, secondDiagonal));
   const frameShortLongRatio = Math.min(width, height) / Math.max(width, height);
+  const borderClearanceRatio = Math.min(
+    ...corners.map((point) => Math.min(
+      point.x,
+      point.y,
+      width - 1 - point.x,
+      height - 1 - point.y,
+    )),
+  ) / Math.min(width, height);
   const aspectScore = Math.max(
     0,
     1 - Math.abs(shortLongRatio - STANDARD_CARD_RATIO) / 0.22,
@@ -397,6 +405,7 @@ function candidateFromMask(mask: Uint8Array, width: number, height: number) {
     oppositeWidthBalance,
     oppositeHeightBalance,
     diagonalBalance,
+    borderClearanceRatio,
     frameShortLongRatio,
     confidence,
   };

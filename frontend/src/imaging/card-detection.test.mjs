@@ -14,6 +14,7 @@ const reliable = {
   oppositeWidthBalance: 0.94,
   oppositeHeightBalance: 0.9,
   diagonalBalance: 0.93,
+  borderClearanceRatio: 0.08,
   frameShortLongRatio: 0.75,
   confidence: 0.86,
 };
@@ -72,6 +73,16 @@ test("rejects distorted quadrilaterals", () => {
       ...reliable,
       oppositeWidthBalance: 0.4,
       diagonalBalance: 0.55,
+    }),
+    false,
+  );
+});
+
+test("preserves the original when a detected corner attaches to the photo frame", () => {
+  assert.equal(
+    isReliableCardDetection({
+      ...reliable,
+      borderClearanceRatio: 0.002,
     }),
     false,
   );
