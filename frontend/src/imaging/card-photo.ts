@@ -1,10 +1,10 @@
 import {
   getNormalizedCardDimensions,
-} from "./card-detection";
+} from "./card-detection.ts";
 import {
   detectCardBoundary,
   type CardBoundaryQuad,
-} from "./card-boundary";
+} from "./card-boundary.ts";
 
 export type PreparedCardPhoto = {
   image: string;
@@ -136,15 +136,41 @@ function drawTexturedTriangle(
     divisor;
 
   context.save();
+  // Canvas clips antialias each triangle independently. When neighboring mesh
+  // triangles meet exactly, that can leave a transparent sub-pixel seam which
+  // JPEG encoding renders as a thin black line. Slightly overlapping only the
+  // clip (not the texture transform) keeps the warp continuous without moving
+  // the sampled card image.
+  const clipPoints = expandedTriangleClip(destinationPoints);
   context.beginPath();
-  context.moveTo(destinationA.x, destinationA.y);
-  context.lineTo(destinationB.x, destinationB.y);
-  context.lineTo(destinationC.x, destinationC.y);
+  context.moveTo(clipPoints[0].x, clipPoints[0].y);
+  context.lineTo(clipPoints[1].x, clipPoints[1].y);
+  context.lineTo(clipPoints[2].x, clipPoints[2].y);
   context.closePath();
   context.clip();
   context.setTransform(a, b, c, d, e, f);
   context.drawImage(source, 0, 0);
   context.restore();
+}
+
+export function expandedTriangleClip(
+  points: [Point, Point, Point],
+  overlapPixels = 1.25,
+): [Point, Point, Point] {
+  const center = {
+    x: (points[0].x + points[1].x + points[2].x) / 3,
+    y: (points[0].y + points[1].y + points[2].y) / 3,
+  };
+  return points.map((point) => {
+    const offsetX = point.x - center.x;
+    const offsetY = point.y - center.y;
+    const length = Math.max(1, Math.hypot(offsetX, offsetY));
+    const scale = 1 + overlapPixels / length;
+    return {
+      x: center.x + offsetX * scale,
+      y: center.y + offsetY * scale,
+    };
+  }) as [Point, Point, Point];
 }
 
 function straightenCard(
@@ -173,6 +199,10 @@ function straightenCard(
   if (!context) return null;
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "high";
+  // JPEG has no transparency. Keep any edge rounding or unexpected uncovered
+  // pixel from being converted to black even before the overlapping mesh draws.
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, output.width, output.height);
   const columns = 16;
   const rows = 22;
   for (let row = 0; row < rows; row += 1) {
