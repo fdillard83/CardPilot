@@ -549,7 +549,7 @@ async function runAutopilotRepricing(now = Date.now()) {
         if (now - new Date(lastPriceDecisionAt).getTime() < preferences.autoRepriceAfterDays * 86_400_000) continue;
         const draft = editableEbayDraft(saved);
         const position = await positioningForActiveListing(userId, card, saved, preferences, token, policyCache);
-        if (!position.safeToReprice || !position.shouldLower) continue;
+        if (!position.safeToReprice || position.limitedByMinimum || !position.shouldLower) continue;
         const originalPriceCents = draft.automationOriginalPriceCents ?? draft.priceCents;
         const originalPriceFloorCents = Math.ceil(originalPriceCents * preferences.autoRepriceFloorPercent / 100);
         const nextPriceCents = Math.max(position.proposedItemPriceCents, originalPriceFloorCents, preferences.autopilotMinimumPriceCents);
@@ -1903,6 +1903,7 @@ app.post("/api/ebay/listings/apply-price-positioning", async (request, response)
         if (saved.priceCents !== requested.expectedCurrentPriceCents) throw new Error("The live price changed after this review. Check its position again.");
         const position = await positioningForActiveListing(userId, card, saved, preferences, token, policyCache);
         if (!position.safeToReprice) throw new Error("The exact-card evidence is not strong enough for a live price change.");
+        if (position.limitedByMinimum) throw new Error("Your account minimum prevents the requested exact delivered-price position.");
         if (!position.shouldLower || position.proposedItemPriceCents !== requested.proposedPriceCents) {
           throw new Error("The market position changed after this review. Check it again before applying.");
         }

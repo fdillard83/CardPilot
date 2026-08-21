@@ -64,6 +64,7 @@ type DeliveredPricePosition = {
   differenceCents?: number;
   proposedItemPriceCents?: number;
   proposedDeliveredPriceCents?: number;
+  undercutCents?: number;
   exactMatchCount?: number;
   confidence?: "low" | "medium" | "high";
   safeToReprice?: boolean;
@@ -71,6 +72,12 @@ type DeliveredPricePosition = {
   limitedByMinimum?: boolean;
   lowestCompetitor?: { title: string; itemWebUrl: string | null };
 };
+
+function canApplyDeliveredPricePosition(position: DeliveredPricePosition) {
+  return position.ok && position.safeToReprice && position.shouldLower &&
+    !position.limitedByMinimum && Number.isInteger(position.currentItemPriceCents) &&
+    Number.isInteger(position.proposedItemPriceCents);
+}
 
 function searchableText(card: SavedCollectionCard) {
   return Object.values(card.fields)
@@ -1413,6 +1420,7 @@ export function CollectionView({
   );
   const [selectedPricePositionIds, setSelectedPricePositionIds] = useState<string[]>([]);
   const [pricePositions, setPricePositions] = useState<DeliveredPricePosition[]>([]);
+  const [selectedPriceApplyIds, setSelectedPriceApplyIds] = useState<string[]>([]);
   const [pricePositionBusy, setPricePositionBusy] = useState(false);
   const [priceApplyBusy, setPriceApplyBusy] = useState(false);
   const [pricePositionMessage, setPricePositionMessage] = useState<string | null>(null);
@@ -1434,6 +1442,7 @@ export function CollectionView({
     setActionError(null);
     setPricePositionMessage(null);
     setPricePositions([]);
+    setSelectedPriceApplyIds([]);
     try {
       const response = await fetch("/api/ebay/listings/price-positioning", {
         method: "POST",
@@ -1444,6 +1453,7 @@ export function CollectionView({
       if (!response.ok || !payload?.results) throw new Error(payload?.error ?? "CardPilot could not compare delivered prices.");
       setSelectedPricePositionIds(collectionIds);
       setPricePositions(payload.results);
+      setSelectedPriceApplyIds(payload.results.filter(canApplyDeliveredPricePosition).map((position) => position.collectionId));
       window.requestAnimationFrame(() => document.getElementById("delivered-price-title")?.scrollIntoView({ behavior: "smooth", block: "start" }));
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : "CardPilot could not compare delivered prices.");
@@ -1452,13 +1462,13 @@ export function CollectionView({
     }
   };
 
-  const applicablePricePositions = pricePositions.filter((position) =>
-    position.ok && position.safeToReprice && position.shouldLower &&
-    position.currentItemPriceCents && position.proposedItemPriceCents,
+  const applicablePricePositions = pricePositions.filter(canApplyDeliveredPricePosition);
+  const selectedApplicablePricePositions = applicablePricePositions.filter((position) =>
+    selectedPriceApplyIds.includes(position.collectionId),
   );
 
   const applyDeliveredPricePositions = async () => {
-    if (!applicablePricePositions.length || priceApplyBusy) return;
+    if (!selectedApplicablePricePositions.length || priceApplyBusy) return;
     setPriceApplyBusy(true);
     setActionError(null);
     setPricePositionMessage(null);
@@ -1468,7 +1478,7 @@ export function CollectionView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           confirmation: "APPLY_EXACT_DELIVERED_PRICE_CHANGES",
-          changes: applicablePricePositions.map((position) => ({
+          changes: selectedApplicablePricePositions.map((position) => ({
             collectionId: position.collectionId,
             expectedCurrentPriceCents: position.currentItemPriceCents,
             proposedPriceCents: position.proposedItemPriceCents,
@@ -1480,6 +1490,7 @@ export function CollectionView({
       setPricePositionMessage(`${payload?.updated ?? 0} active listing${payload?.updated === 1 ? " was" : "s were"} repriced${payload?.failed ? `; ${payload.failed} need another review` : ""}.`);
       setPricePositions([]);
       setSelectedPricePositionIds([]);
+      setSelectedPriceApplyIds([]);
       const collectionResponse = await fetch("/api/collection");
       const collectionPayload = await collectionResponse.json().catch(() => null) as { cards?: SavedCollectionCard[] } | null;
       if (collectionResponse.ok && collectionPayload?.cards) onCardsChange(collectionPayload.cards);
@@ -2672,40 +2683,57 @@ export function CollectionView({
       <div className="ebay-queue-launch"><div><strong>eBay listings and drafts</strong><span>See drafts, scheduled listings, active listings, ended listings, and synchronized sales.</span></div><button type="button" onClick={() => setListingQueueOpen(true)}>Open Listings and drafts</button></div>
       {activeListingCards.length > 0 && <section className="collection-price-positioning" aria-labelledby="delivered-price-title">
         <div>
-          <span>Exact-card delivered pricing</span>
-          <strong id="delivered-price-title">Compare item price plus buyer-paid shipping</strong>
-          <small>CardPilot excludes your own listing and proposes a price below the lowest compatible exact-card delivered price. Nothing changes on eBay until you review and apply it.</small>
+          <span>Match the lowest exact-card buyer total</span>
+          <strong id="delivered-price-title">Set selected buyer totals below the closest exact match</strong>
+          <small>CardPilot compares the full amount a buyer pays: item price plus shipping. The default target is 5¢ below; your saved Account setting controls the exact amount. CardPilot changes only the item price—your eBay shipping charge and shipping policy stay exactly as they are.</small>
         </div>
         <div className="collection-price-positioning-actions">
           <button type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => {
             const allIds = activeListingCards.slice(0, 20).map((card) => card.collectionId);
             setSelectedPricePositionIds(selectedPricePositionIds.length === allIds.length ? [] : allIds);
             setPricePositions([]);
-          }}>{selectedPricePositionIds.length === Math.min(20, activeListingCards.length) ? "Clear selected" : "Select all active listings"}</button>
-          <strong>{selectedPricePositionIds.length} selected</strong>
-          <button type="button" disabled={!selectedPricePositionIds.length || pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions()}>{pricePositionBusy ? "Checking exact matches..." : "Check selected price positions"}</button>
+            setSelectedPriceApplyIds([]);
+          }}>{selectedPricePositionIds.length === Math.min(20, activeListingCards.length) ? "Clear card selection" : "Select all active cards"}</button>
+          <strong>{selectedPricePositionIds.length} card{selectedPricePositionIds.length === 1 ? "" : "s"} selected</strong>
+          <button type="button" disabled={!selectedPricePositionIds.length || pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions()}>{pricePositionBusy ? "Finding exact matches..." : `Compare ${selectedPricePositionIds.length || "selected"} card${selectedPricePositionIds.length === 1 ? "" : "s"}`}</button>
           <a className="button-link" href="https://www.ebay.com/sh/lst/active" target="_blank" rel="noreferrer">Open eBay eligible offers</a>
         </div>
-        <small>eBay determines which watchers and cart shoppers are eligible for private offers. Use the Send offers — eligible filter after opening Seller Hub.</small>
+        {pricePositions.length === 0 && <small>Select cards from your collection below, or select all active cards here. Comparing prices does not change anything on eBay.</small>}
         {pricePositions.length > 0 && <div className="collection-price-review">
-          <div><strong>Review delivered-price positions</strong><small>{applicablePricePositions.length} safe price change{applicablePricePositions.length === 1 ? "" : "s"} available.</small></div>
-          <ul>{pricePositions.map((position) => <li className={position.ok ? "" : "unavailable"} key={position.collectionId}>
-            <strong>{position.title ?? cards.find((card) => card.collectionId === position.collectionId)?.title ?? "Active listing"}</strong>
-            {!position.ok ? <span>{position.error}</span> : <>
-              <span>Your delivered price: {formatPrice(position.currentDeliveredPriceCents ?? 0, position.currency ?? "USD")}</span>
-              <span>Lowest exact delivered price: {formatPrice(position.lowestCompetitorDeliveredPriceCents ?? 0, position.currency ?? "USD")}</span>
-              <span className={(position.differenceCents ?? 0) > 0 ? "price-above" : "price-below"}>{(position.differenceCents ?? 0) > 0 ? `${formatPrice(position.differenceCents ?? 0, position.currency ?? "USD")} above` : `${formatPrice(Math.abs(position.differenceCents ?? 0), position.currency ?? "USD")} below`} the lowest exact match</span>
-              <span>Proposed item price: {formatPrice(position.proposedItemPriceCents ?? 0, position.currency ?? "USD")} + {formatPrice(position.ownShippingCostCents ?? 0, position.currency ?? "USD")} buyer shipping</span>
-              <small>{position.exactMatchCount} exact match{position.exactMatchCount === 1 ? "" : "es"} · {position.confidence} confidence{position.limitedByMinimum ? " · limited by your account minimum" : ""}</small>
-              {position.lowestCompetitor?.itemWebUrl && <a href={position.lowestCompetitor.itemWebUrl} target="_blank" rel="noreferrer">Inspect lowest matching listing</a>}
-              {!position.safeToReprice && <small>Shown for reference only. CardPilot will not change the live price until the evidence is stronger.</small>}
-              {position.safeToReprice && !position.shouldLower && <small>Your listing is already at or below the proposed position.</small>}
-            </>}
-          </li>)}</ul>
+          <div><strong>Choose the changes to send to eBay</strong><small>Only checked cards will change. {selectedApplicablePricePositions.length} of {applicablePricePositions.length} available price changes selected.</small></div>
+          {applicablePricePositions.length > 0 && <div className="collection-price-review-selection">
+            <button type="button" disabled={priceApplyBusy} onClick={() => setSelectedPriceApplyIds(applicablePricePositions.map((position) => position.collectionId))}>Check all available</button>
+            <button type="button" disabled={priceApplyBusy || selectedApplicablePricePositions.length === 0} onClick={() => setSelectedPriceApplyIds([])}>Uncheck all</button>
+          </div>}
+          <ul>{pricePositions.map((position) => {
+            const canApply = canApplyDeliveredPricePosition(position);
+            const checked = canApply && selectedPriceApplyIds.includes(position.collectionId);
+            const currency = position.currency ?? "USD";
+            return <li className={`${position.ok ? "" : "unavailable"}${checked ? " selected" : ""}`} key={position.collectionId}>
+              <label className="collection-price-review-choice">
+                <input type="checkbox" checked={checked} disabled={!canApply || priceApplyBusy} onChange={() => setSelectedPriceApplyIds((current) => current.includes(position.collectionId) ? current.filter((id) => id !== position.collectionId) : [...current, position.collectionId])} />
+                <strong>{position.title ?? cards.find((card) => card.collectionId === position.collectionId)?.title ?? "Active listing"}</strong>
+              </label>
+              {!position.ok ? <span>{position.error}</span> : <>
+                <div className="collection-price-math">
+                  <span><small>Your current buyer total</small><strong>{formatPrice(position.currentDeliveredPriceCents ?? 0, currency)}</strong></span>
+                  <span><small>Lowest exact-match buyer total</small><strong>{formatPrice(position.lowestCompetitorDeliveredPriceCents ?? 0, currency)}</strong></span>
+                  <span><small>New buyer total</small><strong>{formatPrice(position.proposedDeliveredPriceCents ?? 0, currency)}</strong></span>
+                </div>
+                <strong className="collection-price-equation">New item price {formatPrice(position.proposedItemPriceCents ?? 0, currency)} + unchanged shipping {formatPrice(position.ownShippingCostCents ?? 0, currency)} = {formatPrice(position.proposedDeliveredPriceCents ?? 0, currency)}</strong>
+                <small>{formatPrice(position.undercutCents ?? 5, currency)} below the lowest exact-match buyer total · {position.exactMatchCount} exact match{position.exactMatchCount === 1 ? "" : "es"} · {position.confidence} confidence</small>
+                {position.lowestCompetitor?.itemWebUrl && <a href={position.lowestCompetitor.itemWebUrl} target="_blank" rel="noreferrer">Inspect the matching listing used</a>}
+                {!position.safeToReprice && <small>Not selectable: the exact-card evidence is not strong enough.</small>}
+                {position.safeToReprice && position.limitedByMinimum && <small>Not selectable: your account minimum prevents a buyer total below this exact match.</small>}
+                {position.safeToReprice && !position.limitedByMinimum && !position.shouldLower && <small>Not selectable: your buyer total is already at or below this position.</small>}
+              </>}
+            </li>;
+          })}</ul>
           <div className="collection-price-review-actions">
-            <button className="primary-action" type="button" disabled={!applicablePricePositions.length || priceApplyBusy} onClick={() => void applyDeliveredPricePositions()}>{priceApplyBusy ? "Applying reviewed prices..." : `Apply ${applicablePricePositions.length} reviewed price${applicablePricePositions.length === 1 ? "" : "s"} to eBay`}</button>
-            <button type="button" disabled={priceApplyBusy} onClick={() => setPricePositions([])}>Close review</button>
+            <button className="primary-action" type="button" disabled={!selectedApplicablePricePositions.length || priceApplyBusy} onClick={() => void applyDeliveredPricePositions()}>{priceApplyBusy ? "Changing selected item prices..." : `Change ${selectedApplicablePricePositions.length} selected item price${selectedApplicablePricePositions.length === 1 ? "" : "s"} on eBay`}</button>
+            <button type="button" disabled={priceApplyBusy} onClick={() => { setPricePositions([]); setSelectedPriceApplyIds([]); }}>Close without changes</button>
           </div>
+          <small>Shipping charges and shipping policies will not be modified.</small>
         </div>}
         {pricePositionMessage && <p role="status">{pricePositionMessage}</p>}
       </section>}
@@ -3098,6 +3126,7 @@ export function CollectionView({
                         {isDetailsExpanded && card.selling.listingUrl && <a href={card.selling.listingUrl} target="_blank" rel="noreferrer">View on eBay</a>}
                         {card.selling.status === "published" && <label className="collection-price-select"><input type="checkbox" checked={selectedPricePositionIds.includes(card.collectionId)} disabled={pricePositionBusy || priceApplyBusy} onChange={() => {
                           setPricePositions([]);
+                          setSelectedPriceApplyIds([]);
                           setSelectedPricePositionIds((current) => current.includes(card.collectionId) ? current.filter((id) => id !== card.collectionId) : [...current, card.collectionId].slice(0, 20));
                         }} /> {selectedPricePositionIds.includes(card.collectionId) ? "Selected for delivered-price review" : "Select for delivered-price review"}</label>}
                       </div>
