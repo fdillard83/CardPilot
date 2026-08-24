@@ -1681,8 +1681,8 @@ export function CollectionView({
       if (sort === "title-az") return left.title.localeCompare(right.title);
       if (sort === "title-za") return right.title.localeCompare(left.title);
       if (sort === "value-high" || sort === "value-low") {
-        const leftValue = left.confirmedValuation?.amountCents;
-        const rightValue = right.confirmedValuation?.amountCents;
+        const leftValue = collectionSection === "sold" ? left.selling?.soldAmountCents : left.confirmedValuation?.amountCents;
+        const rightValue = collectionSection === "sold" ? right.selling?.soldAmountCents : right.confirmedValuation?.amountCents;
         if (leftValue == null && rightValue == null) return left.title.localeCompare(right.title);
         if (leftValue == null) return 1;
         if (rightValue == null) return -1;
@@ -2725,14 +2725,15 @@ export function CollectionView({
     <section className="collection-section" aria-labelledby="collection-title">
       <div className="collection-heading">
         <div>
-          <span className="step-label">My Collection</span>
-          <h1 id="collection-title">Your cards, ready when you are.</h1>
+          <span className="step-label">{collectionSection === "sold" ? "Sold Cards" : "My Collection"}</span>
+          <h1 id="collection-title">{collectionSection === "sold" ? "Your completed eBay sales." : "Your cards, ready when you are."}</h1>
           <p>
-            Search confirmed details, review card photos, and manage sports and
-            Pokémon cards in one collection.
+            {collectionSection === "sold"
+              ? "Review actual eBay sold amounts and completed listing details without cluttering your active collection."
+              : "Search confirmed details, review card photos, and manage sports and Pokémon cards in one collection."}
           </p>
         </div>
-        <div className="collection-heading-actions">
+        {collectionSection === "collection" && <div className="collection-heading-actions">
           <button
             className="outline-button"
             type="button"
@@ -2759,10 +2760,13 @@ export function CollectionView({
           >
             Scan another card
           </button>
-        </div>
+        </div>}
       </div>
 
-      <div className="collection-summary" aria-label="Collection summary">
+      {collectionSection === "sold" ? <div className="collection-summary collection-summary-sold" aria-label="Sold cards summary">
+        <div className="collection-summary-value"><strong>{collectionValuation.soldTotalLabel}</strong><span>Total eBay sold amount</span></div>
+        <div><strong>{collectionValuation.soldCount}</strong><span>Cards sold</span></div>
+      </div> : <><div className="collection-summary" aria-label="Collection summary">
         <div className="collection-summary-value">
           <strong>{collectionValuation.totalLabel}</strong>
           <span>Saved collection value</span>
@@ -2774,15 +2778,14 @@ export function CollectionView({
         <div><strong>{collectionValuation.listedCount}</strong><span>Listed on eBay</span></div>
         <div><strong>{collectionValuation.activeAskingTotalLabel}</strong><span>Active eBay asking total</span></div>
         <div><strong>{collectionValuation.activePotentialProfitLabel}</strong><span>Potential profit — active eBay</span></div>
-        <div><strong>{collectionValuation.soldTotalLabel}</strong><span>Total sold value</span></div>
       </div>
-      <p className="collection-summary-note">Potential profit estimates subtract an illustrative 13.25% eBay fee plus $0.30 per sale and any active promotion rate. Card cost, shipping, taxes, returns, and other expenses are not included.</p>
+      <p className="collection-summary-note">Potential profit estimates subtract an illustrative 13.25% eBay fee plus $0.30 per sale and any active promotion rate. Card cost, shipping, taxes, returns, and other expenses are not included.</p></>}
       <div className="ebay-queue-launch"><div><strong>eBay listings and drafts</strong><span>See drafts, scheduled listings, active listings, ended listings, and synchronized sales.</span></div><button type="button" onClick={() => setListingQueueOpen(true)}>Open Listings and drafts</button></div>
-      {unlistedCards.length > 1 && <section className="collection-batch-listing" aria-labelledby="batch-listing-title">
+      {collectionSection === "collection" && unlistedCards.length > 1 && <section className="collection-batch-listing" aria-labelledby="batch-listing-title">
         <div><span>Batch eBay listing</span><strong id="batch-listing-title">Use shared rules, review every card, publish once</strong><small>Set shipping, payment, returns, promotion, and other shared choices once. Then check the distinct title, price, and category for every card in a review grid.</small></div>
         <button className="primary-action" type="button" onClick={() => setBatchListingOpen(true)}>Review and list {unlistedCards.length} cards in a batch</button>
       </section>}
-      {activeListingCards.length > 0 && <section className="collection-price-positioning" aria-labelledby="delivered-price-title">
+      {collectionSection === "collection" && activeListingCards.length > 0 && <section className="collection-price-positioning" aria-labelledby="delivered-price-title">
         <div>
           <span>Match the lowest exact-card buyer total</span>
           <strong id="delivered-price-title">Set selected buyer totals below the closest exact match</strong>
@@ -3197,7 +3200,20 @@ export function CollectionView({
                       <span>{cardCategoryLabel(card.fields)}</span>
                       <h2>{card.title}</h2>
                     </div>
-                    {card.confirmedValuation ? (
+                    {card.selling?.status === "sold" ? (
+                      <div className="collection-card-value collection-card-value-sold">
+                        <div>
+                          <span>eBay sold amount</span>
+                          <strong>{card.selling.soldAmountCents === null
+                            ? "Unavailable"
+                            : formatPrice(card.selling.soldAmountCents, card.selling.soldCurrency ?? card.selling.currency)}</strong>
+                        </div>
+                        {isDetailsExpanded && <small>{card.selling.soldAt
+                          ? `Sold on eBay ${new Date(card.selling.soldAt).toLocaleString()}`
+                          : "The sale date has not been returned by eBay."}</small>}
+                        {isDetailsExpanded && card.confirmedValuation && <small>Previous CardPilot estimate: {formatPrice(card.confirmedValuation.amountCents, card.confirmedValuation.currency)}</small>}
+                      </div>
+                    ) : card.confirmedValuation ? (
                       <div className="collection-card-value">
                         <div>
                           <span>Saved value</span>
@@ -3239,7 +3255,7 @@ export function CollectionView({
                         {isDetailsExpanded && card.selling.status === "published" && card.selling.publishedAt && <small>Active since {new Date(card.selling.publishedAt).toLocaleString()}</small>}
                         {card.selling.status === "published" && <small>{card.selling.buyerShippingCostCents === null ? `Buyer total unavailable until eBay returns shipping (${formatPrice(card.selling.priceCents, card.selling.currency)} item price)` : `Buyer total: ${formatPrice(card.selling.priceCents + card.selling.buyerShippingCostCents, card.selling.currency)} (${formatPrice(card.selling.priceCents, card.selling.currency)} item + ${formatPrice(card.selling.buyerShippingCostCents, card.selling.currency)} shipping)`}</small>}
                         {isDetailsExpanded && card.selling.status === "published" && (card.selling.viewCount != null || card.selling.watcherCount != null) && <small>{card.selling.viewCount ?? "—"} views · {card.selling.watcherCount ?? "—"} watchers{card.selling.impressionCount != null ? ` · ${card.selling.impressionCount} impressions` : ""}</small>}
-                        {isDetailsExpanded && card.selling.status === "sold" && card.selling.soldAmountCents !== null && <small>Sold for {formatPrice(card.selling.soldAmountCents, card.selling.soldCurrency ?? "USD")}</small>}
+                        {isDetailsExpanded && card.selling.status === "sold" && card.selling.soldAt && <small>Sale recorded {new Date(card.selling.soldAt).toLocaleString()}</small>}
                         {isDetailsExpanded && card.selling.listingUrl && <a href={card.selling.listingUrl} target="_blank" rel="noreferrer">View on eBay</a>}
                         {card.selling.status === "published" && <label className="collection-price-select"><input type="checkbox" checked={selectedPricePositionIds.includes(card.collectionId)} disabled={pricePositionBusy || priceApplyBusy} onChange={() => {
                           setPricePositions([]);

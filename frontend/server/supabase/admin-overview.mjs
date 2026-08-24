@@ -18,15 +18,16 @@ export class SupabaseAdminOverview {
       if ((data?.users?.length ?? 0) < 1000) break;
       page += 1;
     }
-    const [{ data: cards, error: cardError }, { data: drafts, error: draftError }, { data: sales, error: salesError }, fieldFeedback, marketFeedback, providerUsage] = await Promise.all([
+    const [{ data: cards, error: cardError }, { data: drafts, error: draftError }, { data: sales, error: salesError }, { data: connections, error: connectionError }, fieldFeedback, marketFeedback, providerUsage] = await Promise.all([
       this.client.from("collection_cards").select("user_id"),
       this.client.from("ebay_listing_drafts").select("user_id,collection_id,status,draft,sold_amount_cents,sold_currency"),
-      this.client.from("ebay_order_sales").select("user_id,collection_id,amount_cents,currency"),
+      this.client.from("ebay_order_sales").select("user_id,collection_id,amount_cents,currency,last_synced_at"),
+      this.client.from("ebay_seller_connections").select("user_id,scopes,updated_at"),
       this.identificationFeedback?.summary() ?? [],
       this.marketFeedback?.summary() ?? [],
       this.providerUsage?.summary() ?? [],
     ]);
-    if (cardError || draftError || salesError) throw cardError ?? draftError ?? salesError;
+    if (cardError || draftError || salesError || connectionError) throw cardError ?? draftError ?? salesError ?? connectionError;
     const rows = users.map((user) => {
       const userDrafts = (drafts ?? []).filter((draft) => draft.user_id === user.id);
       const userSales = (sales ?? []).filter((sale) => sale.user_id === user.id);
@@ -35,6 +36,8 @@ export class SupabaseAdminOverview {
       const soldCount = userSales.length + soldDraftsMissingOrder.length;
       const soldGrossCents = userSales.reduce((sum, sale) => sum + cents(sale.amount_cents), 0) +
         soldDraftsMissingOrder.reduce((sum, draft) => sum + cents(draft.sold_amount_cents ?? draft.draft?.priceCents), 0);
+      const connection = (connections ?? []).find((item) => item.user_id === user.id);
+      const lastSalesSyncAt = userSales.map((sale) => sale.last_synced_at).filter(Boolean).sort().at(-1) ?? null;
       return {
         userId: user.id, email: user.email ?? null,
         createdAt: user.created_at, lastSignInAt: user.last_sign_in_at ?? null,
@@ -43,6 +46,10 @@ export class SupabaseAdminOverview {
         activeListingValueCents: userDrafts.filter((draft) => draft.status === "published").reduce((sum, draft) => sum + cents(draft.draft?.priceCents), 0),
         soldCount,
         soldGrossCents,
+        ebayConnected: Boolean(connection),
+        ebayReconnectRequired: Boolean(connection && !String(connection.scopes ?? "").includes("sell.fulfillment.readonly")),
+        ebayConnectionUpdatedAt: connection?.updated_at ?? null,
+        lastSalesSyncAt,
       };
     });
     return {

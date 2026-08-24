@@ -2268,10 +2268,9 @@ async function syncEbaySalesForUser(userId) {
       if (String(order.orderPaymentStatus ?? "").toUpperCase() !== "PAID") continue;
       const listingId = String(item.legacyItemId ?? item.itemId ?? "");
       const draft = byListingId.get(listingId);
-      if (!draft) continue;
       const price = item.lineItemCost ?? item.total ?? {};
       await cloudServices.ebaySelling.saveSale(userId, {
-        saleId: randomUUID(), collectionId: draft.collectionId,
+        saleId: randomUUID(), collectionId: draft?.collectionId ?? null,
         orderId: String(order.orderId), lineItemId: String(item.lineItemId), listingId,
         orderStatus: String(order.orderFulfillmentStatus ?? order.orderPaymentStatus ?? "UNKNOWN"),
         amountCents: Math.max(0, Math.round(Number(price.value ?? 0) * 100)),
@@ -2292,6 +2291,22 @@ async function syncEbaySalesForUser(userId) {
 app.post("/api/ebay/sales/sync", async (request, response) => {
   try { response.json(await syncEbaySalesForUser(request.cardPilotUser.id)); }
   catch (error) { response.status(502).json({ error: error.message ?? "CardPilot could not sync eBay sales." }); }
+});
+
+app.post("/api/admin/users/:userId/ebay-sales/sync", async (request, response) => {
+  if (!request.cardPilotUser?.email || !adminEmails.has(request.cardPilotUser.email.toLowerCase())) {
+    return response.status(403).json({ error: "Administrator access is required." });
+  }
+  if (request.body?.confirmation !== "SYNC_USER_EBAY_SALES") {
+    return response.status(400).json({ error: "Explicit sales-sync confirmation is required." });
+  }
+  try {
+    const connection = await cloudServices.ebaySelling.connection(request.params.userId);
+    if (!connection) return response.status(404).json({ error: "That user has not connected an eBay seller account." });
+    response.json(await syncEbaySalesForUser(request.params.userId));
+  } catch (error) {
+    response.status(error?.status ?? 502).json({ error: error.message ?? "CardPilot could not sync this user's eBay sales. Ask the user to reconnect eBay and try again." });
+  }
 });
 
 app.get("/api/ebay/sales", async (request, response) => {

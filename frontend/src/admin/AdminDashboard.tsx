@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 type Overview = {
   totals: { users: number; cards: number; activeListings: number; activeListingValueCents: number; soldCount: number; soldGrossCents: number; currency: string };
-  users: { userId: string; email: string | null; createdAt: string; lastSignInAt: string | null; cardCount: number; activeListingCount: number; activeListingValueCents: number; soldCount: number; soldGrossCents: number }[];
+  users: { userId: string; email: string | null; createdAt: string; lastSignInAt: string | null; cardCount: number; activeListingCount: number; activeListingValueCents: number; soldCount: number; soldGrossCents: number; ebayConnected: boolean; ebayReconnectRequired: boolean; ebayConnectionUpdatedAt: string | null; lastSalesSyncAt: string | null }[];
   fieldFeedback: { field: string; reviewed: number; kept: number; changed: number; changeRate: number; averageOriginalConfidence: number }[];
   marketFeedback: { source: "active_market" | "sold_comps"; reviewedResults: number; correctMatches: number; wrongCards: number; wrongVariations: number; missingMatchReports: number; correctRate: number; falseMatchRate: number; averageReviewedScore: number | null }[];
   providerUsage: { provider: string; providerLabel: string; operation: string; requests: number; successfulRequests: number; successRate: number; averageDurationMs: number; returnedCount: number; usefulCount: number; usefulRate: number; configuredMonthlyCostCents: number; estimatedCostPerUsefulResultCents: number | null; assessment: "collecting_data" | "strong" | "watch" | "weak" }[];
@@ -14,6 +14,8 @@ export function AdminDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
+  const [syncingUserId, setSyncingUserId] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   const loadOverview = useCallback(async (refresh = false) => {
     if (refresh) setIsRefreshing(true);
@@ -31,6 +33,21 @@ export function AdminDashboard() {
     }
   }, []);
 
+  const syncUserSales = async (userId: string, email: string | null) => {
+    setSyncingUserId(userId); setSyncStatus(null); setError(null);
+    try {
+      const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/ebay-sales/sync`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: "SYNC_USER_EBAY_SALES" }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error);
+      setSyncStatus(`Checked ${email ?? "the user"}'s eBay orders and saved ${body.saved ?? 0} paid sale${body.saved === 1 ? "" : "s"}.`);
+      await loadOverview(true);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "The user's eBay sales could not be synchronized."); }
+    finally { setSyncingUserId(null); }
+  };
+
   useEffect(() => {
     let current = true;
     void fetch("/api/admin/overview", { cache: "no-store" }).then(async (response) => {
@@ -45,10 +62,11 @@ export function AdminDashboard() {
   return <section className="collection-section">
     <div className="collection-heading"><div><span>Private administration</span><h1>CardPilot activity</h1><p>Account-level totals only. Customer card images and private listing details are not displayed here.</p>{refreshedAt && <small>Updated {refreshedAt.toLocaleString()}</small>}</div><button type="button" disabled={isRefreshing} onClick={() => void loadOverview(true)}>{isRefreshing ? "Refreshing..." : "Refresh dashboard"}</button></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
+    {syncStatus && <div className="collection-status-banner" role="status">{syncStatus}</div>}
     {!overview && !error && <div className="collection-empty"><span className="spinner" /> Loading account activity...</div>}
     {overview && <>
       <div className="collection-summary"><div><strong>{overview.totals.users}</strong><span>Users</span></div><div><strong>{overview.totals.cards}</strong><span>Cards saved</span></div><div><strong>{overview.totals.activeListings}</strong><span>Active listings</span></div><div><strong>{money(overview.totals.activeListingValueCents)}</strong><span>Currently for sale</span></div><div><strong>{overview.totals.soldCount}</strong><span>Cards sold</span></div><div><strong>{money(overview.totals.soldGrossCents)}</strong><span>Gross sold value</span></div></div>
-      <div className="ebay-queue-list">{overview.users.map((user) => <article key={user.userId}><div><h3>{user.email ?? "Email unavailable"}</h3><small>Joined {new Date(user.createdAt).toLocaleDateString()}{user.lastSignInAt ? ` · Last active ${new Date(user.lastSignInAt).toLocaleDateString()}` : ""}</small><p>{user.cardCount} cards · {user.activeListingCount} active ({money(user.activeListingValueCents)}) · {user.soldCount} sold ({money(user.soldGrossCents)})</p></div></article>)}</div>
+      <div className="ebay-queue-list">{overview.users.map((user) => <article key={user.userId}><div><h3>{user.email ?? "Email unavailable"}</h3><small>Joined {new Date(user.createdAt).toLocaleDateString()}{user.lastSignInAt ? ` · Last active ${new Date(user.lastSignInAt).toLocaleDateString()}` : ""}</small><p>{user.cardCount} cards · {user.activeListingCount} active ({money(user.activeListingValueCents)}) · {user.soldCount} sold ({money(user.soldGrossCents)})</p>{user.ebayConnected && <small>{user.ebayReconnectRequired ? "eBay permission update required" : "eBay connected"}{user.lastSalesSyncAt ? ` · Sales last synced ${new Date(user.lastSalesSyncAt).toLocaleString()}` : " · No saved sales sync yet"}</small>}</div>{user.ebayConnected && <button type="button" disabled={syncingUserId !== null} onClick={() => void syncUserSales(user.userId, user.email)}>{syncingUserId === user.userId ? "Syncing eBay..." : user.ebayReconnectRequired ? "Try sync / check connection" : "Sync eBay sales"}</button>}</article>)}</div>
       <section className="admin-feedback-section">
         <div><span>Identification feedback</span><h2>Fields users change most</h2><p>Aggregate outcomes from confirmed cards. No card values or photographs are shown.</p></div>
         {overview.fieldFeedback.length ? (
