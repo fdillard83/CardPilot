@@ -43,6 +43,29 @@ function expand(mask: Uint8Array, width: number, height: number, radius: number)
   return result;
 }
 
+function erode(mask: Uint8Array, width: number, height: number, radius: number) {
+  const result = new Uint8Array(mask.length);
+  for (let y = radius; y < height - radius; y += 1) {
+    for (let x = radius; x < width - radius; x += 1) {
+      let solid = true;
+      for (let dy = -radius; dy <= radius && solid; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          if (!mask[(y + dy) * width + x + dx]) { solid = false; break; }
+        }
+      }
+      if (solid) result[y * width + x] = 1;
+    }
+  }
+  return result;
+}
+
+export function separatedComponentRectangles(mask: Uint8Array, width: number, height: number) {
+  // Remove hairline shadows, glare, and compression artifacts that can falsely join two cards.
+  const opened = expand(erode(mask, width, height, 1), width, height, 1);
+  const separated = componentRectangles(opened, width, height);
+  return separated.length >= 2 ? separated : componentRectangles(mask, width, height);
+}
+
 export function componentRectangles(
   mask: Uint8Array,
   width: number,
@@ -143,6 +166,10 @@ export async function splitGroupCardPhoto(file: File): Promise<File[]> {
     }
   }
   const background = [median(borderRed), median(borderGreen), median(borderBlue)];
+  const borderDistances = borderRed.map((red, index) => Math.hypot(
+    red - background[0], borderGreen[index] - background[1], borderBlue[index] - background[2],
+  ));
+  const foregroundThreshold = Math.max(24, Math.min(52, median(borderDistances) * 3 + 12));
   const mask = new Uint8Array(gridWidth * gridHeight);
   for (let index = 0; index < mask.length; index += 1) {
     const pixel = index * 4;
@@ -151,9 +178,9 @@ export async function splitGroupCardPhoto(file: File): Promise<File[]> {
       pixels[pixel + 1] - background[1],
       pixels[pixel + 2] - background[2],
     );
-    if (distance >= 42) mask[index] = 1;
+    if (distance >= foregroundThreshold) mask[index] = 1;
   }
-  const rectangles = componentRectangles(expand(mask, gridWidth, gridHeight, 2), gridWidth, gridHeight)
+  const rectangles = separatedComponentRectangles(mask, gridWidth, gridHeight)
     .slice(0, MAX_GROUP_CARDS);
   if (rectangles.length < 2) {
     throw new Error("CardPilot could not find multiple separated cards. Place 2–9 cards on a plain, contrasting surface with space between every card.");

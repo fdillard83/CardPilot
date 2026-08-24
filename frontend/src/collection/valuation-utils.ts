@@ -13,6 +13,7 @@ const valuationMethodLabels: Record<ValuationMethod, string> = {
   exact_active: "Exact active asking prices",
   broader_active: "Broader active asking prices",
   variant_active: "Variant-adjusted active asking prices",
+  active_listing: "Current eBay listing price",
   manual: "Collector-entered value",
 };
 

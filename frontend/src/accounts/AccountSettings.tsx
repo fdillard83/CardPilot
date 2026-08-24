@@ -54,6 +54,11 @@ export function AccountSettings({
   const [listingCtrMinimumImpressions, setListingCtrMinimumImpressions] = useState(String(preferences.listingCtrMinimumImpressions));
   const [listingLowCtrPercent, setListingLowCtrPercent] = useState(String(preferences.listingLowCtrPercent));
   const [listingViewsWithoutWatchers, setListingViewsWithoutWatchers] = useState(String(preferences.listingViewsWithoutWatchers));
+  const [listingCostSafetyEnabled, setListingCostSafetyEnabled] = useState(preferences.listingCostSafetyEnabled);
+  const [listingTransactionFeePercent, setListingTransactionFeePercent] = useState(String(preferences.listingTransactionFeePercent));
+  const [listingTransactionFixedFee, setListingTransactionFixedFee] = useState((preferences.listingTransactionFixedFeeCents / 100).toFixed(2));
+  const [listingMailingCost, setListingMailingCost] = useState((preferences.listingMailingCostCents / 100).toFixed(2));
+  const [estimatedBuyerSalesTaxPercent, setEstimatedBuyerSalesTaxPercent] = useState(String(preferences.estimatedBuyerSalesTaxPercent));
   const [autoValueEnabled, setAutoValueEnabled] = useState(
     preferences.autoValueEnabled,
   );
@@ -125,6 +130,10 @@ export function AccountSettings({
     const ctrMinimumImpressions = Number(listingCtrMinimumImpressions);
     const lowCtrPercent = Number(listingLowCtrPercent);
     const viewsWithoutWatchers = Number(listingViewsWithoutWatchers);
+    const transactionFeePercent = Number(listingTransactionFeePercent);
+    const transactionFixedFeeDollars = Number(listingTransactionFixedFee);
+    const mailingCostDollars = Number(listingMailingCost);
+    const buyerSalesTaxPercent = Number(estimatedBuyerSalesTaxPercent);
     const fasterBelowDollars = sellFasterBelow.trim() ? Number(sellFasterBelow) : null;
     const adRate = Number(promotionAdRate);
     if (autoValueEnabled && (!Number.isFinite(dollars) || dollars <= 0)) {
@@ -175,6 +184,10 @@ export function AccountSettings({
       setPreferenceError("Choose a valid view threshold.");
       return;
     }
+    if (![transactionFeePercent, transactionFixedFeeDollars, mailingCostDollars, buyerSalesTaxPercent].every(Number.isFinite) || transactionFeePercent < 0 || transactionFeePercent > 50 || transactionFixedFeeDollars < 0 || mailingCostDollars < 0 || buyerSalesTaxPercent < 0 || buyerSalesTaxPercent > 20) {
+      setPreferenceError("Enter valid non-negative listing-cost assumptions.");
+      return;
+    }
     setIsSavingPreferences(true);
     setPreferenceError(null);
     setPreferenceStatus(null);
@@ -197,6 +210,11 @@ export function AccountSettings({
           listingCtrMinimumImpressions: ctrMinimumImpressions,
           listingLowCtrPercent: lowCtrPercent,
           listingViewsWithoutWatchers: viewsWithoutWatchers,
+          listingCostSafetyEnabled,
+          listingTransactionFeePercent: transactionFeePercent,
+          listingTransactionFixedFeeCents: Math.round(transactionFixedFeeDollars * 100),
+          listingMailingCostCents: Math.round(mailingCostDollars * 100),
+          estimatedBuyerSalesTaxPercent: buyerSalesTaxPercent,
           autoValueEnabled,
           autoValueMaxCents: autoValueEnabled ? Math.round(dollars * 100) : null,
           ebayConnectPromptDismissed: preferences.ebayConnectPromptDismissed,
@@ -522,6 +540,20 @@ export function AccountSettings({
                 you can revise any automatically saved value later.
               </p>
               <div className="account-settings-form">
+                <div className="account-rule-heading">
+                  <strong>Do not sell at a loss</strong>
+                  <small>Optional safety check for new listings, live price changes, and automatic repricing.</small>
+                </div>
+                <label className="account-toggle-row">
+                  <input type="checkbox" checked={listingCostSafetyEnabled} onChange={(event) => setListingCostSafetyEnabled(event.target.checked)} />
+                  Block a listing price when estimated eBay fees and mailing cost would leave less than $0
+                </label>
+                {listingCostSafetyEnabled && <>
+                  <label>Estimated eBay transaction fee <div className="account-inline-unit"><input type="number" min="0" max="50" step="0.01" value={listingTransactionFeePercent} onChange={(event) => setListingTransactionFeePercent(event.target.value)} /><span>%</span></div></label>
+                  <label>Fixed transaction charge <div className="account-inline-unit"><span>$</span><input type="number" min="0" step="0.01" value={listingTransactionFixedFee} onChange={(event) => setListingTransactionFixedFee(event.target.value)} /></div></label>
+                  <label>Mailing label / fulfillment cost <div className="account-inline-unit"><span>$</span><input type="number" min="0" step="0.01" value={listingMailingCost} onChange={(event) => setListingMailingCost(event.target.value)} /></div><small>Default: $0.78 for an eBay Standard Envelope label. Change this for your normal fulfillment cost.</small></label>
+                  <label>Estimated buyer sales tax used in eBay's fee basis <div className="account-inline-unit"><input type="number" min="0" max="20" step="0.1" value={estimatedBuyerSalesTaxPercent} onChange={(event) => setEstimatedBuyerSalesTaxPercent(event.target.value)} /><span>%</span></div><small>Sales tax is not counted as your revenue; this only estimates the extra eBay fee calculated on tax.</small></label>
+                </>}
                 <label>
                   Default selling goal
                   <select value={pricingStrategy} onChange={(event) => setPricingStrategy(event.target.value as typeof pricingStrategy)}>

@@ -83,7 +83,7 @@ export class SupabaseAuthService {
       : undefined;
     const { data, error } = await this.client.auth.signUp({
       ...credentials,
-      ...(options ? { options } : {}),
+      options: { ...(options ?? {}), data: { app_name: "CardPilot", verification_purpose: "Verify your CardPilot email address" } },
     });
     if (error) throw error;
     return {

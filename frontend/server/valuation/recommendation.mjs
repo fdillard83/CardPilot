@@ -26,6 +26,7 @@ export const valuationMethods = Object.freeze([
   "exact_active",
   "broader_active",
   "variant_active",
+  "active_listing",
   "manual",
 ]);
 
@@ -39,6 +40,7 @@ export const valuationMethodLabels = Object.freeze({
   exact_active: "Exact active asking prices",
   broader_active: "Broader active asking prices",
   variant_active: "Variant-adjusted active asking prices",
+  active_listing: "Current eBay listing price",
   manual: "Collector-entered value",
 });
 
@@ -348,19 +350,12 @@ function applyRecommendedPricePoint(recommendation) {
   };
 }
 
-function floorPricePointCents(amountCents) {
-  if (!Number.isInteger(amountCents) || amountCents <= 0) return 1;
-  if (amountCents <= 95) return amountCents;
-  const candidate = Math.floor(amountCents / 100) * 100 + 95;
-  return candidate <= amountCents ? candidate : Math.max(95, candidate - 100);
-}
-
 function activeMarketFloor(activeSnapshot, grading) {
   if (!activeSnapshot) return null;
   const group = preferredGroup(activeSnapshot.groups, "exact", "listingCount", grading) ??
     preferredGroup(activeSnapshot.groups, "broader", "listingCount", grading);
   const prices = group?.listings
-    ?.map((listing) => listing.itemPriceCents ?? listing.totalPriceCents)
+    ?.map((listing) => listing.totalPriceCents ?? listing.itemPriceCents)
     .filter(Number.isInteger) ?? [];
   return prices.length ? Math.min(...prices) : group?.typicalRange?.lowAmountCents ?? null;
 }
@@ -368,7 +363,7 @@ function activeMarketFloor(activeSnapshot, grading) {
 export function buildSaleStrategyOptions(recommendation, activeSnapshot = null, grading = null) {
   if (!recommendation) return null;
   const floor = activeMarketFloor(activeSnapshot, grading) ?? recommendation.typicalRange.lowAmountCents;
-  const fasterAmount = floorPricePointCents(Math.min(recommendation.amountCents, floor));
+  const fasterAmount = Math.max(1, Math.min(recommendation.amountCents, floor - 5));
   const maximizeAmount = roundRecommendedValueCents(
     Math.max(recommendation.amountCents, recommendation.typicalRange.highAmountCents),
   );
@@ -376,7 +371,7 @@ export function buildSaleStrategyOptions(recommendation, activeSnapshot = null, 
     sell_faster: {
       amountCents: fasterAmount,
       label: "Sell faster",
-      rationale: "Meets or slightly undercuts the lowest compatible current-market price point.",
+      rationale: "Targets 5¢ below the lowest compatible exact-card active buyer total. Shipping is subtracted when the listing is finalized.",
     },
     balanced: {
       amountCents: recommendation.amountCents,

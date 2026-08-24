@@ -20,8 +20,8 @@ export class SupabaseAdminOverview {
     }
     const [{ data: cards, error: cardError }, { data: drafts, error: draftError }, { data: sales, error: salesError }, fieldFeedback, marketFeedback, providerUsage] = await Promise.all([
       this.client.from("collection_cards").select("user_id"),
-      this.client.from("ebay_listing_drafts").select("user_id,status,draft"),
-      this.client.from("ebay_order_sales").select("user_id,amount_cents,currency"),
+      this.client.from("ebay_listing_drafts").select("user_id,collection_id,status,draft,sold_amount_cents,sold_currency"),
+      this.client.from("ebay_order_sales").select("user_id,collection_id,amount_cents,currency"),
       this.identificationFeedback?.summary() ?? [],
       this.marketFeedback?.summary() ?? [],
       this.providerUsage?.summary() ?? [],
@@ -30,14 +30,19 @@ export class SupabaseAdminOverview {
     const rows = users.map((user) => {
       const userDrafts = (drafts ?? []).filter((draft) => draft.user_id === user.id);
       const userSales = (sales ?? []).filter((sale) => sale.user_id === user.id);
+      const saleCollectionIds = new Set(userSales.map((sale) => sale.collection_id).filter(Boolean));
+      const soldDraftsMissingOrder = userDrafts.filter((draft) => draft.status === "sold" && !saleCollectionIds.has(draft.collection_id));
+      const soldCount = userSales.length + soldDraftsMissingOrder.length;
+      const soldGrossCents = userSales.reduce((sum, sale) => sum + cents(sale.amount_cents), 0) +
+        soldDraftsMissingOrder.reduce((sum, draft) => sum + cents(draft.sold_amount_cents ?? draft.draft?.priceCents), 0);
       return {
         userId: user.id, email: user.email ?? null,
         createdAt: user.created_at, lastSignInAt: user.last_sign_in_at ?? null,
         cardCount: (cards ?? []).filter((card) => card.user_id === user.id).length,
         activeListingCount: userDrafts.filter((draft) => draft.status === "published").length,
         activeListingValueCents: userDrafts.filter((draft) => draft.status === "published").reduce((sum, draft) => sum + cents(draft.draft?.priceCents), 0),
-        soldCount: userSales.length,
-        soldGrossCents: userSales.reduce((sum, sale) => sum + cents(sale.amount_cents), 0),
+        soldCount,
+        soldGrossCents,
       };
     });
     return {

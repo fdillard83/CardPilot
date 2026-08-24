@@ -13,6 +13,11 @@ export type AccountPreferences = {
   listingCtrMinimumImpressions: number;
   listingLowCtrPercent: number;
   listingViewsWithoutWatchers: number;
+  listingCostSafetyEnabled: boolean;
+  listingTransactionFeePercent: number;
+  listingTransactionFixedFeeCents: number;
+  listingMailingCostCents: number;
+  estimatedBuyerSalesTaxPercent: number;
   autoValueEnabled: boolean;
   autoValueMaxCents: number | null;
   ebayConnectPromptDismissed: boolean;
@@ -43,6 +48,11 @@ export const defaultAccountPreferences: AccountPreferences = {
   listingCtrMinimumImpressions: 100,
   listingLowCtrPercent: 1,
   listingViewsWithoutWatchers: 10,
+  listingCostSafetyEnabled: false,
+  listingTransactionFeePercent: 13.25,
+  listingTransactionFixedFeeCents: 30,
+  listingMailingCostCents: 78,
+  estimatedBuyerSalesTaxPercent: 7,
   autoValueEnabled: false,
   autoValueMaxCents: null,
   ebayConnectPromptDismissed: false,

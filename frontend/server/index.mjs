@@ -16,6 +16,7 @@ import { EbayTaxonomyClient } from "./ebay/taxonomy.mjs";
 import { listingReadiness } from "./ebay/listing-readiness.mjs";
 import { calculateAuctionSchedule } from "./ebay/auction-schedule.mjs";
 import { deliveredPricePosition, fulfillmentBuyerShippingCents, fulfillmentShippingService } from "./ebay/price-positioning.mjs";
+import { listingEconomicsFromPreferences } from "./ebay/listing-economics.mjs";
 import {
   EBAY_ANALYTICS_SCOPE,
   EbayListingEngagementService,
@@ -554,6 +555,7 @@ async function runAutopilotRepricing(now = Date.now()) {
         const originalPriceFloorCents = Math.ceil(originalPriceCents * preferences.autoRepriceFloorPercent / 100);
         const nextPriceCents = Math.max(position.proposedItemPriceCents, originalPriceFloorCents, preferences.autopilotMinimumPriceCents);
         if (nextPriceCents >= draft.priceCents) continue;
+        await assertListingCostSafety(userId, { ...draft, priceCents: nextPriceCents }, token, position.ownShippingCostCents);
         const sku = `cardpilot-${card.collectionId}`;
         const bulkResult = await ebaySelling.request(token, "/sell/inventory/v1/bulk_update_price_quantity", {
           method: "POST",
@@ -592,6 +594,7 @@ async function runAutopilotRepricing(now = Date.now()) {
             outcomes: [],
           }),
         }, ebaySellEnvironment);
+        await syncCollectionValueToListing(userId, card, nextPriceCents, draft.currency);
         results.push({ userId, collectionId: card.collectionId, previousPriceCents: draft.priceCents, priceCents: nextPriceCents });
       }
     } catch (error) {
@@ -827,7 +830,11 @@ async function loadEbaySellerSetup(token) {
   ]);
   return {
     locations: (locations?.locations ?? []).map((item) => ({ id: item.merchantLocationKey, name: item.name })),
-    fulfillmentPolicies: (fulfillment?.fulfillmentPolicies ?? []).map((item) => ({ id: item.fulfillmentPolicyId, name: item.name })),
+    fulfillmentPolicies: (fulfillment?.fulfillmentPolicies ?? []).map((item) => ({
+      id: item.fulfillmentPolicyId, name: item.name,
+      buyerShippingCostCents: fulfillmentBuyerShippingCents(item),
+      shippingService: fulfillmentShippingService(item),
+    })),
     paymentPolicies: (payment?.paymentPolicies ?? []).map((item) => ({ id: item.paymentPolicyId, name: item.name })),
     returnPolicies: (returns?.returnPolicies ?? []).map((item) => ({ id: item.returnPolicyId, name: item.name })),
   };
@@ -1154,10 +1161,22 @@ app.get("/api/collection/:collectionId/ebay-draft", async (request, response) =>
   } catch {
     // The confirmed value remains available when live pricing providers degrade.
   }
+  let generatedDraft = null;
+  if (!saved) {
+    try { generatedDraft = await prepareAutomaticEbayDraft(card, preferences.ebaySellingDefaults, saleStrategyOptions); }
+    catch { generatedDraft = ebayDraftFromCard(card, preferences.ebaySellingDefaults, saleStrategyOptions); }
+  }
   response.json({
-    draft: saved ?? ebayDraftFromCard(card, preferences.ebaySellingDefaults, saleStrategyOptions),
+    draft: saved ?? generatedDraft,
     generated: !saved,
     saleStrategyOptions,
+    listingCostSafety: {
+      enabled: preferences.listingCostSafetyEnabled,
+      transactionFeePercent: preferences.listingTransactionFeePercent,
+      transactionFixedFeeCents: preferences.listingTransactionFixedFeeCents,
+      mailingCostCents: preferences.listingMailingCostCents,
+      estimatedBuyerSalesTaxPercent: preferences.estimatedBuyerSalesTaxPercent,
+    },
   });
 });
 
@@ -1328,6 +1347,33 @@ async function ebaySellerAccessToken(userId) {
   return (await ebaySelling.refresh(refreshToken, connection.scopes || undefined)).access_token;
 }
 
+async function listingBuyerShippingCents(token, fulfillmentPolicyId) {
+  if (!fulfillmentPolicyId) return 0;
+  const policy = await ebaySelling.request(token, `/sell/account/v1/fulfillment_policy/${encodeURIComponent(fulfillmentPolicyId)}`);
+  return fulfillmentBuyerShippingCents(policy) ?? 0;
+}
+
+async function assertListingCostSafety(userId, draft, token, buyerShippingCents = null) {
+  const preferences = await cloudServices.preferences.get(userId);
+  if (!preferences.listingCostSafetyEnabled) return null;
+  const shipping = buyerShippingCents ?? await listingBuyerShippingCents(token, draft.fulfillmentPolicyId);
+  const estimate = listingEconomicsFromPreferences(draft, preferences, shipping);
+  if (!estimate.safe) {
+    const loss = Math.abs(estimate.netProceedsCents);
+    const error = new Error(`Your “Do not sell at a loss” safety setting blocked this price. Estimated costs exceed the sale proceeds by $${(loss / 100).toFixed(2)}.`);
+    error.status = 409;
+    throw error;
+  }
+  return estimate;
+}
+
+async function syncCollectionValueToListing(userId, card, priceCents, currency = "USD") {
+  if (!card || !Number.isInteger(priceCents) || priceCents < 0) return;
+  await collectionStore.updateConfirmedValuation(userId, card.collectionId, {
+    amountCents: priceCents, currency, confidence: "high", method: "active_listing", userAdjusted: false,
+  });
+}
+
 const buyerShippingPolicyCache = new Map();
 async function buyerShippingForDrafts(userId, drafts) {
   const policyIds = [...new Set(drafts
@@ -1416,6 +1462,7 @@ async function publishEbayListing(userId, collectionId) {
       }
     }
     const token = await ebaySellerAccessToken(userId);
+    await assertListingCostSafety(userId, draft, token);
     const sku = `cardpilot-${card.collectionId}`;
     const [front, back] = await Promise.all([
       collectionStore.image(userId, card.collectionId, "front"),
@@ -1473,6 +1520,7 @@ async function publishEbayListing(userId, collectionId) {
     const result = await cloudServices.ebaySelling.markPublished(userId, card.collectionId, {
       offerId, listingId: published.listingId,
     });
+    await syncCollectionValueToListing(userId, card, draft.listingFormat === "AUCTION" ? draft.auctionStartPriceCents : draft.priceCents, draft.currency);
     if (!draft.promoteListing) return result;
     try {
       const promotion = await promoteEbayListing(token, published.listingId, card.collectionId, draft.promotionAdRatePercent);
@@ -1933,6 +1981,11 @@ app.post("/api/ebay/listings/apply-price-positioning", async (request, response)
         if (requestedShippingChange && requested.shippingService === "STANDARD_ENVELOPE" && exactTargetItemPriceCents >= 2_000) {
           throw new Error("eBay Standard Envelope requires an eligible item price below $20.");
         }
+        await assertListingCostSafety(userId, {
+          ...editableEbayDraft(saved),
+          priceCents: exactTargetItemPriceCents,
+          fulfillmentPolicyId: saved.fulfillmentPolicyId,
+        }, token, nextShippingCostCents);
         if (position.currentDeliveredPriceCents <= position.lowestCompetitorDeliveredPriceCents - position.undercutCents ||
           exactTargetItemPriceCents !== requested.proposedPriceCents) {
           throw new Error("The market position changed after this review. Check it again before applying.");
@@ -2006,6 +2059,7 @@ app.post("/api/ebay/listings/apply-price-positioning", async (request, response)
             outcomes: [],
           }),
         }, ebaySellEnvironment);
+        await syncCollectionValueToListing(userId, card, exactTargetItemPriceCents, saved.currency);
         results.push({ ok: true, collectionId: card.collectionId, previousPriceCents: saved.priceCents, priceCents: exactTargetItemPriceCents, shippingCostCents: nextShippingCostCents });
       } catch (error) {
         results.push({ ok: false, collectionId: requested.collectionId, error: error.message ?? "The price could not be changed." });
@@ -2029,7 +2083,7 @@ app.post("/api/collection/:collectionId/ebay-publish", async (request, response)
     response.json({ draft: await publishEbayListing(request.cardPilotUser.id, request.params.collectionId) });
   } catch (error) {
     console.error("eBay listing publication failed", { status: error?.status, code: error?.code });
-    response.status(error instanceof ZodError ? 400 : 502).json({ error: error.message ?? "eBay could not publish this listing." });
+    response.status(error.status ?? (error instanceof ZodError ? 400 : 502)).json({ error: error.message ?? "eBay could not publish this listing." });
   }
 });
 
@@ -2122,6 +2176,12 @@ app.post("/api/collection/:collectionId/ebay-revise", async (request, response) 
       ...editableEbayDraft(saved),
       ...(shippingOnly ? { fulfillmentPolicyId: requestedFulfillmentPolicyId } : {}),
     };
+    if (!shippingOnly || requestedFulfillmentPolicyId) {
+      const safetyShipping = shippingOnly
+        ? await listingBuyerShippingCents(token, requestedFulfillmentPolicyId)
+        : null;
+      await assertListingCostSafety(userId, draft, token, safetyShipping);
+    }
     const sku = `cardpilot-${card.collectionId}`;
     const existingOffer = await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(saved.ebayOfferId)}`);
     const [front, back] = await Promise.all([
@@ -2187,9 +2247,10 @@ app.post("/api/collection/:collectionId/ebay-revise", async (request, response) 
     if (shippingOnly) {
       await cloudServices.ebaySelling.saveDraft(userId, card.collectionId, draft, ebaySellEnvironment);
     }
+    if (!shippingOnly) await syncCollectionValueToListing(userId, card, draft.listingFormat === "AUCTION" ? draft.auctionStartPriceCents : draft.priceCents, draft.currency);
     response.json({ draft: await cloudServices.ebaySelling.draft(userId, card.collectionId) });
   } catch (error) {
-    response.status(502).json({ error: error.message ?? "eBay could not revise this listing." });
+    response.status(error.status ?? 502).json({ error: error.message ?? "eBay could not revise this listing." });
   }
 });
 

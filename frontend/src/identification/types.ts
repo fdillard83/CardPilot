@@ -593,6 +593,7 @@ export type ValuationMethod =
   | "exact_active"
   | "broader_active"
   | "variant_active"
+  | "active_listing"
   | "manual";
 
 export type ConfirmedValuation = {

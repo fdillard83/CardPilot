@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { componentRectangles } from "./group-card-photo.ts";
+import { componentRectangles, separatedComponentRectangles } from "./group-card-photo.ts";
 
 test("group-card components are separated and ordered by row", () => {
   const width = 20;
@@ -16,5 +16,14 @@ test("group-card components are separated and ordered by row", () => {
     { x: 12, y: 2, width: 5, height: 4 },
     { x: 2, y: 8, width: 5, height: 4 },
     { x: 12, y: 8, width: 5, height: 4 },
+  ]);
+});
+
+test("group-card separation removes a thin false bridge between clearly spaced cards", () => {
+  const width = 30; const height = 18; const mask = new Uint8Array(width * height);
+  for (const left of [2, 18]) for (let y = 3; y < 15; y += 1) for (let x = left; x < left + 9; x += 1) mask[y * width + x] = 1;
+  for (let x = 11; x < 18; x += 1) mask[9 * width + x] = 1;
+  assert.deepEqual(separatedComponentRectangles(mask, width, height), [
+    { x: 2, y: 3, width: 9, height: 12 }, { x: 18, y: 3, width: 9, height: 12 },
   ]);
 });

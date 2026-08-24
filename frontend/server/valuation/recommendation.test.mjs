@@ -70,7 +70,7 @@ test("selling strategies separate the market floor from midpoint and upper value
     }]),
   });
 
-  assert.equal(snapshot.saleStrategyOptions.sell_faster.amountCents, 195);
+  assert.equal(snapshot.saleStrategyOptions.sell_faster.amountCents, 190);
   assert.equal(snapshot.saleStrategyOptions.balanced.amountCents, 225);
   assert.equal(snapshot.saleStrategyOptions.maximize_value.amountCents, 295);
 });

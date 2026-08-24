@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AccountPreferences } from "../accounts/preferences";
 import { EbayListingDraft } from "../selling/EbayListingDraft";
 import { EbayListingQueue } from "../selling/EbayListingQueue";
+import { BatchEbayListing } from "../selling/BatchEbayListing";
 import {
   cardCategoryLabel,
   cardKindFromFields,
@@ -1370,6 +1371,7 @@ export function CollectionView({
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
   const [filter, setFilter] = useState<CollectionFilter>("all");
+  const [collectionSection, setCollectionSection] = useState<"collection" | "sold">("collection");
   const [sort, setSort] = useState<CollectionSort>("newest");
   const [expandedDetailIds, setExpandedDetailIds] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1387,6 +1389,7 @@ export function CollectionView({
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("open") === "ebay-listings"
   );
+  const [batchListingOpen, setBatchListingOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1613,7 +1616,8 @@ export function CollectionView({
   );
 
   const collectionValuation = useMemo(() => {
-    const valuedCards = cards.filter((card) => card.confirmedValuation);
+    const collectionCards = cards.filter((card) => card.selling?.status !== "sold");
+    const valuedCards = collectionCards.filter((card) => card.confirmedValuation);
     const activeListings = cards.filter((card) => card.selling?.status === "published");
     const currencies = new Set(
       valuedCards.map((card) => card.confirmedValuation?.currency),
@@ -1639,8 +1643,8 @@ export function CollectionView({
     }, 0);
     return {
       valuedCount: valuedCards.length,
-      unvaluedCount: cards.length - valuedCards.length,
-      staleCount: cards.filter((card) => valuationIsStale(card)).length,
+      unvaluedCount: collectionCards.length - valuedCards.length,
+      staleCount: collectionCards.filter((card) => valuationIsStale(card)).length,
       listedCount: activeListings.length,
       activeAskingTotalLabel: activeListings.length === 0
         ? formatPrice(0, "USD")
@@ -1667,6 +1671,7 @@ export function CollectionView({
     const normalizedQuery = query.trim().toLowerCase();
     const matching = cards.filter(
       (card) =>
+        (collectionSection === "sold" ? card.selling?.status === "sold" : card.selling?.status !== "sold") &&
         (!normalizedQuery || searchableText(card).includes(normalizedQuery)) &&
         (category === "all" || cardCategoryLabel(card.fields) === category) &&
         matchesFilter(card, filter),
@@ -1685,7 +1690,9 @@ export function CollectionView({
       }
       return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
     });
-  }, [cards, category, filter, query, sort]);
+  }, [cards, category, collectionSection, filter, query, sort]);
+
+  const unlistedCards = useMemo(() => cards.filter((card) => card.selling?.status !== "sold" && !card.selling), [cards]);
 
   const closeValuationPanel = () => {
     valuationRequestIdRef.current += 1;
@@ -2760,7 +2767,7 @@ export function CollectionView({
           <strong>{collectionValuation.totalLabel}</strong>
           <span>Saved collection value</span>
         </div>
-        <div><strong>{cards.length}</strong><span>Total cards</span></div>
+        <div><strong>{cards.filter((card) => card.selling?.status !== "sold").length}</strong><span>Cards in collection</span></div>
         <div><strong>{collectionValuation.valuedCount}</strong><span>Valued</span></div>
         <div><strong>{collectionValuation.unvaluedCount}</strong><span>Need a value</span></div>
         <div><strong>{collectionValuation.staleCount}</strong><span>Pricing out of date</span></div>
@@ -2771,6 +2778,10 @@ export function CollectionView({
       </div>
       <p className="collection-summary-note">Potential profit estimates subtract an illustrative 13.25% eBay fee plus $0.30 per sale and any active promotion rate. Card cost, shipping, taxes, returns, and other expenses are not included.</p>
       <div className="ebay-queue-launch"><div><strong>eBay listings and drafts</strong><span>See drafts, scheduled listings, active listings, ended listings, and synchronized sales.</span></div><button type="button" onClick={() => setListingQueueOpen(true)}>Open Listings and drafts</button></div>
+      {unlistedCards.length > 1 && <section className="collection-batch-listing" aria-labelledby="batch-listing-title">
+        <div><span>Batch eBay listing</span><strong id="batch-listing-title">Use shared rules, review every card, publish once</strong><small>Set shipping, payment, returns, promotion, and other shared choices once. Then check the distinct title, price, and category for every card in a review grid.</small></div>
+        <button className="primary-action" type="button" onClick={() => setBatchListingOpen(true)}>Review and list {unlistedCards.length} cards in a batch</button>
+      </section>}
       {activeListingCards.length > 0 && <section className="collection-price-positioning" aria-labelledby="delivered-price-title">
         <div>
           <span>Match the lowest exact-card buyer total</span>
@@ -2855,6 +2866,10 @@ export function CollectionView({
         />
       )}
 
+      <div className="collection-section-tabs" role="tablist" aria-label="Collection sections">
+        <button type="button" role="tab" aria-selected={collectionSection === "collection"} className={collectionSection === "collection" ? "active" : ""} onClick={() => { setCollectionSection("collection"); if (filter === "sold") setFilter("all"); }}>My collection <span>{cards.filter((card) => card.selling?.status !== "sold").length}</span></button>
+        <button type="button" role="tab" aria-selected={collectionSection === "sold"} className={collectionSection === "sold" ? "active" : ""} onClick={() => { setCollectionSection("sold"); setFilter("all"); }}>Sold cards <span>{collectionValuation.soldCount}</span></button>
+      </div>
       <div className="collection-toolbar">
         <label>
           <span>Search collection</span>
@@ -2883,7 +2898,7 @@ export function CollectionView({
             <option value="autograph">Autographs</option>
             <option value="rookie">Rookies</option>
             <option value="listed">Listed on eBay</option>
-            <option value="sold">Sold on eBay</option>
+            {collectionSection === "sold" && <option value="sold">Sold on eBay</option>}
             <option value="unvalued">Needs a value</option>
             <option value="stale">Pricing out of date</option>
           </select>
@@ -3492,6 +3507,7 @@ export function CollectionView({
       )}
       {sellingCard && <EbayListingDraft card={sellingCard} onClose={() => void refreshCollectionAfterSelling()} />}
       {listingQueueOpen && <EbayListingQueue cards={cards} onClose={() => setListingQueueOpen(false)} onOpenDraft={(card) => { setListingQueueOpen(false); setSellingCard(card); }} />}
+      {batchListingOpen && <BatchEbayListing cards={unlistedCards} onClose={() => setBatchListingOpen(false)} onComplete={() => { void fetch("/api/collection").then((response) => response.json()).then((payload) => { if (Array.isArray(payload.cards)) onCardsChange(payload.cards); }); }} />}
     </section>
   );
 }

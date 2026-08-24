@@ -30,7 +30,7 @@ type SaleStrategyOptions = Record<"sell_faster" | "balanced" | "maximize_value",
 type SellingStatus = { configured: boolean; connected: boolean; environment: "sandbox" | "production"; marketingAuthorized?: boolean };
 type SellerSetup = {
   locations: { id: string; name: string }[];
-  fulfillmentPolicies: { id: string; name: string }[];
+  fulfillmentPolicies: { id: string; name: string; buyerShippingCostCents?: number | null; shippingService?: string }[];
   paymentPolicies: { id: string; name: string }[];
   returnPolicies: { id: string; name: string }[];
 };
@@ -80,6 +80,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
   const [desiredEndLocal, setDesiredEndLocal] = useState("");
   const [priceInput, setPriceInput] = useState("");
   const [saleStrategyOptions, setSaleStrategyOptions] = useState<SaleStrategyOptions | null>(null);
+  const [listingCostSafety, setListingCostSafety] = useState<{ enabled: boolean; transactionFeePercent: number; transactionFixedFeeCents: number; mailingCostCents: number; estimatedBuyerSalesTaxPercent: number } | null>(null);
   const revisionDetailsDirtyRef = useRef(false);
   const selectedCategoryId = draft?.categoryId ?? "";
   const pokemonCategory = selectedCategoryId === "183454" || (!selectedCategoryId && cardKindFromFields(card.fields) === "pokemon");
@@ -94,6 +95,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
       if (current) {
         setDraft(draftPayload.draft);
         setSaleStrategyOptions(draftPayload.saleStrategyOptions ?? null);
+        setListingCostSafety(draftPayload.listingCostSafety ?? null);
         revisionDetailsDirtyRef.current = false;
         setPriceInput((draftPayload.draft.priceCents / 100).toFixed(2));
         setStatus(statusPayload);
@@ -471,11 +473,21 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
     ? Math.round(referencePriceCents * ((draft.promotionAdRatePercent ?? 2) / 100))
     : 0;
   const estimatedProceedsCents = Math.max(0, referencePriceCents - estimatedFeeCents - promotionFeeCents);
+  const selectedBuyerShippingCents = setup?.fulfillmentPolicies.find((policy) => policy.id === draft?.fulfillmentPolicyId)?.buyerShippingCostCents ?? 0;
+  const safetySubtotalCents = referencePriceCents + selectedBuyerShippingCents;
+  const safetyFeeBasisCents = safetySubtotalCents + Math.round(safetySubtotalCents * ((listingCostSafety?.estimatedBuyerSalesTaxPercent ?? 0) / 100));
+  const safetyTransactionFeeCents = Math.round(safetyFeeBasisCents * ((listingCostSafety?.transactionFeePercent ?? 0) / 100)) + (listingCostSafety?.transactionFixedFeeCents ?? 0);
+  const safetyPromotionFeeCents = draft?.promoteListing ? Math.round(safetyFeeBasisCents * ((draft.promotionAdRatePercent ?? 0) / 100)) : 0;
+  const safetyNetCents = safetySubtotalCents - safetyTransactionFeeCents - safetyPromotionFeeCents - (listingCostSafety?.mailingCostCents ?? 0);
+  const belowCostWarning = listingCostSafety?.enabled && safetyNetCents < 0
+    ? `Do not sell at a loss is on: this price is estimated to lose $${(Math.abs(safetyNetCents) / 100).toFixed(2)} after the selected shipping, eBay fees, promotion, tax fee effect, and mailing cost.`
+    : null;
   const publishBlockers = draft && status ? [
     !status.connected ? `Connect the eBay ${status.environment} seller account` : null,
     draft.status === "sold" ? "This card is already marked sold" : null,
     ...missingPublishingFields,
     ...missingRequiredAspects,
+    belowCostWarning,
   ].filter((value): value is string => Boolean(value)) : ["Listing details are still loading"];
 
   return (
@@ -508,6 +520,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
             </section>}
             {error && <div className="error-banner ebay-setup-feedback" role="alert">{error}</div>}
             {message && <div className="collection-status-banner ebay-setup-feedback" role="status">{message}</div>}
+            {belowCostWarning && <div className="error-banner ebay-setup-feedback" role="alert">{belowCostWarning}</div>}
             <section className="ebay-listing-preview" aria-labelledby="ebay-preview-title">
               <div className="ebay-preview-images">{selectedImages.includes("front") && <img src={card.images.frontUrl} alt="Front of the card being listed" />}{selectedImages.includes("back") && card.images.backUrl && <img src={card.images.backUrl} alt="Back of the card being listed" />}</div>
               <div><span>Listing preview</span><h3 id="ebay-preview-title">{draft.title || "Add a listing title"}</h3><strong>{draft.listingFormat === "AUCTION" ? `Starting bid ${draft.currency} ${((draft.auctionStartPriceCents ?? 99) / 100).toFixed(2)}` : `${draft.currency} ${(fixedPriceCents / 100).toFixed(2)}`}</strong><p>{draft.description || "Add a description."}</p></div>
@@ -521,7 +534,11 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
                 const strategy = event.target.value as NonNullable<Draft["pricingStrategy"]>;
                 update("pricingStrategy", strategy);
                 const option = saleStrategyOptions?.[strategy];
-                if (option) setPriceInput((option.amountCents / 100).toFixed(2));
+                if (option) {
+                  const shipping = setup?.fulfillmentPolicies.find((policy) => policy.id === draft.fulfillmentPolicyId)?.buyerShippingCostCents ?? 0;
+                  const target = strategy === "sell_faster" ? Math.max(1, option.amountCents - shipping) : option.amountCents;
+                  setPriceInput((target / 100).toFixed(2));
+                }
               }}><option value="sell_faster">Sell faster</option><option value="balanced">Balanced</option><option value="maximize_value">Maximize value</option></select><small>{saleStrategyOptions?.[draft.pricingStrategy ?? "balanced"]?.rationale ?? "Choose how price and expected selling time should trade off."}</small></label>}
               {draft.listingFormat === "FIXED_PRICE" ? <label>Buy It Now price <input type="text" inputMode="decimal" placeholder="0.00" value={priceInput} onChange={(e) => setPriceInput(e.target.value)} /><small>Enter dollars and cents, for example 12.95.</small></label> : <>
                 <label>Starting bid <input type="number" min="0.01" step="0.01" value={((draft.auctionStartPriceCents ?? 99) / 100).toFixed(2)} onChange={(e) => update("auctionStartPriceCents", Math.round(Number(e.target.value) * 100))} /></label>
@@ -548,7 +565,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
             </div>
             {draft.listingFormat === "AUCTION" && <section className="ebay-auction-schedule"><div><h3>Schedule by desired ending time</h3><p>Optional. Leave this off to publish the auction manually.</p></div>{draft.scheduleStatus === "scheduled" && draft.scheduledPublishAt && draft.desiredEndAt ? <div className="ebay-scheduled-summary"><strong>Automatic publication scheduled</strong><span>Publishes {new Date(draft.scheduledPublishAt).toLocaleString()}</span><span>Expected to end {new Date(draft.desiredEndAt).toLocaleString()}</span><button type="button" disabled={busy} onClick={() => void cancelSchedule()}>Cancel schedule</button></div> : <><label className="ebay-schedule-toggle"><input type="checkbox" checked={scheduleEnabled} onChange={(event) => setScheduleEnabled(event.target.checked)} /> Automatically publish to end when I choose</label>{scheduleEnabled && <div className="ebay-schedule-fields"><label>Desired local ending date and time <input type="datetime-local" value={desiredEndLocal} onChange={(event) => setDesiredEndLocal(event.target.value)} /></label><div><span>Your timezone</span><strong>{Intl.DateTimeFormat().resolvedOptions().timeZone}</strong></div>{desiredEndLocal && Number.isFinite(new Date(desiredEndLocal).getTime()) && <div><span>Calculated publication</span><strong>{new Date(new Date(desiredEndLocal).getTime() - auctionDays * 86_400_000).toLocaleString()}</strong></div>}<button className="primary-action" type="button" disabled={busy || !desiredEndLocal || publishBlockers.length > 0} onClick={() => void scheduleAuction()}>Review and schedule automatic publication</button></div>}</>}</section>}
             <section className="ebay-photo-manager"><div><h3>Listing photos</h3><p>The front image is used by default. Add the back only when you want buyers to see it.</p></div><label><input type="checkbox" checked readOnly /> Front photo <span>Primary</span></label>{card.images.backUrl ? <label><input type="checkbox" checked={selectedImages.includes("back")} onChange={(e) => update("listingImages", e.target.checked ? ["front", "back"] : ["front"])} /> Include back photo</label> : <small>No back photo was saved for this card. One front image is acceptable.</small>}</section>
-            <section className="ebay-proceeds"><div><span>Price reference</span><strong>{draft.currency} {(referencePriceCents / 100).toFixed(2)}</strong></div><div><span>Illustrative eBay fee</span><strong>− {draft.currency} {(estimatedFeeCents / 100).toFixed(2)}</strong></div>{draft.promoteListing && <div><span>Maximum promotion fee ({draft.promotionAdRatePercent ?? 2}%)</span><strong>− {draft.currency} {(promotionFeeCents / 100).toFixed(2)}</strong></div>}<div><span>Approximate proceeds</span><strong>{draft.currency} {(estimatedProceedsCents / 100).toFixed(2)}</strong></div><p>Illustrative estimate using 13.25% plus $0.30{draft.promoteListing ? ", plus the selected promotion rate when eBay attributes the sale to the ad" : ""}. Actual fees vary by seller, category, promotions, taxes, shipping, and final auction price.{draft.listingFormat === "AUCTION" ? ` Selected auction currently ends around ${auctionEnd.toLocaleString()}.` : ""}</p></section>
+            <section className="ebay-proceeds"><div><span>Price reference</span><strong>{draft.currency} {(referencePriceCents / 100).toFixed(2)}</strong></div><div><span>Illustrative eBay fee</span><strong>− {draft.currency} {(estimatedFeeCents / 100).toFixed(2)}</strong></div>{draft.promoteListing && <div><span>Maximum promotion fee ({draft.promotionAdRatePercent ?? 2}%)</span><strong>− {draft.currency} {(promotionFeeCents / 100).toFixed(2)}</strong></div>}<div><span>Approximate proceeds</span><strong>{draft.currency} {(estimatedProceedsCents / 100).toFixed(2)}</strong></div>{listingCostSafety?.enabled && <p className="account-inline-success"><strong>Do not sell at a loss is on.</strong> Before CardPilot publishes or changes the live price, it checks the selected shipping policy, estimated transaction and promotion fees, buyer-tax fee effect, and your ${(listingCostSafety.mailingCostCents / 100).toFixed(2)} mailing cost.</p>}<p>Illustrative estimate using 13.25% plus $0.30{draft.promoteListing ? ", plus the selected promotion rate when eBay attributes the sale to the ad" : ""}. Actual fees vary by seller, category, promotions, taxes, shipping, and final auction price.{draft.listingFormat === "AUCTION" ? ` Selected auction currently ends around ${auctionEnd.toLocaleString()}.` : ""}</p></section>
             {draft.status !== "published" && publishBlockers.length > 0 && <p className="ebay-missing-fields">Publish button unavailable: {publishBlockers.join(", ")}.</p>}
             <div className="ebay-draft-actions"><button type="button" disabled={busy || draft.status === "sold" || draft.status === "ended"} onClick={() => void save()}>{busy ? "Working..." : "Save draft"}</button>{draft.draftId && draft.status === "draft" && draft.scheduleStatus !== "scheduled" && <button className="account-delete-button" type="button" disabled={busy} onClick={() => void deleteDraft()}>Delete draft</button>}{draft.status === "ended" && <button className="primary-action" type="button" disabled={busy} onClick={() => void prepareRelist()}>Relist this card</button>}{draft.status === "published" ? <><button className="primary-action" type="button" disabled={busy} onClick={() => void reviseListing()}>Save and revise eBay</button><button className="account-delete-button" type="button" disabled={busy} onClick={() => void endListing()}>End eBay listing</button></> : draft.status !== "ended" && <button className="primary-action" type="button" disabled={busy || publishBlockers.length > 0} onClick={() => void publish()}>{draft.status === "sold" ? "Card sold — relisting blocked" : `Review and publish to ${status.environment}`}</button>}</div>
             <p className="valuation-disclaimer">CardPilot never publishes from this screen without a separate confirmation. Verify condition, category, policies, price, and photographs first.</p>
