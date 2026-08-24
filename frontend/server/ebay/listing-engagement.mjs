@@ -27,13 +27,31 @@ export function parseTrafficReport(payload) {
 }
 
 export function parseWatchCounts(xml) {
+  return new Map([...parseActiveListingDetails(xml)].map(([listingId, details]) => [
+    listingId,
+    details.watcherCount,
+  ]));
+}
+
+function priceCents(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount >= 0 ? Math.round(amount * 100) : null;
+}
+
+export function parseActiveListingDetails(xml) {
   const byListingId = new Map();
   for (const match of String(xml ?? "").matchAll(/<Item>([\s\S]*?)<\/Item>/gi)) {
     const item = match[1];
     const listingId = item.match(/<ItemID>(\d+)<\/ItemID>/i)?.[1];
     if (!listingId) continue;
     const watcherCount = metricNumber(item.match(/<WatchCount>(\d+)<\/WatchCount>/i)?.[1] ?? 0);
-    byListingId.set(listingId, watcherCount);
+    const currentPrice = item.match(/<CurrentPrice(?:\s+[^>]*)?>([^<]+)<\/CurrentPrice>/i);
+    const currency = item.match(/<CurrentPrice\s+[^>]*currencyID=["']([^"']+)["'][^>]*>/i)?.[1] ?? null;
+    byListingId.set(listingId, {
+      watcherCount,
+      priceCents: priceCents(currentPrice?.[1]),
+      currency,
+    });
   }
   return byListingId;
 }
@@ -88,6 +106,7 @@ export class EbayListingEngagementService {
       }));
     const empty = {
       byListingId: new Map(),
+      activeListingsById: new Map(),
       analyticsAuthorized,
       viewsUpdatedAt: null,
       fetchedAt: new Date(this.now()).toISOString(),
@@ -108,8 +127,8 @@ export class EbayListingEngagementService {
       ? this.ebayClient.request(token, trafficReportPath(active, this.now()))
       : Promise.resolve(null);
     const [watchersResult, viewsResult] = await Promise.allSettled([watchersPromise, viewsPromise]);
-    const watcherCounts = watchersResult.status === "fulfilled"
-      ? parseWatchCounts(watchersResult.value)
+    const activeListingsById = watchersResult.status === "fulfilled"
+      ? parseActiveListingDetails(watchersResult.value)
       : new Map();
     const traffic = viewsResult.status === "fulfilled" && viewsResult.value
       ? parseTrafficReport(viewsResult.value)
@@ -119,11 +138,12 @@ export class EbayListingEngagementService {
       return [listingId, {
         viewCount: viewMetrics?.viewCount ?? null,
         impressionCount: viewMetrics?.impressionCount ?? null,
-        watcherCount: watcherCounts.get(listingId) ?? null,
+        watcherCount: activeListingsById.get(listingId)?.watcherCount ?? null,
       }];
     }));
     const value = {
       byListingId,
+      activeListingsById,
       analyticsAuthorized,
       viewsUpdatedAt: traffic.updatedAt,
       fetchedAt: new Date(this.now()).toISOString(),

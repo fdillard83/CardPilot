@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   EbayListingEngagementService,
+  parseActiveListingDetails,
   parseTrafficReport,
   parseWatchCounts,
   trafficReportPath,
@@ -29,6 +30,14 @@ test("watch counts are read from active seller items", () => {
   assert.equal(counts.get("456"), 0);
 });
 
+test("active seller items include the live eBay price and currency", () => {
+  const listings = parseActiveListingDetails(`<ActiveList><ItemArray>
+    <Item><ItemID>123</ItemID><SellingStatus><CurrentPrice currencyID="USD">10.95</CurrentPrice></SellingStatus><WatchCount>4</WatchCount></Item>
+    <Item><ItemID>456</ItemID><SellingStatus><CurrentPrice currencyID="USD">invalid</CurrentPrice></SellingStatus></Item>
+  </ItemArray></ActiveList>`);
+  assert.deepEqual(listings.get("123"), { watcherCount: 4, priceCents: 1095, currency: "USD" });
+  assert.deepEqual(listings.get("456"), { watcherCount: 0, priceCents: null, currency: "USD" });
+});
 test("traffic report requests listing-level lifetime metrics", () => {
   const path = trafficReportPath(
     [{ listingId: "123", publishedAt: "2026-08-01T12:00:00.000Z" }],
@@ -47,7 +56,7 @@ test("engagement snapshots combine views and watchers and cache the result", asy
     ebayClient: {
       async tradingRequest() {
         calls += 1;
-        return "<Item><ItemID>123</ItemID><WatchCount>3</WatchCount></Item>";
+        return "<Item><ItemID>123</ItemID><SellingStatus><CurrentPrice currencyID=\"USD\">10.95</CurrentPrice></SellingStatus><WatchCount>3</WatchCount></Item>";
       },
       async request() {
         calls += 1;
@@ -69,6 +78,7 @@ test("engagement snapshots combine views and watchers and cache the result", asy
   const first = await service.snapshot(input);
   const second = await service.snapshot(input);
   assert.deepEqual(first.byListingId.get("123"), { viewCount: 18, impressionCount: 60, watcherCount: 3 });
+  assert.deepEqual(first.activeListingsById.get("123"), { watcherCount: 3, priceCents: 1095, currency: "USD" });
   assert.deepEqual(second, first);
   assert.equal(calls, 2);
 });

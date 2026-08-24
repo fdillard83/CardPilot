@@ -1369,7 +1369,7 @@ async function assertListingCostSafety(userId, draft, token, buyerShippingCents 
 
 async function syncCollectionValueToListing(userId, card, priceCents, currency = "USD") {
   if (!card || !Number.isInteger(priceCents) || priceCents < 0) return;
-  await collectionStore.updateConfirmedValuation(userId, card.collectionId, {
+  return collectionStore.updateConfirmedValuation(userId, card.collectionId, {
     amountCents: priceCents, currency, confidence: "high", method: "active_listing", userAdjusted: false,
   });
 }
@@ -1406,6 +1406,7 @@ async function ebayEngagementForDrafts(userId, drafts, existingConnection = null
   );
   const empty = {
     byListingId: new Map(),
+    activeListingsById: new Map(),
     analyticsAuthorized,
     viewsUpdatedAt: null,
     fetchedAt: null,
@@ -1430,6 +1431,46 @@ async function ebayEngagementForDrafts(userId, drafts, existingConnection = null
   }
 }
 
+async function reconcileActiveEbayPrices(userId, cards, drafts, activeListingsById) {
+  if (!(activeListingsById instanceof Map) || !activeListingsById.size) return { cards, drafts };
+  const cardsById = new Map(cards.map((card) => [card.collectionId, card]));
+  const updatedCards = new Map();
+  const updatedDrafts = new Map();
+  await Promise.all(drafts.map(async (draft) => {
+    if (draft.status !== "published" || draft.listingFormat !== "FIXED_PRICE" || !draft.ebayListingId) return;
+    const live = activeListingsById.get(String(draft.ebayListingId));
+    if (!Number.isInteger(live?.priceCents) || live.priceCents < 1) return;
+    const card = cardsById.get(draft.collectionId);
+    if (!card) return;
+    const currency = live.currency || draft.currency;
+    try {
+      if (draft.priceCents !== live.priceCents || draft.currency !== currency) {
+        updatedDrafts.set(draft.collectionId, await cloudServices.ebaySelling.saveDraft(
+          userId,
+          draft.collectionId,
+          { ...editableEbayDraft(draft), priceCents: live.priceCents, currency },
+          ebaySellEnvironment,
+        ));
+      }
+      const valuation = card.confirmedValuation;
+      if (valuation?.amountCents !== live.priceCents || valuation?.currency !== currency ||
+        valuation?.method !== "active_listing" || valuation?.userAdjusted) {
+        const updated = await syncCollectionValueToListing(userId, card, live.priceCents, currency);
+        if (updated) updatedCards.set(card.collectionId, updated);
+      }
+    } catch (error) {
+      console.warn("Live eBay listing price could not be reconciled", {
+        collectionId: draft.collectionId,
+        listingId: draft.ebayListingId,
+        error: error?.message ?? error,
+      });
+    }
+  }));
+  return {
+    cards: cards.map((card) => updatedCards.get(card.collectionId) ?? card),
+    drafts: drafts.map((draft) => updatedDrafts.get(draft.collectionId) ?? draft),
+  };
+}
 function ebayListingImageUrls(userId, card, draft, availableImages) {
   if (ebaySellEnvironment !== "production") {
     return draft.listingImages.map((side) => availableImages[side]?.signedUrl).filter(Boolean);
@@ -2455,12 +2496,20 @@ app.delete("/api/account", async (request, response) => {
 app.get("/api/collection", async (request, response) => {
   try {
     const userId = collectionUserId(request);
-    const cards = await collectionStore.list(userId);
-    const drafts = cloudServices ? await cloudServices.ebaySelling.drafts(userId) : [];
+    let cards = await collectionStore.list(userId);
+    let drafts = cloudServices ? await cloudServices.ebaySelling.drafts(userId) : [];
     const buyerShippingByPolicy = cloudServices ? await buyerShippingForDrafts(userId, drafts) : new Map();
     const engagement = cloudServices
       ? await ebayEngagementForDrafts(userId, drafts)
-      : { byListingId: new Map() };
+      : { byListingId: new Map(), activeListingsById: new Map() };
+    if (cloudServices) {
+      ({ cards, drafts } = await reconcileActiveEbayPrices(
+        userId,
+        cards,
+        drafts,
+        engagement.activeListingsById,
+      ));
+    }
     const sellingByCard = new Map(drafts.map((draft) => [draft.collectionId, {
       status: draft.status, listingId: draft.ebayListingId ?? null,
       listingUrl: draft.ebayListingId ? `https://www.ebay.com/itm/${encodeURIComponent(draft.ebayListingId)}` : null,
