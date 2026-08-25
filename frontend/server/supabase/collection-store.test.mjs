@@ -194,3 +194,25 @@ test("collection export includes private images and account cleanup stays scoped
   assert.equal((await store.list("user-b")).length, 1);
   assert.equal(client.objects.size, 1);
 });
+
+test("collection export retries images and preserves card details when an image is unavailable", async () => {
+  const client = fakeClient();
+  const store = new SupabaseCollectionRepository({ client });
+  const created = await store.create("user-a", {
+    identificationId: "identification-a",
+    fields,
+    overallConfidence: 0.91,
+    decision: "confirm",
+    frontImage: "data:image/jpeg;base64,Zm9v",
+  });
+  client.objects.clear();
+
+  const backup = await store.export("user-a");
+
+  assert.equal(backup.length, 1);
+  assert.equal(backup[0].collectionId, created.collectionId);
+  assert.equal(backup[0].images.front, null);
+  assert.deepEqual(backup[0].imageWarnings, [
+    "Front image was unavailable when this backup was created.",
+  ]);
+});

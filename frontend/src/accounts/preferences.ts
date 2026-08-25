@@ -1,4 +1,7 @@
+export type ValuationStrategy = "sell_faster" | "balanced" | "maximize_value";
+
 export type AccountPreferences = {
+  valuationStrategy: ValuationStrategy;
   automationMode: "preview" | "autopilot";
   autopilotMinConfidence: number;
   autopilotApprovalAboveCents: number | null;
@@ -34,6 +37,7 @@ export type AccountPreferences = {
 };
 
 export const defaultAccountPreferences: AccountPreferences = {
+  valuationStrategy: "balanced",
   automationMode: "preview",
   autopilotMinConfidence: 0.95,
   autopilotApprovalAboveCents: null,

@@ -490,8 +490,8 @@ export type SoldCompsSnapshot = {
   schemaVersion: "1.0";
   kind: "sold_comparables";
   source: {
-    provider: "the_card_api";
-    displayName: "The Card API";
+    provider: "sold_market_data";
+    displayName: "Completed sales data";
   };
   query: string;
   queriesUsed: string[];
@@ -643,6 +643,14 @@ export type ValuationRecommendationSnapshot = {
       completedSalesCount: number;
     } | null;
   } | null;
+  saleStrategyOptions: Record<
+    "sell_faster" | "balanced" | "maximize_value",
+    {
+      amountCents: number;
+      label: string;
+      rationale: string;
+    }
+  > | null;
   evidence: {
     sold: {
       status: "available" | "not_configured" | "rate_limited" | "unavailable";

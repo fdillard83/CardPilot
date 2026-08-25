@@ -17,6 +17,8 @@ export function AccountSettings({
   onAccountDeleted,
   preferences,
   onPreferencesChange,
+  onOpenHelp,
+  onBackupDownloaded,
 }: {
   user: AccountUser;
   recoveryMode: boolean;
@@ -25,6 +27,8 @@ export function AccountSettings({
   onAccountDeleted: () => void;
   preferences: AccountPreferences;
   onPreferencesChange: (preferences: AccountPreferences) => void;
+  onOpenHelp: (articleId: string) => void;
+  onBackupDownloaded: () => void;
 }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -34,6 +38,7 @@ export function AccountSettings({
   const [isSavingPassword, setIsSavingPassword] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -70,6 +75,7 @@ export function AccountSettings({
   const [preferenceStatus, setPreferenceStatus] = useState<string | null>(null);
   const [preferenceError, setPreferenceError] = useState<string | null>(null);
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
+  const [valuationStrategy, setValuationStrategy] = useState(preferences.valuationStrategy);
   const [pricingStrategy, setPricingStrategy] = useState(preferences.ebaySellingDefaults.pricingStrategy);
   const [sellFasterBelow, setSellFasterBelow] = useState(
     preferences.ebaySellingDefaults.sellFasterBelowCents === null
@@ -196,6 +202,7 @@ export function AccountSettings({
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          valuationStrategy,
           automationMode,
           autopilotMinConfidence: minimumConfidence,
           autopilotApprovalAboveCents: approvalAboveDollars === null ? null : Math.round(approvalAboveDollars * 100),
@@ -288,6 +295,7 @@ export function AccountSettings({
   const downloadBackup = async () => {
     setIsExporting(true);
     setExportError(null);
+    setExportStatus(null);
     try {
       const response = await fetch("/api/account/export");
       if (!response.ok) {
@@ -296,6 +304,7 @@ export function AccountSettings({
           | null;
         throw new Error(payload?.error ?? "CardPilot could not prepare the backup.");
       }
+      const warningCount = Number(response.headers.get("X-CardPilot-Backup-Warning-Count") ?? 0);
       const blob = await response.blob();
       const disposition = response.headers.get("Content-Disposition") ?? "";
       const match = disposition.match(/filename="([^"]+)"/);
@@ -307,6 +316,10 @@ export function AccountSettings({
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
+      onBackupDownloaded();
+      setExportStatus(warningCount > 0
+        ? `Backup downloaded. ${warningCount} image${warningCount === 1 ? " was" : "s were"} unavailable; the affected cards are identified inside the backup.`
+        : "Backup downloaded successfully.");
     } catch (caughtError) {
       setExportError(
         caughtError instanceof Error
@@ -365,9 +378,10 @@ export function AccountSettings({
             </h2>
           </div>
           {!recoveryMode && (
-            <button type="button" onClick={onClose} aria-label="Close account settings">
-              Close
-            </button>
+            <div className="account-settings-heading-actions">
+              <button type="button" onClick={() => onOpenHelp("account-settings")}>Help</button>
+              <button type="button" onClick={onClose} aria-label="Close account settings">Close</button>
+            </div>
           )}
         </header>
 
@@ -555,7 +569,16 @@ export function AccountSettings({
                   <label>Estimated buyer sales tax used in eBay's fee basis <div className="account-inline-unit"><input type="number" min="0" max="20" step="0.1" value={estimatedBuyerSalesTaxPercent} onChange={(event) => setEstimatedBuyerSalesTaxPercent(event.target.value)} /><span>%</span></div><small>Sales tax is not counted as your revenue; this only estimates the extra eBay fee calculated on tax.</small></label>
                 </>}
                 <label>
-                  Default selling goal
+                  Default estimated card value
+                  <select value={valuationStrategy} onChange={(event) => setValuationStrategy(event.target.value as typeof valuationStrategy)}>
+                    <option value="sell_faster">Sell faster — use the lower market target</option>
+                    <option value="balanced">Balanced — use the market midpoint</option>
+                    <option value="maximize_value">Maximum value — use the upper market target</option>
+                  </select>
+                  <small>This choice opens automatically for each estimate, and you can override it for an individual card.</small>
+                </label>
+                <label>
+                  Default eBay selling goal
                   <select value={pricingStrategy} onChange={(event) => setPricingStrategy(event.target.value as typeof pricingStrategy)}>
                     <option value="sell_faster">Sell faster — price near the market floor</option>
                     <option value="balanced">Balanced — price near the market midpoint</option>
@@ -618,6 +641,7 @@ export function AccountSettings({
               <h3>Personal backup</h3>
               <p>Download your card details and original private images in one JSON backup file.</p>
               {exportError && <small className="account-inline-error">{exportError}</small>}
+              {exportStatus && <small className="account-inline-success">{exportStatus}</small>}
               <button type="button" disabled={isExporting} onClick={() => void downloadBackup()}>
                 {isExporting ? "Preparing backup..." : "Download collection backup"}
               </button>

@@ -15,6 +15,7 @@ test("provider usage separates operations and calculates usefulness", () => {
   const catalog = summary.find((item) => item.operation === "catalog_candidates");
   const sold = summary.find((item) => item.operation === "sold_comps");
   assert.equal(catalog.requests, 5);
+  assert.equal(catalog.providerLabel, "Sports card market data");
   assert.equal(catalog.usefulRate, 0.25);
   assert.equal(sold.usefulRate, 0.75);
   assert.equal(catalog.configuredMonthlyCostCents, 3000);

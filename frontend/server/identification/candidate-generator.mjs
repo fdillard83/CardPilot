@@ -144,7 +144,7 @@ function remoteCandidate(card) {
     imageUrl: card.imageUrlFront,
     values,
     plausibility: 0.84,
-    basis: "The Card API checklist candidate matched from structured player, set, card-number, parallel, and print-run data.",
+    basis: "A structured card-catalog candidate matched the player, set, card number, parallel, and print-run details.",
   };
 }
 

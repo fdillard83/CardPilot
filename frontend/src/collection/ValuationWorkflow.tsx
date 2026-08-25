@@ -1,3 +1,4 @@
+import type { ValuationStrategy } from "../accounts/preferences";
 import type {
   SavedCollectionCard,
   ValuationRecommendationSnapshot,
@@ -29,12 +30,15 @@ export function CardValuationPanel({
   amountInput,
   currency,
   confidence,
+  strategy,
   onAmountChange,
+  onStrategyChange,
   onConfidenceChange,
   onSave,
   onClear,
   onRetry,
   onClose,
+  onOpenHelp,
   excludedComparisonCount,
   onRestoreComparisons,
 }: {
@@ -47,16 +51,20 @@ export function CardValuationPanel({
   amountInput: string;
   currency: string;
   confidence: "low" | "medium" | "high";
+  strategy: ValuationStrategy;
   onAmountChange: (value: string) => void;
+  onStrategyChange: (value: ValuationStrategy) => void;
   onConfidenceChange: (value: "low" | "medium" | "high") => void;
   onSave: () => void;
   onClear: () => void;
   onRetry: () => void;
   onClose: () => void;
+  onOpenHelp: () => void;
   excludedComparisonCount: number;
   onRestoreComparisons: () => void;
 }) {
   const recommendation = snapshot?.recommendation ?? null;
+  const selectedStrategyOption = snapshot?.saleStrategyOptions?.[strategy] ?? null;
   return (
     <section
       className="valuation-panel card-value-panel"
@@ -69,6 +77,7 @@ export function CardValuationPanel({
         </div>
         <div className="card-value-heading-actions">
           <span className="valuation-source">Review before saving</span>
+          <button type="button" disabled={isSaving} onClick={onOpenHelp}>Help</button>
           <button type="button" disabled={isSaving} onClick={onClose}>
             Close
           </button>
@@ -129,22 +138,27 @@ export function CardValuationPanel({
           {recommendation ? (
             <div className="card-value-recommendation">
               <div className="card-value-hero">
-                <span>CardPilot recommended value</span>
+                <span>{selectedStrategyOption?.label ?? "Balanced estimate"}</span>
                 <strong>
                   {formatPrice(
-                    recommendation.amountCents,
+                    selectedStrategyOption?.amountCents ?? recommendation.amountCents,
                     recommendation.currency,
                   )}
                 </strong>
-                <small>
-                  Modeled range {formatPrice(
-                    recommendation.typicalRange.lowAmountCents,
-                    recommendation.currency,
-                  )} to {formatPrice(
-                    recommendation.typicalRange.highAmountCents,
-                    recommendation.currency,
-                  )}
-                </small>
+                <div className="card-value-range" aria-label="Estimated value range">
+                  <div>
+                    <span>Low</span>
+                    <strong>{formatPrice(recommendation.typicalRange.lowAmountCents, recommendation.currency)}</strong>
+                  </div>
+                  <div>
+                    <span>Median</span>
+                    <strong>{formatPrice(recommendation.amountCents, recommendation.currency)}</strong>
+                  </div>
+                  <div>
+                    <span>High</span>
+                    <strong>{formatPrice(recommendation.typicalRange.highAmountCents, recommendation.currency)}</strong>
+                  </div>
+                </div>
                 {recommendation.pricePointAdjustment.applied && (
                   <small>
                     Rounded up from {formatPrice(
@@ -244,7 +258,7 @@ export function CardValuationPanel({
           {snapshot && (
             <div className="valuation-evidence-grid">
               <div>
-                <span>The Card API sold comps</span>
+                <span>Completed sales data</span>
                 <strong>{sourceStatusLabel(snapshot.evidence.sold.status)}</strong>
                 <small>
                   {snapshot.evidence.sold.exactCount} exact, {snapshot.evidence.sold.broaderCount} broader, {snapshot.evidence.sold.variantEstimateCount} modeled
@@ -268,6 +282,29 @@ export function CardValuationPanel({
               </div>
               <span>{currency}</span>
             </div>
+            {snapshot?.saleStrategyOptions && recommendation && (
+              <label className="valuation-strategy-field">
+                <span>Estimate goal for this card</span>
+                <select
+                  value={strategy}
+                  disabled={isSaving}
+                  onChange={(event) => onStrategyChange(event.target.value as ValuationStrategy)}
+                >
+                  <option value="sell_faster">
+                    Sell faster — {formatPrice(snapshot.saleStrategyOptions.sell_faster.amountCents, recommendation.currency)}
+                  </option>
+                  <option value="balanced">
+                    Balanced — {formatPrice(snapshot.saleStrategyOptions.balanced.amountCents, recommendation.currency)}
+                  </option>
+                  <option value="maximize_value">
+                    Maximum value — {formatPrice(snapshot.saleStrategyOptions.maximize_value.amountCents, recommendation.currency)}
+                  </option>
+                </select>
+                <small>
+                  {selectedStrategyOption?.rationale} This choice overrides your account default for this card.
+                </small>
+              </label>
+            )}
             <div className="confirmed-value-fields">
               <label>
                 <span>Confirmed value</span>

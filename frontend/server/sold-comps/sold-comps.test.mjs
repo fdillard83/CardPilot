@@ -99,6 +99,11 @@ test("sold snapshots use only confirmed prices and trim outliers", () => {
   });
 
   assert.equal(snapshot.kind, "sold_comparables");
+  assert.deepEqual(snapshot.source, {
+    provider: "sold_market_data",
+    displayName: "Completed sales data",
+  });
+  assert.doesNotMatch(snapshot.disclaimer, /the card api/i);
   assert.equal(snapshot.candidateCount, 6);
   assert.equal(snapshot.confirmedPriceCount, 5);
   assert.equal(snapshot.exactMatchedCount, 5);

@@ -14,6 +14,10 @@ import {
 import { CollectionView } from "./collection/CollectionView";
 import { AdminDashboard } from "./admin/AdminDashboard";
 import { BatchScanner } from "./batch/BatchScanner";
+import { GettingStartedChecklist, type GettingStartedTask } from "./help/GettingStartedChecklist";
+import { HelpCenter } from "./help/HelpCenter";
+import { OnboardingGuide } from "./help/OnboardingGuide";
+import { defaultHelpProgress, loadHelpProgress, saveHelpProgress, type HelpProgress } from "./help/help-progress";
 import {
   createCardDetailImages,
   prepareCardPhoto,
@@ -558,13 +562,13 @@ function NumberedCardField({
   );
 }
 
-type AppView = "scan" | "collection" | "admin";
+type AppView = "scan" | "collection" | "help" | "admin";
 const ACTIVE_VIEW_KEY = "cardpilot.activeView";
 
 function initialAppView(): AppView {
   if (typeof window === "undefined") return "scan";
   const saved = window.sessionStorage.getItem(ACTIVE_VIEW_KEY);
-  return saved === "collection" || saved === "admin" ? saved : "scan";
+  return saved === "collection" || saved === "help" || saved === "admin" ? saved : "scan";
 }
 
 function App() {
@@ -662,6 +666,34 @@ function App() {
   const [isEbayWelcomeOpen, setIsEbayWelcomeOpen] = useState(false);
   const [isSavingEbayWelcome, setIsSavingEbayWelcome] = useState(false);
   const [ebayWelcomeError, setEbayWelcomeError] = useState<string | null>(null);
+  const [helpProgress, setHelpProgress] = useState<HelpProgress>(defaultHelpProgress);
+  const [helpProgressLoaded, setHelpProgressLoaded] = useState(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+  const [gettingStartedCollapsed, setGettingStartedCollapsed] = useState(false);
+  const [requestedHelpArticle, setRequestedHelpArticle] = useState<string | null>(null);
+
+  const helpAccountKey = accountSession?.user?.id ?? (accountSession?.mode === "local" ? "local" : null);
+  const updateHelpProgress = (updater: (current: HelpProgress) => HelpProgress) => {
+    setHelpProgress((current) => {
+      const next = updater(current);
+      if (helpAccountKey) saveHelpProgress(helpAccountKey, next);
+      return next;
+    });
+  };
+  const openHelp = (articleId: string | null = null) => {
+    setRequestedHelpArticle(articleId);
+    updateHelpProgress((current) => ({ ...current, completedTasks: [...new Set([...current.completedTasks, "help_center"])] }));
+    setView("help");
+    setIsAccountSettingsOpen(false);
+  };
+  const navigateFromHelp = (destination: "scan" | "collection" | "account") => {
+    if (destination === "account") {
+      setIsAccountSettingsOpen(true);
+      return;
+    }
+    if (destination === "scan") startNewScan();
+    else setView("collection");
+  };
 
   const originalFrontPreview = usePreviewUrl(frontFile);
   const originalBackPreview = usePreviewUrl(backFile);
@@ -674,6 +706,20 @@ function App() {
   useEffect(() => {
     window.sessionStorage.setItem(ACTIVE_VIEW_KEY, activeView);
   }, [activeView]);
+
+  useEffect(() => {
+    if (!helpProgressLoaded || isLoadingCollection || collectionCards.length > 0 || helpProgress.welcomeSeen || !helpAccountKey) return;
+    const timer = window.setTimeout(() => {
+      setHelpProgress((current) => {
+        if (current.welcomeSeen) return current;
+        const next = { ...current, welcomeSeen: true };
+        saveHelpProgress(helpAccountKey, next);
+        return next;
+      });
+      setIsOnboardingOpen(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [helpProgressLoaded, isLoadingCollection, collectionCards.length, helpProgress.welcomeSeen, helpAccountKey]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -695,7 +741,14 @@ function App() {
               : "CardPilot could not check your account session.",
           );
         }
-        if (isCurrent) setAccountSession(payload);
+        if (isCurrent) {
+          setAccountSession(payload);
+          const key = payload.user?.id ?? (payload.mode === "local" ? "local" : null);
+          if (key) {
+            setHelpProgress(loadHelpProgress(key));
+            setHelpProgressLoaded(true);
+          }
+        }
       })
       .catch((caughtError) => {
         if (isCurrent) {
@@ -1884,6 +1937,8 @@ function App() {
     setIsLoadingCollection(true);
     setCollectionError(null);
     setAccountSession({ mode: "supabase", user });
+    setHelpProgress(loadHelpProgress(user.id));
+    setHelpProgressLoaded(true);
     setAccountSessionError(null);
   };
 
@@ -1891,6 +1946,8 @@ function App() {
     setIsLoadingCollection(true);
     setCollectionError(null);
     setAccountSession({ mode: "supabase", user });
+    setHelpProgress(loadHelpProgress(user.id));
+    setHelpProgressLoaded(true);
     setAccountSessionError(null);
     setIsPasswordRecovery(true);
     setIsAccountSettingsOpen(true);
@@ -1906,6 +1963,9 @@ function App() {
       window.sessionStorage.removeItem(ACTIVE_VIEW_KEY);
       setView("scan");
       setIsAccountSettingsOpen(false);
+      setIsOnboardingOpen(false);
+      setHelpProgress(defaultHelpProgress);
+      setHelpProgressLoaded(false);
       setIsPasswordRecovery(false);
       setIsSigningOut(false);
     }
@@ -1932,6 +1992,27 @@ function App() {
       setIsImportingLocal(false);
     }
   };
+
+  const gettingStartedTasks: GettingStartedTask[] = [
+    { id: "first_card", label: "Add your first card", detail: "Identify, review, and save a card.", complete: collectionCards.length > 0, automatic: true },
+    { id: "first_value", label: "Confirm your first value", detail: "Review the value range and save a value.", complete: collectionCards.some((card) => card.confirmedValuation), automatic: true },
+    { id: "valuation_default", label: "Review your valuation default", detail: "Choose Sell faster, Balanced, or Maximum value in Account.", complete: helpProgress.completedTasks.includes("valuation_default") },
+    { id: "selling_costs", label: "Review selling costs", detail: "Check fees, mailing cost, promotion, and loss safety.", complete: helpProgress.completedTasks.includes("selling_costs") },
+    { id: "first_listing", label: "Publish your first listing", detail: "Prepare and review an eBay listing.", complete: collectionCards.some((card) => card.selling?.status === "published" || card.selling?.status === "sold"), automatic: true },
+    { id: "price_compare", label: "Compare an active listing", detail: "Review an exact-card buyer-total comparison.", complete: helpProgress.completedTasks.includes("price_compare") },
+    { id: "backup", label: "Download a backup", detail: "Create a personal collection backup from Account.", complete: helpProgress.completedTasks.includes("backup") },
+    { id: "help_center", label: "Explore the User Manual", detail: "Open Help, FAQ, Advice, and the glossary.", complete: helpProgress.completedTasks.includes("help_center") },
+  ];
+  const startOnboarding = () => {
+    updateHelpProgress((current) => ({ ...current, status: "in_progress", step: 0, welcomeSeen: true }));
+    setIsOnboardingOpen(true);
+  };
+  const toggleChecklistTask = (taskId: string) => updateHelpProgress((current) => ({
+    ...current,
+    completedTasks: current.completedTasks.includes(taskId)
+      ? current.completedTasks.filter((item) => item !== taskId)
+      : [...current.completedTasks, taskId],
+  }));
 
   if (accountSessionError) {
     return (
@@ -2001,6 +2082,7 @@ function App() {
           >
             My Collection <span>{collectionCards.length}</span>
           </button>
+          <button className={activeView === "help" ? "active" : ""} type="button" onClick={() => openHelp()}>Help</button>
           {accountSession.user?.isAdmin && <button className={activeView === "admin" ? "active" : ""} type="button" onClick={() => setView("admin")}>Admin</button>}
           {accountSession.user && (
             <div className="account-menu">
@@ -2040,14 +2122,38 @@ function App() {
         </section>
       )}
 
+      {activeView === "collection" && helpProgressLoaded && !helpProgress.checklistDismissed && (
+        <GettingStartedChecklist
+          tasks={gettingStartedTasks}
+          collapsed={gettingStartedCollapsed}
+          onToggleCollapsed={() => setGettingStartedCollapsed((current) => !current)}
+          onDismiss={() => updateHelpProgress((current) => ({ ...current, checklistDismissed: true }))}
+          onToggleTask={toggleChecklistTask}
+          onStartGuide={startOnboarding}
+          onOpenHelp={() => openHelp("getting-started-checklist")}
+        />
+      )}
+
       <main id="top">
-        {activeView === "admin" ? <AdminDashboard /> : activeView === "collection" ? (
+        {activeView === "admin" ? <AdminDashboard /> : activeView === "help" ? (
+          <HelpCenter
+            onStartGuide={startOnboarding}
+            onNavigate={navigateFromHelp}
+            onRestoreChecklist={() => {
+              updateHelpProgress((current) => ({ ...current, checklistDismissed: false }));
+              setView("collection");
+            }}
+            requestedArticle={requestedHelpArticle}
+          />
+        ) : activeView === "collection" ? (
           <CollectionView
             cards={collectionCards}
             isLoading={isLoadingCollection}
             error={collectionError}
             onCardsChange={setCollectionCards}
             onScanCard={startNewScan}
+            onOpenHelp={openHelp}
+            onPriceComparisonComplete={() => updateHelpProgress((current) => ({ ...current, completedTasks: [...new Set([...current.completedTasks, "price_compare"])] }))}
             accountPreferences={accountPreferences}
           />
         ) : (
@@ -2067,6 +2173,7 @@ function App() {
               <span><CheckIcon /> Front photo is the default</span>
               <span><CheckIcon /> Back photo is always optional</span>
             </div>
+            <div className="context-help-links"><button type="button" onClick={startOnboarding}>New here? Start the guide</button><button type="button" onClick={() => openHelp("first-card")}>How to add a card</button></div>
           </div>
 
           <section className="scanner-card" aria-labelledby="scanner-title">
@@ -2617,10 +2724,34 @@ function App() {
             setView("scan");
           }}
           preferences={accountPreferences}
-          onPreferencesChange={setAccountPreferences}
+          onPreferencesChange={(preferences) => {
+            setAccountPreferences(preferences);
+            updateHelpProgress((current) => ({ ...current, completedTasks: [...new Set([...current.completedTasks, "valuation_default", "selling_costs"])] }));
+          }}
+          onOpenHelp={(articleId) => openHelp(articleId)}
+          onBackupDownloaded={() => updateHelpProgress((current) => ({ ...current, completedTasks: [...new Set([...current.completedTasks, "backup"])] }))}
         />
       )}
-      {accountSession.user && isEbayWelcomeOpen && !isAccountSettingsOpen && (
+      {helpAccountKey && isOnboardingOpen && !isAccountSettingsOpen && (
+        <OnboardingGuide
+          step={helpProgress.step}
+          onStepChange={(step) => updateHelpProgress((current) => ({ ...current, status: "in_progress", step, welcomeSeen: true }))}
+          onSaveForLater={() => {
+            updateHelpProgress((current) => ({ ...current, status: "in_progress", welcomeSeen: true }));
+            setIsOnboardingOpen(false);
+          }}
+          onSkip={() => {
+            updateHelpProgress((current) => ({ ...current, status: "dismissed", welcomeSeen: true }));
+            setIsOnboardingOpen(false);
+          }}
+          onFinish={() => {
+            updateHelpProgress((current) => ({ ...current, status: "completed", step: 7, welcomeSeen: true }));
+            setIsOnboardingOpen(false);
+          }}
+          onNavigate={navigateFromHelp}
+        />
+      )}
+      {accountSession.user && isEbayWelcomeOpen && !isAccountSettingsOpen && !isOnboardingOpen && (
         <div className="account-settings-backdrop" role="presentation">
           <section className="account-settings-panel account-welcome-panel" role="dialog" aria-modal="true" aria-labelledby="ebay-welcome-title">
             <header className="account-settings-heading"><div><span className="account-eyebrow">Optional seller setup</span><h2 id="ebay-welcome-title">Connect eBay to CardPilot?</h2></div></header>

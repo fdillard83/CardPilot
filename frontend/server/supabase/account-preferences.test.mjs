@@ -7,6 +7,7 @@ import {
 
 test("automatic card values are off by default", () => {
   assert.deepEqual(DEFAULT_ACCOUNT_PREFERENCES, {
+    valuationStrategy: "balanced",
     automationMode: "preview",
     autopilotMinConfidence: 0.95,
     autopilotApprovalAboveCents: null,
@@ -58,5 +59,24 @@ test("an enabled automatic-value rule requires a positive dollar limit", () => {
       autoValueMaxCents: 2500,
     }),
     { ...DEFAULT_ACCOUNT_PREFERENCES, autoValueEnabled: true, autoValueMaxCents: 2500 },
+  );
+});
+
+test("valuation strategy accepts the three supported goals", () => {
+  for (const valuationStrategy of ["sell_faster", "balanced", "maximize_value"]) {
+    assert.equal(
+      AccountPreferencesSchema.safeParse({
+        ...DEFAULT_ACCOUNT_PREFERENCES,
+        valuationStrategy,
+      }).success,
+      true,
+    );
+  }
+  assert.equal(
+    AccountPreferencesSchema.safeParse({
+      ...DEFAULT_ACCOUNT_PREFERENCES,
+      valuationStrategy: "highest_possible",
+    }).success,
+    false,
   );
 });

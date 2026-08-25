@@ -1,7 +1,7 @@
 const providerLabels = {
   openai: "OpenAI identification",
   google_vision: "Google Cloud Vision",
-  the_card_api: "The Card API",
+  the_card_api: "Sports card market data",
   ebay: "eBay APIs",
   pokemon_tcg: "Pokémon TCG API",
   render: "Render hosting",

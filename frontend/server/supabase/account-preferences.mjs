@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const DEFAULT_ACCOUNT_PREFERENCES = Object.freeze({
+  valuationStrategy: "balanced",
   automationMode: "preview",
   autopilotMinConfidence: 0.95,
   autopilotApprovalAboveCents: null,
@@ -37,6 +38,7 @@ export const DEFAULT_ACCOUNT_PREFERENCES = Object.freeze({
 
 export const AccountPreferencesSchema = z
   .object({
+    valuationStrategy: z.enum(["sell_faster", "balanced", "maximize_value"]),
     automationMode: z.enum(["preview", "autopilot"]),
     autopilotMinConfidence: z.number().min(0.8).max(1),
     autopilotApprovalAboveCents: z.number().int().min(1).max(100_000_000).nullable(),
@@ -84,6 +86,7 @@ function databaseError(operation, error) {
 
 function sellingDefaultsFromData(data) {
   const {
+    valuationStrategy: _valuationStrategy,
     automationMode: _automationMode,
     autopilotMinConfidence: _autopilotMinConfidence,
     autopilotApprovalAboveCents: _autopilotApprovalAboveCents,
@@ -122,6 +125,7 @@ export class SupabaseAccountPreferencesRepository {
     if (error) throw databaseError("account preferences read", error);
     if (!data) return { ...DEFAULT_ACCOUNT_PREFERENCES };
     return {
+      valuationStrategy: data.ebay_selling_defaults?.valuationStrategy ?? DEFAULT_ACCOUNT_PREFERENCES.valuationStrategy,
       automationMode: data.ebay_selling_defaults?.automationMode ?? DEFAULT_ACCOUNT_PREFERENCES.automationMode,
       autopilotMinConfidence: Number(data.ebay_selling_defaults?.autopilotMinConfidence ?? DEFAULT_ACCOUNT_PREFERENCES.autopilotMinConfidence),
       autopilotApprovalAboveCents: data.ebay_selling_defaults?.autopilotApprovalAboveCents ?? DEFAULT_ACCOUNT_PREFERENCES.autopilotApprovalAboveCents,
@@ -163,6 +167,7 @@ export class SupabaseAccountPreferencesRepository {
           ebay_connect_prompt_dismissed: preferences.ebayConnectPromptDismissed,
           ebay_selling_defaults: {
             ...preferences.ebaySellingDefaults,
+            valuationStrategy: preferences.valuationStrategy,
             automationMode: preferences.automationMode,
             autopilotMinConfidence: preferences.autopilotMinConfidence,
             autopilotApprovalAboveCents: preferences.autopilotApprovalAboveCents,
@@ -191,6 +196,7 @@ export class SupabaseAccountPreferencesRepository {
       .single();
     if (error) throw databaseError("account preferences update", error);
     return {
+      valuationStrategy: data.ebay_selling_defaults?.valuationStrategy ?? DEFAULT_ACCOUNT_PREFERENCES.valuationStrategy,
       automationMode: data.ebay_selling_defaults?.automationMode ?? DEFAULT_ACCOUNT_PREFERENCES.automationMode,
       autopilotMinConfidence: Number(data.ebay_selling_defaults?.autopilotMinConfidence ?? DEFAULT_ACCOUNT_PREFERENCES.autopilotMinConfidence),
       autopilotApprovalAboveCents: data.ebay_selling_defaults?.autopilotApprovalAboveCents ?? DEFAULT_ACCOUNT_PREFERENCES.autopilotApprovalAboveCents,

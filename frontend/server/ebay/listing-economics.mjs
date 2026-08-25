@@ -29,3 +29,36 @@ export function listingEconomicsFromPreferences(draft, preferences, buyerShippin
     mailingCostCents: preferences.listingMailingCostCents,
     estimatedBuyerSalesTaxPercent: preferences.estimatedBuyerSalesTaxPercent });
 }
+export function listingProfitabilityAtTargets({
+  draft,
+  preferences,
+  buyerShippingCents = 0,
+  marketMinimumBuyerTotalCents,
+  saleStrategyOptions = null,
+}) {
+  const shipping = Math.max(0, Math.round(Number(buyerShippingCents) || 0));
+  const economicsAtItemPrice = (itemPriceCents) => listingEconomicsFromPreferences(
+    { ...draft, priceCents: Math.max(1, Math.round(Number(itemPriceCents) || 0)) },
+    preferences,
+    shipping,
+  );
+  const marketBuyerTotal = Math.max(1, Math.round(Number(marketMinimumBuyerTotalCents) || 0));
+  const marketMinimum = economicsAtItemPrice(Math.max(1, marketBuyerTotal - shipping));
+  const strategies = saleStrategyOptions
+    ? Object.fromEntries(Object.entries(saleStrategyOptions).map(([key, option]) => {
+        const amountCents = Math.max(1, Math.round(Number(option?.amountCents) || 0));
+        const itemPriceCents = key === "sell_faster"
+          ? Math.max(1, amountCents - shipping)
+          : amountCents;
+        return [key, economicsAtItemPrice(itemPriceCents)];
+      }))
+    : null;
+  return {
+    marketMinimum: {
+      ...marketMinimum,
+      targetBuyerTotalCents: marketBuyerTotal,
+    },
+    strategies,
+    unprofitable: !marketMinimum.safe,
+  };
+}

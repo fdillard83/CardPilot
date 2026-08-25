@@ -16,7 +16,7 @@ import { EbayTaxonomyClient } from "./ebay/taxonomy.mjs";
 import { listingReadiness } from "./ebay/listing-readiness.mjs";
 import { calculateAuctionSchedule } from "./ebay/auction-schedule.mjs";
 import { deliveredPricePosition, fulfillmentBuyerShippingCents, fulfillmentShippingService } from "./ebay/price-positioning.mjs";
-import { listingEconomicsFromPreferences } from "./ebay/listing-economics.mjs";
+import { listingEconomicsFromPreferences, listingProfitabilityAtTargets } from "./ebay/listing-economics.mjs";
 import {
   EBAY_ANALYTICS_SCOPE,
   EbayListingEngagementService,
@@ -52,7 +52,7 @@ import { createCorrectionLogger } from "./correction-log.mjs";
 import { CollectionStore } from "./collection-store.mjs";
 import { LocalCollectionRepository } from "./collection-repository.mjs";
 import { ActiveMarketService } from "./valuation/active-market.mjs";
-import { ValuationRecommendationService } from "./valuation/recommendation.mjs";
+import { buildValuationRecommendation, ValuationRecommendationService } from "./valuation/recommendation.mjs";
 import {
   TheCardApiClient,
   TheCardApiError,
@@ -679,6 +679,7 @@ app.put("/api/account/password", async (request, response) => {
 app.get("/api/account/preferences", async (request, response) => {
   if (!cloudServices) {
     response.json({
+      valuationStrategy: "balanced",
       automationMode: "preview",
       autopilotMinConfidence: 0.95,
       autopilotApprovalAboveCents: null,
@@ -1950,11 +1951,24 @@ async function positioningForActiveListing(userId, card, draft, preferences, tok
     currency: draft.currency,
   });
   if (!position) throw new Error("No compatible exact-card active listing with a delivered price was found.");
+  const activeOnlyRecommendation = buildValuationRecommendation({
+    activeSnapshot: snapshot,
+    grading: card.grading,
+  });
+  const profitability = listingProfitabilityAtTargets({
+    draft,
+    preferences,
+    buyerShippingCents: ownShippingCostCents,
+    marketMinimumBuyerTotalCents:
+      position.lowestCompetitorDeliveredPriceCents - position.undercutCents,
+    saleStrategyOptions: activeOnlyRecommendation.saleStrategyOptions,
+  });
   return {
     collectionId: card.collectionId,
     title: draft.title || card.title,
     listingId: draft.ebayListingId,
     ownShippingService: fulfillmentShippingService(policy),
+    profitability,
     ...position,
   };
 }
@@ -2438,17 +2452,24 @@ app.get("/api/account/export", async (request, response) => {
   try {
     const cards = await collectionStore.export(collectionUserId(request));
     const exportedAt = new Date().toISOString();
+    const imageWarnings = cards.flatMap((card) => (card.imageWarnings ?? []).map((warning) => ({
+      collectionId: card.collectionId,
+      title: card.title,
+      warning,
+    })));
     const backup = {
       schemaVersion: "cardpilot-account-backup-v1",
       exportedAt,
       account: { email: request.cardPilotUser?.email ?? null },
       cardCount: cards.length,
+      ...(imageWarnings.length ? { warnings: imageWarnings } : {}),
       cards,
     };
     response.set({
       "Cache-Control": "private, no-store",
       "Content-Type": "application/json; charset=utf-8",
       "Content-Disposition": `attachment; filename="cardpilot-backup-${exportedAt.slice(0, 10)}.json"`,
+      "X-CardPilot-Backup-Warning-Count": String(imageWarnings.length),
     });
     response.send(`${JSON.stringify(backup, null, 2)}\n`);
   } catch (error) {
@@ -2895,7 +2916,7 @@ app.get(
       if (!soldComps) {
         response.status(503).json({
           error:
-            "Completed-sales search is not configured yet. Add THE_CARD_API_KEY to frontend/.env and restart CardPilot.",
+            "Completed-sales search is temporarily unavailable.",
         });
         return;
       }
@@ -2959,7 +2980,7 @@ app.get(
         if (error.status === 401 || error.status === 403) {
           response.status(503).json({
             error:
-              "The Card API key was rejected. Verify THE_CARD_API_KEY and restart CardPilot.",
+              "Completed-sales search is temporarily unavailable.",
           });
           return;
         }
@@ -3169,7 +3190,7 @@ app.post("/api/pokemon/catalog-search", async (request, response) => {
 });
 
 app.post("/api/card-catalog/candidates", async (request, response) => {
-  if (!theCardCatalog) return response.status(503).json({ error: "The Card API catalog is not configured." });
+  if (!theCardCatalog) return response.status(503).json({ error: "The card catalog is temporarily unavailable." });
   const providerStartedAt = performance.now();
   try {
     const identification = CardIdentificationResultSchema.parse(request.body?.identification);
@@ -3197,7 +3218,7 @@ app.post("/api/card-catalog/candidates", async (request, response) => {
       durationMs: performance.now() - providerStartedAt,
     });
     if (error instanceof ZodError) return response.status(400).json({ error: "The catalog candidate request is invalid." });
-    response.status(502).json({ error: error.message ?? "The card catalog is temporarily unavailable." });
+    response.status(502).json({ error: "The card catalog is temporarily unavailable." });
   }
 });
 

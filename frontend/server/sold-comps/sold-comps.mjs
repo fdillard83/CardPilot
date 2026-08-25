@@ -14,7 +14,7 @@ import { suggestionsFromListingTitle } from "../ebay/image-search.mjs";
 import { isVisualMismatch } from "../identification/visual-image-matcher.mjs";
 
 const soldCompsDisclaimer =
-  "Completed-sale records are supplied by The Card API and are informational comparisons, not an appraisal or guaranteed value. Exact and broader title matches remain separate, and marketplace fee or buyer-premium treatment can differ by platform.";
+  "Completed-sale records are supplied by a third-party market-data provider and are informational comparisons, not an appraisal or guaranteed value. Exact and broader title matches remain separate, and marketplace fee or buyer-premium treatment can differ by platform.";
 
 function cleanText(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -287,8 +287,8 @@ export function buildSoldCompsSnapshot({
     schemaVersion: "1.0",
     kind: "sold_comparables",
     source: {
-      provider: "the_card_api",
-      displayName: "The Card API",
+      provider: "sold_market_data",
+      displayName: "Completed sales data",
     },
     query,
     queriesUsed,

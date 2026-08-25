@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { estimateListingEconomics } from "./listing-economics.mjs";
+import { estimateListingEconomics, listingProfitabilityAtTargets } from "./listing-economics.mjs";
 
 test("listing safety includes shipping, tax fee basis, promotion, and mailing", () => {
   const result = estimateListingEconomics({ itemPriceCents: 95, buyerShippingCents: 125, transactionFeePercent: 13.25,
@@ -11,4 +11,34 @@ test("listing safety includes shipping, tax fee basis, promotion, and mailing", 
 
 test("listing safety detects a below-cost sale", () => {
   assert.equal(estimateListingEconomics({ itemPriceCents: 95, buyerShippingCents: 0 }).safe, false);
+});
+test("market minimum profitability includes promotion and identifies unsafe strategies", () => {
+  const result = listingProfitabilityAtTargets({
+    draft: {
+      listingFormat: "FIXED_PRICE",
+      priceCents: 500,
+      promoteListing: true,
+      promotionAdRatePercent: 2,
+    },
+    preferences: {
+      listingTransactionFeePercent: 13.25,
+      listingTransactionFixedFeeCents: 30,
+      listingMailingCostCents: 78,
+      estimatedBuyerSalesTaxPercent: 7,
+    },
+    buyerShippingCents: 25,
+    marketMinimumBuyerTotalCents: 100,
+    saleStrategyOptions: {
+      sell_faster: { amountCents: 100 },
+      balanced: { amountCents: 200 },
+      maximize_value: { amountCents: 300 },
+    },
+  });
+  assert.equal(result.marketMinimum.itemPriceCents, 75);
+  assert.equal(result.marketMinimum.promotionFeeCents, 2);
+  assert.equal(result.marketMinimum.netProceedsCents, -24);
+  assert.equal(result.unprofitable, true);
+  assert.equal(result.strategies.sell_faster.safe, false);
+  assert.equal(result.strategies.balanced.safe, true);
+  assert.equal(result.strategies.maximize_value.safe, true);
 });

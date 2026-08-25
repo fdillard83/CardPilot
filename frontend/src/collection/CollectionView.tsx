@@ -74,7 +74,42 @@ type DeliveredPricePosition = {
   shouldLower?: boolean;
   limitedByMinimum?: boolean;
   lowestCompetitor?: { title: string; itemWebUrl: string | null };
+  profitability?: {
+    marketMinimum: ListingProfitabilityEstimate & { targetBuyerTotalCents: number };
+    strategies: Record<"sell_faster" | "balanced" | "maximize_value", ListingProfitabilityEstimate> | null;
+    unprofitable: boolean;
+  };
 };
+
+type ListingProfitabilityEstimate = {
+  itemPriceCents: number;
+  buyerShippingCents: number;
+  netProceedsCents: number;
+  safe: boolean;
+};
+
+function MarketMinimumProfitabilityWarning({ position }: { position: DeliveredPricePosition }) {
+  const profitability = position.profitability;
+  if (!profitability?.unprofitable) return null;
+  const currency = position.currency ?? "USD";
+  const strategyLabels = {
+    sell_faster: "Sell faster",
+    balanced: "Balanced",
+    maximize_value: "Maximum value",
+  } as const;
+  const unprofitableStrategies = profitability.strategies
+    ? Object.entries(profitability.strategies)
+        .filter(([, estimate]) => !estimate.safe)
+        .map(([strategy]) => strategyLabels[strategy as keyof typeof strategyLabels])
+    : [];
+  return <div className="market-minimum-warning" role="alert">
+    <strong>Market Minimum is Unprofitable Currently for this Card.</strong>
+    <span>
+      At {formatPrice(profitability.marketMinimum.targetBuyerTotalCents, currency)} buyer total—5¢ below the lowest exact match—the estimated profit is {formatPrice(profitability.marketMinimum.netProceedsCents, currency)} after configured eBay fees, applicable promotion, and mailing cost.
+    </span>
+    {unprofitableStrategies.length > 0 && <small>Also below $0: {unprofitableStrategies.join(", ")}.</small>}
+  </div>;
+}
 
 type DeliveredPriceShippingChoice = {
   enabled: boolean;
@@ -1090,15 +1125,15 @@ function SoldCompsPanel({
           <span className="step-label">Completed marketplace sales</span>
           <h3 id={`sold-comps-${card.collectionId}`}>Comparable sold cards</h3>
         </div>
-        <span className="valuation-source">The Card API</span>
+        <span className="valuation-source">Completed sales data</span>
       </div>
 
       {error && (
         <div className="valuation-error" role="alert">
           <strong>
             {snapshot
-              ? "The Card API refresh failed—showing previously retrieved sales."
-              : "The Card API completed sales are unavailable."}
+              ? "Completed-sales refresh failed—showing previously retrieved sales."
+              : "Completed sales are unavailable."}
           </strong>
           <span>{error}</span>
           <button type="button" onClick={onRetry}>Try again</button>
@@ -1112,7 +1147,7 @@ function SoldCompsPanel({
       ) : snapshot ? (
         <>
           <PricingSnapshotStatus
-            provider="The Card API sold comps"
+            provider="Completed sales data"
             timestamp={snapshot.searchedAt}
             showingPrevious={showingPrevious}
           />
@@ -1359,6 +1394,8 @@ export function CollectionView({
   error,
   onCardsChange,
   onScanCard,
+  onOpenHelp,
+  onPriceComparisonComplete,
   accountPreferences,
 }: {
   cards: SavedCollectionCard[];
@@ -1366,6 +1403,8 @@ export function CollectionView({
   error: string | null;
   onCardsChange: (cards: SavedCollectionCard[]) => void;
   onScanCard: () => void;
+  onOpenHelp: (articleId: string) => void;
+  onPriceComparisonComplete: () => void;
   accountPreferences: AccountPreferences;
 }) {
   const [query, setQuery] = useState("");
@@ -1438,6 +1477,8 @@ export function CollectionView({
   const [valuationError, setValuationError] = useState<string | null>(null);
   const [valuationShowingPrevious, setValuationShowingPrevious] =
     useState(false);
+  const [valuationStrategy, setValuationStrategy] =
+    useState<AccountPreferences["valuationStrategy"]>(accountPreferences.valuationStrategy);
   const [valuationAmountInput, setValuationAmountInput] = useState("");
   const [valuationCurrency, setValuationCurrency] = useState("USD");
   const [valuationConfidence, setValuationConfidence] = useState<
@@ -1456,6 +1497,7 @@ export function CollectionView({
   );
   const [selectedPricePositionIds, setSelectedPricePositionIds] = useState<string[]>([]);
   const [pricePositions, setPricePositions] = useState<DeliveredPricePosition[]>([]);
+  const [marketMinimumWarnings, setMarketMinimumWarnings] = useState<Record<string, DeliveredPricePosition>>({});
   const [selectedPriceApplyIds, setSelectedPriceApplyIds] = useState<string[]>([]);
   const [priceShippingChoices, setPriceShippingChoices] = useState<Record<string, DeliveredPriceShippingChoice>>({});
   const [pricePositionBusy, setPricePositionBusy] = useState(false);
@@ -1530,6 +1572,16 @@ export function CollectionView({
       }));
       setSelectedPricePositionIds(uniqueCollectionIds);
       setPricePositions(orderedResults);
+      onPriceComparisonComplete();
+      setMarketMinimumWarnings((current) => {
+        const next = { ...current };
+        for (const position of orderedResults) {
+          if (!position.ok || !position.profitability) continue;
+          if (position.profitability.unprofitable) next[position.collectionId] = position;
+          else delete next[position.collectionId];
+        }
+        return next;
+      });
       setSelectedPriceApplyIds(orderedResults.filter(canApplyDeliveredPricePosition).map((position) => position.collectionId));
       setPriceShippingChoices(Object.fromEntries(orderedResults.filter((position) => position.ok).map((position) => [position.collectionId, {
         enabled: false,
@@ -1619,12 +1671,15 @@ export function CollectionView({
     const collectionCards = cards.filter((card) => card.selling?.status !== "sold");
     const valuedCards = collectionCards.filter((card) => card.confirmedValuation);
     const activeListings = cards.filter((card) => card.selling?.status === "published");
+    const soldCards = cards.filter((card) => card.selling?.status === "sold");
     const currencies = new Set(
       valuedCards.map((card) => card.confirmedValuation?.currency),
     );
     const currency = currencies.size === 1 ? [...currencies][0] : null;
     const activeCurrencies = new Set(activeListings.map((card) => card.selling?.currency));
     const activeCurrency = activeCurrencies.size === 1 ? [...activeCurrencies][0] : null;
+    const soldCurrencies = new Set(soldCards.map((card) => card.selling?.soldCurrency ?? card.selling?.currency));
+    const soldCurrency = soldCurrencies.size === 1 ? [...soldCurrencies][0] : null;
     const totalAmountCents = valuedCards.reduce(
       (total, card) => total + (card.confirmedValuation?.amountCents ?? 0),
       0,
@@ -1641,6 +1696,18 @@ export function CollectionView({
       );
       return total + Math.max(0, priceCents - ebayFeeCents - promotionFeeCents);
     }, 0);
+    const soldRevenueCents = soldCards.reduce(
+      (total, card) => total + (card.selling?.soldAmountCents ?? 0),
+      0,
+    );
+    const soldEstimatedProfitCents = soldCards.reduce((total, card) => {
+      const revenueCents = card.selling?.soldAmountCents ?? 0;
+      const ebayFeeCents = Math.round(revenueCents * 0.1325 + 30);
+      const promotionFeeCents = Math.round(
+        revenueCents * ((card.selling?.promotionAdRatePercent ?? 0) / 100),
+      );
+      return total + Math.max(0, revenueCents - ebayFeeCents - promotionFeeCents);
+    }, 0);
     return {
       valuedCount: valuedCards.length,
       unvaluedCount: collectionCards.length - valuedCards.length,
@@ -1656,8 +1723,17 @@ export function CollectionView({
         : activeCurrency
           ? formatPrice(activePotentialProfitCents, activeCurrency)
           : "Mixed currencies",
-      soldCount: cards.filter((card) => card.selling?.status === "sold").length,
-      soldTotalLabel: formatPrice(cards.reduce((total, card) => total + (card.selling?.soldAmountCents ?? 0), 0), "USD"),
+      soldCount: soldCards.length,
+      soldTotalLabel: soldCards.length === 0
+        ? formatPrice(0, "USD")
+        : soldCurrency
+          ? formatPrice(soldRevenueCents, soldCurrency)
+          : "Mixed currencies",
+      soldEstimatedProfitLabel: soldCards.length === 0
+        ? formatPrice(0, "USD")
+        : soldCurrency
+          ? formatPrice(soldEstimatedProfitCents, soldCurrency)
+          : "Mixed currencies",
       totalLabel:
         valuedCards.length === 0
           ? formatPrice(0, "USD")
@@ -1702,6 +1778,7 @@ export function CollectionView({
     setValuationSaving(false);
     setValuationError(null);
     setValuationShowingPrevious(false);
+    setValuationStrategy(accountPreferences.valuationStrategy);
     setValuationAmountInput("");
     setValuationCurrency("USD");
     setValuationConfidence("low");
@@ -2176,6 +2253,7 @@ export function CollectionView({
     soldExcludedObservationIds: string[],
     activeExcludedObservationIds: string[],
     openPanel = false,
+    strategy: AccountPreferences["valuationStrategy"] = accountPreferences.valuationStrategy,
   ) => {
     const cacheContext = pricingCacheContext(
       soldExcludedObservationIds,
@@ -2193,7 +2271,10 @@ export function CollectionView({
           ? cached.snapshot
           : null;
     const requestId = ++valuationRequestIdRef.current;
-    if (openPanel) setValuationCardId(card.collectionId);
+    if (openPanel) {
+      setValuationCardId(card.collectionId);
+      setValuationStrategy(strategy);
+    }
     setValuationSnapshot(previousSnapshot);
     setValuationShowingPrevious(Boolean(previousSnapshot));
     setValuationError(null);
@@ -2222,9 +2303,14 @@ export function CollectionView({
         snapshot,
       );
       if (snapshot.recommendation) {
-        setValuationAmountInput(
-          amountInputFromCents(snapshot.recommendation.amountCents),
-        );
+        const selectedAmountCents =
+          snapshot.saleStrategyOptions?.[strategy]?.amountCents ??
+          snapshot.recommendation.amountCents;
+        const selectedRecommendation = {
+          ...snapshot.recommendation,
+          amountCents: selectedAmountCents,
+        };
+        setValuationAmountInput(amountInputFromCents(selectedAmountCents));
         setValuationCurrency(snapshot.recommendation.currency);
         setValuationConfidence(snapshot.recommendation.confidence);
         const limit = accountPreferences.autoValueMaxCents;
@@ -2233,11 +2319,11 @@ export function CollectionView({
           !openPanel &&
           !card.confirmedValuation?.userAdjusted &&
           limit !== null &&
-          snapshot.recommendation.amountCents <= limit
+          selectedAmountCents <= limit
         ) {
           const savedCard = await saveAutomaticRecommendation(
             card,
-            snapshot.recommendation,
+            selectedRecommendation,
           );
           onCardsChange(
             cards.map((item) =>
@@ -2246,7 +2332,7 @@ export function CollectionView({
           );
           setAutomaticValueStatus(
             `${card.title} was automatically valued at ${formatPrice(
-              snapshot.recommendation.amountCents,
+              selectedAmountCents,
               snapshot.recommendation.currency,
             )}.`,
           );
@@ -2266,7 +2352,10 @@ export function CollectionView({
     }
   };
 
-  const loadValuationRecommendation = async (card: SavedCollectionCard) => {
+  const loadValuationRecommendation = async (
+    card: SavedCollectionCard,
+    strategy: AccountPreferences["valuationStrategy"] = accountPreferences.valuationStrategy,
+  ) => {
     if (
       marketBusy ||
       soldBusy ||
@@ -2301,11 +2390,13 @@ export function CollectionView({
       setMarketExcludedAnchorIds([]);
       setSoldExcludedAnchorIds([]);
     }
+    setValuationStrategy(strategy);
     await refreshValuationSnapshot(
       card,
       soldExcludedObservationIds,
       activeExcludedObservationIds,
       true,
+      strategy,
     );
   };
 
@@ -2330,7 +2421,7 @@ export function CollectionView({
     if (valuationBusy || valuationSaving) return;
     setMarketExcludedAnchorIds([]);
     setSoldExcludedAnchorIds([]);
-    void refreshValuationSnapshot(card, [], [], true);
+    void refreshValuationSnapshot(card, [], [], true, valuationStrategy);
   };
 
   const toggleValuationRecommendation = (card: SavedCollectionCard) => {
@@ -2341,6 +2432,18 @@ export function CollectionView({
     void loadValuationRecommendation(card);
   };
 
+  const changeValuationStrategy = (
+    strategy: AccountPreferences["valuationStrategy"],
+  ) => {
+    setValuationStrategy(strategy);
+    const option = valuationSnapshot?.saleStrategyOptions?.[strategy];
+    const recommendation = valuationSnapshot?.recommendation;
+    if (!option || !recommendation) return;
+    setValuationAmountInput(amountInputFromCents(option.amountCents));
+    setValuationCurrency(recommendation.currency);
+    setValuationConfidence(recommendation.confidence);
+  };
+
   const saveConfirmedValuation = async (card: SavedCollectionCard) => {
     const amountCents = amountCentsFromInput(valuationAmountInput);
     if (amountCents === null || valuationSaving) {
@@ -2349,9 +2452,13 @@ export function CollectionView({
     }
     const recommendation = valuationSnapshot?.recommendation ?? null;
     const method: ValuationMethod = recommendation?.method ?? "manual";
+    const strategyAmountCents = recommendation
+      ? valuationSnapshot?.saleStrategyOptions?.[valuationStrategy]?.amountCents ??
+        recommendation.amountCents
+      : null;
     const userAdjusted = Boolean(
       !recommendation ||
-        amountCents !== recommendation.amountCents ||
+        amountCents !== strategyAmountCents ||
           valuationCurrency !== recommendation.currency ||
           valuationConfidence !== recommendation.confidence,
     );
@@ -2732,6 +2839,7 @@ export function CollectionView({
               ? "Review actual eBay sold amounts and completed listing details without cluttering your active collection."
               : "Search confirmed details, review card photos, and manage sports and Pokémon cards in one collection."}
           </p>
+          <button className="contextual-help-button" type="button" onClick={() => onOpenHelp("collection")}>How to use My Collection</button>
         </div>
         {collectionSection === "collection" && <div className="collection-heading-actions">
           <button
@@ -2778,12 +2886,14 @@ export function CollectionView({
         <div><strong>{collectionValuation.listedCount}</strong><span>Listed on eBay</span></div>
         <div><strong>{collectionValuation.activeAskingTotalLabel}</strong><span>Active eBay asking total</span></div>
         <div><strong>{collectionValuation.activePotentialProfitLabel}</strong><span>Potential profit — active eBay</span></div>
+        <div><strong>{collectionValuation.soldTotalLabel}</strong><span>eBay sold revenue</span></div>
+        <div><strong>{collectionValuation.soldEstimatedProfitLabel}</strong><span>Estimated profit — sold eBay</span></div>
       </div>
-      <p className="collection-summary-note">Potential profit estimates subtract an illustrative 13.25% eBay fee plus $0.30 per sale and any active promotion rate. Card cost, shipping, taxes, returns, and other expenses are not included.</p></>}
-      <div className="ebay-queue-launch"><div><strong>eBay listings and drafts</strong><span>See drafts, scheduled listings, active listings, ended listings, and synchronized sales.</span></div><button type="button" onClick={() => setListingQueueOpen(true)}>Open Listings and drafts</button></div>
+      <p className="collection-summary-note">Active and sold profit estimates subtract an illustrative 13.25% eBay fee plus $0.30 per sale and any applicable promotion rate. Card cost, shipping, taxes, returns, and other expenses are not included.</p></>}
+      <div className="ebay-queue-launch"><div><strong>eBay listings and drafts</strong><span>See drafts, scheduled listings, active listings, ended listings, and synchronized sales.</span></div><button className="collection-action-outline" type="button" onClick={() => setListingQueueOpen(true)}>Open Listings and drafts</button></div>
       {collectionSection === "collection" && unlistedCards.length > 1 && <section className="collection-batch-listing" aria-labelledby="batch-listing-title">
         <div><span>Batch eBay listing</span><strong id="batch-listing-title">Use shared rules, review every card, publish once</strong><small>Set shipping, payment, returns, promotion, and other shared choices once. Then check the distinct title, price, and category for every card in a review grid.</small></div>
-        <button className="primary-action" type="button" onClick={() => setBatchListingOpen(true)}>Review and list {unlistedCards.length} cards in a batch</button>
+        <button className="secondary-button" type="button" onClick={() => setBatchListingOpen(true)}>Review and list {unlistedCards.length} cards in a batch</button>
       </section>}
       {collectionSection === "collection" && activeListingCards.length > 0 && <section className="collection-price-positioning" aria-labelledby="delivered-price-title">
         <div>
@@ -2792,10 +2902,11 @@ export function CollectionView({
           <small>CardPilot compares the full amount a buyer pays: item price plus shipping. The default target is 5¢ below; your saved Account setting controls the exact amount. By default CardPilot changes only the item price, but you can explicitly choose a different shipping charge for an individual card during review.</small>
         </div>
         <div className="collection-price-positioning-actions">
-          <button className="primary-action" type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions(activeListingCards.map((card) => card.collectionId))}>{pricePositionBusy ? `Finding exact matches ${pricePositionCompletedCount} of ${pricePositionTotalCount}...` : `Compare all ${activeListingCards.length} active listing${activeListingCards.length === 1 ? "" : "s"}`}</button>
+          <button className="secondary-button" type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions(activeListingCards.map((card) => card.collectionId))}>{pricePositionBusy ? `Finding exact matches ${pricePositionCompletedCount} of ${pricePositionTotalCount}...` : `Compare all ${activeListingCards.length} active listing${activeListingCards.length === 1 ? "" : "s"}`}</button>
           {selectedPricePositionIds.length > 0 && <button type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions()}>{`Compare only ${selectedPricePositionIds.length} selected below`}</button>}
           {selectedPricePositionIds.length > 0 && <button type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => { setSelectedPricePositionIds([]); setPricePositions([]); setSelectedPriceApplyIds([]); setPriceShippingChoices({}); }}>Clear selected subset</button>}
-          <a className="button-link" href="https://www.ebay.com/sh/lst/active" target="_blank" rel="noreferrer">Open eBay eligible offers</a>
+          <a className="collection-action-outline" href="https://www.ebay.com/sh/lst/active" target="_blank" rel="noreferrer">Open eBay eligible offers</a>
+          <button className="contextual-help-button" type="button" onClick={() => onOpenHelp("price-comparison")}>How price comparison works</button>
         </div>
         {pricePositionBusy && <div className="collection-price-progress" role="status" aria-live="polite">
           <div><strong>Finding the lowest exact-card buyer totals</strong><span>{pricePositionCompletedCount} of {pricePositionTotalCount} checked</span></div>
@@ -2838,6 +2949,7 @@ export function CollectionView({
                 </div>}
                 {reviewedChange && <strong className="collection-price-equation">New item price {formatPrice(reviewedChange.proposedItemPriceCents, currency)} + {reviewedChange.shippingChanged ? "new" : "unchanged"} shipping {formatPrice(reviewedChange.shippingCostCents, currency)} = {formatPrice(reviewedChange.targetDeliveredPriceCents, currency)}</strong>}
                 <small>{formatPrice(position.undercutCents ?? 5, currency)} below the lowest exact-match buyer total · {position.exactMatchCount} exact match{position.exactMatchCount === 1 ? "" : "es"} · {position.confidence} confidence</small>
+                <MarketMinimumProfitabilityWarning position={position} />
                 {position.lowestCompetitor?.itemWebUrl && <a href={position.lowestCompetitor.itemWebUrl} target="_blank" rel="noreferrer">Inspect the matching listing used</a>}
                 {!position.safeToReprice && <small>Not selectable: the exact-card evidence is not strong enough.</small>}
                 {position.safeToReprice && !reviewedChange && (position.currentDeliveredPriceCents ?? 0) <= targetBuyerTotal && <small>Not selectable: your buyer total is already at or below this position.</small>}
@@ -2953,6 +3065,7 @@ export function CollectionView({
             const isSoldOpen = soldCardId === card.collectionId;
             const isValuationOpen = valuationCardId === card.collectionId;
             const isDetailsExpanded = expandedDetailIds.includes(card.collectionId);
+            const marketMinimumWarning = marketMinimumWarnings[card.collectionId];
             return (
               <article
                 className={`collection-card${isMarketOpen || isSoldOpen || isValuationOpen ? " collection-card-expanded" : ""}`}
@@ -3265,6 +3378,7 @@ export function CollectionView({
                         }} /> {selectedPricePositionIds.includes(card.collectionId) ? "Selected for delivered-price review" : "Select for delivered-price review"}</label>}
                       </div>
                     )}
+                    {marketMinimumWarning && <MarketMinimumProfitabilityWarning position={marketMinimumWarning} />}
                     <button
                       className="collection-card-details-toggle"
                       type="button"
@@ -3482,12 +3596,15 @@ export function CollectionView({
                     amountInput={valuationAmountInput}
                     currency={valuationCurrency}
                     confidence={valuationConfidence}
+                    strategy={valuationStrategy}
                     onAmountChange={setValuationAmountInput}
+                    onStrategyChange={changeValuationStrategy}
                     onConfidenceChange={setValuationConfidence}
                     onSave={() => void saveConfirmedValuation(card)}
                     onClear={() => void clearConfirmedValuation(card)}
-                    onRetry={() => void loadValuationRecommendation(card)}
+                    onRetry={() => void loadValuationRecommendation(card, valuationStrategy)}
                     onClose={closeValuationPanel}
+                    onOpenHelp={() => onOpenHelp("card-values")}
                     excludedComparisonCount={
                       marketExcludedAnchorIds.length + soldExcludedAnchorIds.length
                     }
