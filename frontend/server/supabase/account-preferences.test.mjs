@@ -7,6 +7,7 @@ import {
 
 test("automatic card values are off by default", () => {
   assert.deepEqual(DEFAULT_ACCOUNT_PREFERENCES, {
+    appearance: "dark",
     valuationStrategy: "balanced",
     automationMode: "preview",
     autopilotMinConfidence: 0.95,
@@ -41,6 +42,19 @@ test("automatic card values are off by default", () => {
       promotionAdRatePercent: 2,
     },
   });
+});
+
+test("appearance supports dark, light, and device settings", () => {
+  for (const appearance of ["dark", "light", "system"]) {
+    assert.equal(AccountPreferencesSchema.safeParse({
+      ...DEFAULT_ACCOUNT_PREFERENCES,
+      appearance,
+    }).success, true);
+  }
+  assert.equal(AccountPreferencesSchema.safeParse({
+    ...DEFAULT_ACCOUNT_PREFERENCES,
+    appearance: "high_contrast",
+  }).success, false);
 });
 
 test("an enabled automatic-value rule requires a positive dollar limit", () => {

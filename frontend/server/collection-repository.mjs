@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 
+import { encodeBackupThumbnail } from "./account-backup-image.mjs";
+
 export class LocalCollectionRepository {
   constructor({ store }) {
     this.store = store;
@@ -49,10 +51,7 @@ export class LocalCollectionRepository {
         const encode = async (image) => {
           if (!image) return null;
           const contents = await readFile(image.filePath);
-          return {
-            mimeType: image.mimeType,
-            base64: contents.toString("base64"),
-          };
+          return encodeBackupThumbnail(contents);
         };
         return {
           ...card,

@@ -1,6 +1,9 @@
+export const appearanceCacheKey = "cardpilot-appearance";
+
 export type ValuationStrategy = "sell_faster" | "balanced" | "maximize_value";
 
 export type AccountPreferences = {
+  appearance: "dark" | "light" | "system";
   valuationStrategy: ValuationStrategy;
   automationMode: "preview" | "autopilot";
   autopilotMinConfidence: number;
@@ -37,6 +40,7 @@ export type AccountPreferences = {
 };
 
 export const defaultAccountPreferences: AccountPreferences = {
+  appearance: "dark",
   valuationStrategy: "balanced",
   automationMode: "preview",
   autopilotMinConfidence: 0.95,

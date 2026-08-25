@@ -109,6 +109,19 @@ try {
     throw new Error("The collection endpoint did not return a card list.");
   }
 
+  const backupResponse = await fetch(`${baseUrl}/api/account/export`);
+  const backup = await backupResponse.json();
+  if (
+    !backupResponse.ok ||
+    backupResponse.headers.get("content-type")?.includes("application/json") !== true ||
+    !backupResponse.headers.get("content-disposition")?.includes("cardpilot-backup-") ||
+    backup.schemaVersion !== "cardpilot-account-backup-v1" ||
+    !Array.isArray(backup.cards) ||
+    backup.cardCount !== backup.cards.length
+  ) {
+    throw new Error("The account backup endpoint did not return a downloadable backup.");
+  }
+
   const missingActiveMarketResponse = await fetch(
     `${baseUrl}/api/collection/not-a-card/active-market`,
   );

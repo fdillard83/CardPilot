@@ -8,6 +8,7 @@ import {
 } from "./accounts/AccountGate";
 import { AccountSettings } from "./accounts/AccountSettings";
 import {
+  appearanceCacheKey,
   defaultAccountPreferences,
   type AccountPreferences,
 } from "./accounts/preferences";
@@ -660,9 +661,13 @@ function App() {
   const [localImportError, setLocalImportError] = useState<string | null>(null);
   const [isAccountSettingsOpen, setIsAccountSettingsOpen] = useState(false);
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
-  const [accountPreferences, setAccountPreferences] = useState<AccountPreferences>(
-    defaultAccountPreferences,
-  );
+  const [accountPreferences, setAccountPreferences] = useState<AccountPreferences>(() => {
+    const cachedAppearance = window.localStorage.getItem(appearanceCacheKey);
+    return {
+      ...defaultAccountPreferences,
+      appearance: cachedAppearance === "light" || cachedAppearance === "system" ? cachedAppearance : "dark",
+    };
+  });
   const [isEbayWelcomeOpen, setIsEbayWelcomeOpen] = useState(false);
   const [isSavingEbayWelcome, setIsSavingEbayWelcome] = useState(false);
   const [ebayWelcomeError, setEbayWelcomeError] = useState<string | null>(null);
@@ -706,6 +711,22 @@ function App() {
   useEffect(() => {
     window.sessionStorage.setItem(ACTIVE_VIEW_KEY, activeView);
   }, [activeView]);
+
+  useEffect(() => {
+    const deviceTheme = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      const resolvedTheme = accountPreferences.appearance === "system"
+        ? deviceTheme.matches ? "dark" : "light"
+        : accountPreferences.appearance;
+      document.documentElement.dataset.theme = resolvedTheme;
+      document.documentElement.style.colorScheme = resolvedTheme;
+      window.localStorage.setItem(appearanceCacheKey, accountPreferences.appearance);
+    };
+    applyTheme();
+    if (accountPreferences.appearance !== "system") return;
+    deviceTheme.addEventListener("change", applyTheme);
+    return () => deviceTheme.removeEventListener("change", applyTheme);
+  }, [accountPreferences.appearance]);
 
   useEffect(() => {
     if (!helpProgressLoaded || isLoadingCollection || collectionCards.length > 0 || helpProgress.welcomeSeen || !helpAccountKey) return;

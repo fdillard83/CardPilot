@@ -2794,24 +2794,37 @@ export function CollectionView({
   };
 
   const removeCard = async (card: SavedCollectionCard) => {
-    if (
-      busyId ||
-      !window.confirm(`Remove ${card.title} from your CardPilot collection?`)
-    ) {
-      return;
-    }
+    if (busyId) return;
+
+    const activeListingWarning = `This card has an active eBay listing. Are you sure you want CardPilot to end the active eBay listing and remove ${card.title} from My Collection?\n\nIf eBay cannot end the listing, the card will stay in My Collection.`;
+    const hasActiveListing = card.selling?.status === "published";
+    if (!window.confirm(hasActiveListing
+      ? activeListingWarning
+      : `Remove ${card.title} from your CardPilot collection?`)) return;
 
     setBusyId(card.collectionId);
     setActionError(null);
     try {
-      const response = await fetch(
+      const requestRemoval = (confirmation?: "END_AND_REMOVE") => fetch(
         `/api/collection/${encodeURIComponent(card.collectionId)}`,
-        { method: "DELETE" },
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirmation }),
+        },
       );
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as
-          | { error?: string }
+      let response = await requestRemoval(hasActiveListing ? "END_AND_REMOVE" : undefined);
+      let payload = (await response.json().catch(() => null)) as
+        | { error?: string; code?: string }
+        | null;
+      if (!response.ok && payload?.code === "ACTIVE_EBAY_LISTING_CONFIRMATION_REQUIRED") {
+        if (!window.confirm(activeListingWarning)) return;
+        response = await requestRemoval("END_AND_REMOVE");
+        payload = (await response.json().catch(() => null)) as
+          | { error?: string; code?: string }
           | null;
+      }
+      if (!response.ok) {
         throw new Error(payload?.error ?? "CardPilot could not remove this card.");
       }
       onCardsChange(
@@ -3071,16 +3084,31 @@ export function CollectionView({
                 className={`collection-card${isMarketOpen || isSoldOpen || isValuationOpen ? " collection-card-expanded" : ""}`}
                 key={card.collectionId}
               >
-                <div className="collection-card-image">
-                  <button
-                    className="collection-card-image-button"
-                    type="button"
-                    onClick={() => setExpandedImageCard(card)}
-                    aria-label={`View the full image of ${card.title}`}
-                  >
-                    <img src={card.images.frontUrl} alt={`Front of ${card.title}`} />
-                    <span className="collection-image-view-label">View full card</span>
-                  </button>
+                <div className={`collection-card-image${isEditing ? " collection-card-image-editing" : ""}`}>
+                  {isEditing ? (
+                    <div className={`collection-editor-images${card.images.backUrl ? "" : " collection-editor-images-single"}`}>
+                      <figure>
+                        <figcaption>Front of card</figcaption>
+                        <div><img src={card.images.frontUrl} alt={`Full front of ${card.title}`} /></div>
+                      </figure>
+                      {card.images.backUrl && (
+                        <figure>
+                          <figcaption>Back of card</figcaption>
+                          <div><img src={card.images.backUrl} alt={`Full back of ${card.title}`} /></div>
+                        </figure>
+                      )}
+                    </div>
+                  ) : (
+                    <button
+                      className="collection-card-image-button"
+                      type="button"
+                      onClick={() => setExpandedImageCard(card)}
+                      aria-label={`View the full image of ${card.title}`}
+                    >
+                      <img src={card.images.frontUrl} alt={`Front of ${card.title}`} />
+                      <span className="collection-image-view-label">View full card</span>
+                    </button>
+                  )}
                   {card.fields.serialNumber && <span>Numbered {card.fields.serialNumber}</span>}
                 </div>
                 {isEditing ? (
@@ -3380,14 +3408,14 @@ export function CollectionView({
                     )}
                     {marketMinimumWarning && <MarketMinimumProfitabilityWarning position={marketMinimumWarning} />}
                     <button
-                      className="collection-card-details-toggle"
+                      className={`collection-card-details-toggle${isDetailsExpanded ? " collection-card-details-toggle-expanded" : ""}`}
                       type="button"
                       aria-expanded={isDetailsExpanded}
                       onClick={() => setExpandedDetailIds((current) => current.includes(card.collectionId)
                         ? current.filter((id) => id !== card.collectionId)
                         : [...current, card.collectionId])}
                     >
-                      {isDetailsExpanded ? "Hide card details" : "View card details and actions"}
+                      {isDetailsExpanded ? "Hide card details and actions" : "View card details and actions"}
                     </button>
                     {isDetailsExpanded && <>
                     <dl>
@@ -3519,6 +3547,13 @@ export function CollectionView({
                         {busyId === card.collectionId ? "Removing..." : "Remove"}
                       </button>
                     </div>
+                    <button
+                      className="collection-card-details-collapse"
+                      type="button"
+                      onClick={() => setExpandedDetailIds((current) => current.filter((id) => id !== card.collectionId))}
+                    >
+                      Hide card details and actions
+                    </button>
                     </>}
                   </div>
                 )}

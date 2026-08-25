@@ -8,6 +8,21 @@
   --line: rgba(210, 237, 220, 0.11);
   --line-bright: rgba(210, 237, 220, 0.18);
   --lime: #b7ee4f;
+  --panel-soft: rgba(255, 255, 255, 0.025);
+  --control-bg: #09130f;
+  --image-bg: #050b08;
+  --surface-raised: #0b1512;
+  --field-bg: rgba(3, 10, 7, 0.48);
+  --subtle-bg: rgba(255, 255, 255, 0.025);
+  --subtle-bg-strong: rgba(255, 255, 255, 0.035);
+  --overlay-bg: rgba(4, 11, 8, 0.9);
+  --on-accent: #06120d;
+  --grid-line: rgba(255, 255, 255, 0.012);
+  --info: #91ccff;
+  --info-soft: #a9dcff;
+  --warning: #ffc457;
+  --danger: #ffc6bd;
+  --special: #d8baff;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--ink);
   background: var(--bg);
@@ -15,6 +30,34 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+
+:root[data-theme="light"] {
+  --bg: #f2f5ef;
+  --panel: #ffffff;
+  --panel-soft: #f6f9f3;
+  --ink: #14231b;
+  --soft-ink: #344a3e;
+  --muted: #61746a;
+  --faint: #74867c;
+  --line: rgba(30, 67, 47, 0.14);
+  --line-bright: rgba(30, 67, 47, 0.24);
+  --lime: #527d00;
+  --control-bg: #f8fbf5;
+  --image-bg: #e7ece5;
+  --surface-raised: #f4f7f1;
+  --field-bg: rgba(255, 255, 255, 0.92);
+  --subtle-bg: rgba(27, 67, 45, 0.035);
+  --subtle-bg-strong: rgba(27, 67, 45, 0.065);
+  --overlay-bg: rgba(255, 255, 255, 0.94);
+  --on-accent: #101c08;
+  --grid-line: rgba(30, 67, 47, 0.045);
+  --info: #195f8f;
+  --info-soft: #246b99;
+  --warning: #825600;
+  --danger: #a43227;
+  --special: #7042a0;
 }
 
 * { box-sizing: border-box; }
@@ -32,8 +75,8 @@ body {
   min-height: 100vh;
   margin: 0;
   background:
-    linear-gradient(rgba(255,255,255,.012) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,.012) 1px, transparent 1px);
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   background-size: 56px 56px;
 }
 
@@ -47,6 +90,6 @@ button {
 }
 
 ::selection {
-  color: #07100d;
+  color: var(--on-accent);
   background: var(--lime);
 }

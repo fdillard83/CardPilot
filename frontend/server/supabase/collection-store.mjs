@@ -10,6 +10,26 @@ import {
   valuationProfileFromRecord,
 } from "../collection-store.mjs";
 import { deriveValuationProfile } from "../valuation/variant-adjustment.mjs";
+import { encodeBackupThumbnail } from "../account-backup-image.mjs";
+
+const BACKUP_CARD_CONCURRENCY = 6;
+
+async function mapWithConcurrency(items, concurrency, operation) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await operation(items[index]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
 
 function databaseError(operation, error) {
   const wrapped = new Error(`Supabase ${operation} failed.`);
@@ -18,10 +38,16 @@ function databaseError(operation, error) {
 }
 
 export class SupabaseCollectionRepository {
-  constructor({ client, bucket = "card-images", now = () => new Date() }) {
+  constructor({
+    client,
+    bucket = "card-images",
+    now = () => new Date(),
+    backupImageEncoder = encodeBackupThumbnail,
+  }) {
     this.client = client;
     this.bucket = bucket;
     this.now = now;
+    this.backupImageEncoder = backupImageEncoder;
     this.mode = "supabase";
   }
 
@@ -181,42 +207,48 @@ export class SupabaseCollectionRepository {
       .eq("user_id", userId)
       .order("updated_at", { ascending: false });
     if (error) throw databaseError("collection export", error);
-    const cards = [];
-    for (const { record } of data ?? []) {
-      const imageWarnings = [];
-      const encode = async (image, side) => {
-        if (!image?.objectPath) return null;
-        let lastError = null;
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          const { data: blob, error: downloadError } = await this.client.storage
-            .from(this.bucket)
-            .download(image.objectPath);
-          if (!downloadError && blob) {
-            return {
-              mimeType: image.mimeType,
-              base64: Buffer.from(await blob.arrayBuffer()).toString("base64"),
-            };
+    return mapWithConcurrency(
+      data ?? [],
+      BACKUP_CARD_CONCURRENCY,
+      async ({ record }) => {
+        const imageWarnings = [];
+        const encode = async (image, side) => {
+          if (!image?.objectPath) return null;
+          let lastError = null;
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            const { data: blob, error: downloadError } = await this.client.storage
+              .from(this.bucket)
+              .download(image.objectPath);
+            if (!downloadError && blob) {
+              try {
+                return await this.backupImageEncoder(blob, image.mimeType);
+              } catch (encodingError) {
+                lastError = encodingError;
+                break;
+              }
+            }
+            lastError = downloadError;
           }
-          lastError = downloadError;
-        }
-        console.warn("A private card image could not be included in an account backup", {
-          collectionId: record.collectionId,
-          side,
-          error: lastError?.message ?? lastError,
-        });
-        imageWarnings.push(`${side} image was unavailable when this backup was created.`);
-        return null;
-      };
-      cards.push({
-        ...publicRecord(record),
-        images: {
-          front: await encode(record.images?.front, "Front"),
-          back: await encode(record.images?.back, "Back"),
-        },
-        ...(imageWarnings.length ? { imageWarnings } : {}),
-      });
-    }
-    return cards;
+          console.warn("A private card image could not be included in an account backup", {
+            collectionId: record.collectionId,
+            side,
+            error: lastError?.message ?? lastError,
+          });
+          imageWarnings.push(
+            `${side} image was unavailable when this backup was created.`,
+          );
+          return null;
+        };
+        return {
+          ...publicRecord(record),
+          images: {
+            front: await encode(record.images?.front, "Front"),
+            back: await encode(record.images?.back, "Back"),
+          },
+          ...(imageWarnings.length ? { imageWarnings } : {}),
+        };
+      },
+    );
   }
 
   async removeAllForUser(userId) {

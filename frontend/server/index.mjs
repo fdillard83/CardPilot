@@ -79,6 +79,7 @@ import {
 import { assessAutopilot, shouldAutomaticallySaveValuation } from "./autopilot/decision.mjs";
 import { MarketFeedbackSubmissionSchema } from "./supabase/market-feedback.mjs";
 import { listingHealth, optimizedListingDetails } from "./ebay/listing-health.mjs";
+import { removeCollectionCardSafely } from "./ebay/collection-removal.mjs";
 
 const serverFile = fileURLToPath(import.meta.url);
 const currentDirectory = path.dirname(serverFile);
@@ -2471,7 +2472,9 @@ app.get("/api/account/export", async (request, response) => {
       "Content-Disposition": `attachment; filename="cardpilot-backup-${exportedAt.slice(0, 10)}.json"`,
       "X-CardPilot-Backup-Warning-Count": String(imageWarnings.length),
     });
-    response.send(`${JSON.stringify(backup, null, 2)}\n`);
+    // Keep the response compact. Embedded images dominate backup size, and pretty
+    // printing can needlessly increase both server memory and download time.
+    response.send(`${JSON.stringify(backup)}\n`);
   } catch (error) {
     console.error("CardPilot account export failed", error);
     response.status(500).json({
@@ -2667,19 +2670,34 @@ app.put("/api/collection/:collectionId", async (request, response) => {
 
 app.delete("/api/collection/:collectionId", async (request, response) => {
   try {
-    const removed = await collectionStore.remove(
-      collectionUserId(request),
-      request.params.collectionId,
-    );
-    if (!removed) {
+    const userId = collectionUserId(request);
+    const result = await removeCollectionCardSafely({
+      userId,
+      collectionId: request.params.collectionId,
+      confirmation: request.body?.confirmation,
+      collectionStore,
+      ebaySellingStore: cloudServices?.ebaySelling ?? null,
+      endActiveListing: async (draft) => {
+        try {
+          const token = await ebaySellerAccessToken(userId);
+          await ebaySelling.request(token, `/sell/inventory/v1/offer/${encodeURIComponent(draft.ebayOfferId)}/withdraw`, { method: "POST" });
+        } catch (error) {
+          if (!error.status) error.status = 502;
+          throw error;
+        }
+      },
+    });
+    if (!result.removed) {
       response.status(404).json({ error: "That saved card was not found." });
       return;
     }
-    response.status(204).end();
+    response.json({ removed: true, endedActiveEbayListing: result.endedActiveListing });
   } catch (error) {
-    console.error("Collection removal failed", error);
-    response.status(500).json({
-      error: "CardPilot could not remove this card. Please try again.",
+    const status = error.status ?? 500;
+    if (status >= 500) console.error("Collection removal failed", error);
+    response.status(status).json({
+      error: error.message ?? "CardPilot could not remove this card. Please try again.",
+      code: error.code,
     });
   }
 });

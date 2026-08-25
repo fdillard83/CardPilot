@@ -89,6 +89,10 @@ export function AccountSettings({
   const [ebayStatus, setEbayStatus] = useState<EbayConnectionStatus | null>(null);
   const [ebayBusy, setEbayBusy] = useState(false);
   const [ebayError, setEbayError] = useState<string | null>(null);
+  const [appearance, setAppearance] = useState(preferences.appearance);
+  const [appearanceBusy, setAppearanceBusy] = useState(false);
+  const [appearanceStatus, setAppearanceStatus] = useState<string | null>(null);
+  const [appearanceError, setAppearanceError] = useState<string | null>(null);
 
   useEffect(() => {
     if (recoveryMode) return;
@@ -98,6 +102,36 @@ export function AccountSettings({
       setEbayStatus(payload);
     }).catch((caught) => setEbayError(caught instanceof Error ? caught.message : "CardPilot could not check the eBay connection."));
   }, [recoveryMode]);
+
+  const changeAppearance = async (nextAppearance: AccountPreferences["appearance"]) => {
+    const previousAppearance = preferences.appearance;
+    const optimisticPreferences = { ...preferences, appearance: nextAppearance };
+    setAppearance(nextAppearance);
+    setAppearanceBusy(true);
+    setAppearanceError(null);
+    setAppearanceStatus(null);
+    onPreferencesChange(optimisticPreferences);
+    try {
+      const response = await fetch("/api/account/preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(optimisticPreferences),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | (AccountPreferences & { error?: string })
+        | null;
+      if (!response.ok || !payload) throw new Error(payload?.error ?? "CardPilot could not save your appearance setting.");
+      onPreferencesChange(payload);
+      setAppearance(payload.appearance);
+      setAppearanceStatus("Appearance saved.");
+    } catch (caught) {
+      setAppearance(previousAppearance);
+      onPreferencesChange({ ...preferences, appearance: previousAppearance });
+      setAppearanceError(caught instanceof Error ? caught.message : "CardPilot could not save your appearance setting.");
+    } finally {
+      setAppearanceBusy(false);
+    }
+  };
 
   const connectEbay = async () => {
     setEbayBusy(true); setEbayError(null);
@@ -202,6 +236,7 @@ export function AccountSettings({
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          appearance: preferences.appearance,
           valuationStrategy,
           automationMode,
           autopilotMinConfidence: minimumConfidence,
@@ -315,7 +350,8 @@ export function AccountSettings({
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
-      URL.revokeObjectURL(url);
+      // Let the browser begin reading the object URL before releasing it.
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
       onBackupDownloaded();
       setExportStatus(warningCount > 0
         ? `Backup downloaded. ${warningCount} image${warningCount === 1 ? " was" : "s were"} unavailable; the affected cards are identified inside the backup.`
@@ -391,6 +427,30 @@ export function AccountSettings({
             <div><span>Session</span><strong>Signed in</strong></div>
             <div><span>Storage</span><strong>Private Supabase cloud</strong></div>
           </div>
+        )}
+
+        {!recoveryMode && (
+          <section className="account-settings-section">
+            <h3>Appearance</h3>
+            <p>Choose the CardPilot color theme that is most comfortable for you.</p>
+            <div className="account-settings-form">
+              <label>
+                Color theme
+                <select
+                  value={appearance}
+                  disabled={appearanceBusy}
+                  onChange={(event) => void changeAppearance(event.target.value as AccountPreferences["appearance"])}
+                >
+                  <option value="dark">Dark</option>
+                  <option value="light">Light</option>
+                  <option value="system">Use device setting</option>
+                </select>
+                <small>The theme applies throughout CardPilot and is saved automatically.</small>
+              </label>
+              {appearanceError && <small className="account-inline-error">{appearanceError}</small>}
+              {appearanceStatus && <small className="account-inline-success">{appearanceStatus}</small>}
+            </div>
+          </section>
         )}
 
         {!recoveryMode && (

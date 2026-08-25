@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import sharp from "sharp";
 
 import { SupabaseCollectionRepository } from "./collection-store.mjs";
 
@@ -119,6 +120,11 @@ function fakeClient() {
   };
 }
 
+const passthroughBackupImageEncoder = async (blob, mimeType) => ({
+  mimeType,
+  base64: Buffer.from(await blob.arrayBuffer()).toString("base64"),
+});
+
 const fields = {
   player: "Nolan Ryan",
   sport: "Baseball",
@@ -167,7 +173,10 @@ test("Supabase collections and images are scoped to one account", async () => {
 
 test("collection export includes private images and account cleanup stays scoped", async () => {
   const client = fakeClient();
-  const store = new SupabaseCollectionRepository({ client });
+  const store = new SupabaseCollectionRepository({
+    client,
+    backupImageEncoder: passthroughBackupImageEncoder,
+  });
   await store.create("user-a", {
     identificationId: "identification-a",
     fields,
@@ -197,7 +206,10 @@ test("collection export includes private images and account cleanup stays scoped
 
 test("collection export retries images and preserves card details when an image is unavailable", async () => {
   const client = fakeClient();
-  const store = new SupabaseCollectionRepository({ client });
+  const store = new SupabaseCollectionRepository({
+    client,
+    backupImageEncoder: passthroughBackupImageEncoder,
+  });
   const created = await store.create("user-a", {
     identificationId: "identification-a",
     fields,
@@ -215,4 +227,79 @@ test("collection export retries images and preserves card details when an image 
   assert.deepEqual(backup[0].imageWarnings, [
     "Front image was unavailable when this backup was created.",
   ]);
+});
+
+test("collection export processes a bounded group of card images concurrently", async () => {
+  const client = fakeClient();
+  const store = new SupabaseCollectionRepository({
+    client,
+    backupImageEncoder: passthroughBackupImageEncoder,
+  });
+  for (let index = 0; index < 8; index += 1) {
+    await store.create("user-a", {
+      identificationId: `identification-${index}`,
+      fields,
+      overallConfidence: 0.91,
+      decision: "confirm",
+      frontImage: "data:image/jpeg;base64,Zm9v",
+    });
+  }
+
+  const originalStorageFrom = client.storage.from.bind(client.storage);
+  let activeDownloads = 0;
+  let maximumActiveDownloads = 0;
+  client.storage.from = () => {
+    const bucket = originalStorageFrom();
+    return {
+      ...bucket,
+      async download(path) {
+        activeDownloads += 1;
+        maximumActiveDownloads = Math.max(maximumActiveDownloads, activeDownloads);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        try {
+          return await bucket.download(path);
+        } finally {
+          activeDownloads -= 1;
+        }
+      },
+    };
+  };
+
+  const backup = await store.export("user-a");
+
+  assert.equal(backup.length, 8);
+  assert.ok(maximumActiveDownloads > 1);
+  assert.ok(maximumActiveDownloads <= 6);
+});
+
+test("collection export replaces full images with compact JPEG thumbnails", async () => {
+  const client = fakeClient();
+  const store = new SupabaseCollectionRepository({ client });
+  const source = await sharp({
+    create: {
+      width: 1_000,
+      height: 1_400,
+      channels: 3,
+      background: { r: 36, g: 112, b: 64 },
+    },
+  })
+    .jpeg({ quality: 95 })
+    .toBuffer();
+  await store.create("user-a", {
+    identificationId: "identification-thumbnail",
+    fields,
+    overallConfidence: 0.91,
+    decision: "confirm",
+    frontImage: `data:image/jpeg;base64,${source.toString("base64")}`,
+  });
+
+  const backup = await store.export("user-a");
+  const thumbnail = Buffer.from(backup[0].images.front.base64, "base64");
+  const metadata = await sharp(thumbnail).metadata();
+
+  assert.equal(backup[0].images.front.mimeType, "image/jpeg");
+  assert.equal(metadata.format, "jpeg");
+  assert.equal(metadata.width, 480);
+  assert.equal(metadata.height, 672);
+  assert.ok(thumbnail.length < source.length);
 });
