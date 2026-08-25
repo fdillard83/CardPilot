@@ -80,6 +80,7 @@ import { assessAutopilot, shouldAutomaticallySaveValuation } from "./autopilot/d
 import { MarketFeedbackSubmissionSchema } from "./supabase/market-feedback.mjs";
 import { listingHealth, optimizedListingDetails } from "./ebay/listing-health.mjs";
 import { removeCollectionCardSafely } from "./ebay/collection-removal.mjs";
+import { collectionSpreadsheetCsv } from "./collection-spreadsheet.mjs";
 
 const serverFile = fileURLToPath(import.meta.url);
 const currentDirectory = path.dirname(serverFile);
@@ -2479,6 +2480,25 @@ app.get("/api/account/export", async (request, response) => {
     console.error("CardPilot account export failed", error);
     response.status(500).json({
       error: "CardPilot could not prepare the collection backup.",
+    });
+  }
+});
+
+
+app.get("/api/account/collection.csv", async (request, response) => {
+  try {
+    const cards = await collectionStore.list(collectionUserId(request));
+    const exportedAt = new Date().toISOString();
+    response.set({
+      "Cache-Control": "private, no-store",
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="cardpilot-collection-${exportedAt.slice(0, 10)}.csv"`,
+    });
+    response.send(collectionSpreadsheetCsv(cards));
+  } catch (error) {
+    console.error("CardPilot collection spreadsheet export failed", error);
+    response.status(500).json({
+      error: "CardPilot could not prepare the collection spreadsheet.",
     });
   }
 });

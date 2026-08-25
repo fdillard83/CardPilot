@@ -37,6 +37,7 @@ export function AccountSettings({
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [isSavingPassword, setIsSavingPassword] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportingSpreadsheet, setIsExportingSpreadsheet] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [deletePassword, setDeletePassword] = useState("");
@@ -364,6 +365,43 @@ export function AccountSettings({
       );
     } finally {
       setIsExporting(false);
+    }
+  };
+
+
+  const downloadSpreadsheet = async () => {
+    setIsExportingSpreadsheet(true);
+    setExportError(null);
+    setExportStatus(null);
+    try {
+      const response = await fetch("/api/account/collection.csv");
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        throw new Error(payload?.error ?? "CardPilot could not prepare the spreadsheet.");
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition") ?? "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = match?.[1] ?? "cardpilot-collection.csv";
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+      onBackupDownloaded();
+      setExportStatus("Collection spreadsheet downloaded successfully.");
+    } catch (caughtError) {
+      setExportError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not prepare the spreadsheet.",
+      );
+    } finally {
+      setIsExportingSpreadsheet(false);
     }
   };
 
@@ -698,13 +736,34 @@ export function AccountSettings({
             </section>
 
             <section className="account-settings-section">
-              <h3>Personal backup</h3>
-              <p>Download your card details and original private images in one JSON backup file.</p>
+              <h3>Collection downloads</h3>
+              <p>
+                Download a spreadsheet for Excel or Google Sheets, or keep a complete
+                technical backup with card details and thumbnail images.
+              </p>
               {exportError && <small className="account-inline-error">{exportError}</small>}
               {exportStatus && <small className="account-inline-success">{exportStatus}</small>}
-              <button type="button" disabled={isExporting} onClick={() => void downloadBackup()}>
-                {isExporting ? "Preparing backup..." : "Download collection backup"}
-              </button>
+              <div className="account-export-actions">
+                <button
+                  className="primary-action"
+                  type="button"
+                  disabled={isExporting || isExportingSpreadsheet}
+                  onClick={() => void downloadSpreadsheet()}
+                >
+                  {isExportingSpreadsheet ? "Preparing spreadsheet..." : "Download collection spreadsheet"}
+                </button>
+                <button
+                  type="button"
+                  disabled={isExporting || isExportingSpreadsheet}
+                  onClick={() => void downloadBackup()}
+                >
+                  {isExporting ? "Preparing backup..." : "Download complete backup (JSON)"}
+                </button>
+              </div>
+              <small>
+                The spreadsheet is designed for viewing, sorting, and filtering. The JSON
+                file is intended for technical backup and includes compressed card thumbnails.
+              </small>
             </section>
 
             <section className="account-settings-section account-danger-zone">

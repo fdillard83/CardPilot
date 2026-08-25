@@ -76,8 +76,8 @@ export const helpArticles: HelpArticle[] = [
   { id: "account-settings", category: "Account", title: "Account settings and defaults", summary: "Control valuation, automation, pricing, promotion, and safety defaults.", sections: [
     { heading: "Review these settings", bullets: ["Default estimated-card-value goal.", "Default eBay selling goal.", "Automatic lower-value saving limit.", "Repricing and listing-health thresholds.", "Fee, promotion, tax, mailing, and loss-safety assumptions."] },
   ] },
-  { id: "backup", category: "Account", title: "Download a collection backup", summary: "Save card details and available private images.", sections: [
-    { heading: "Create a backup", paragraphs: ["Open Account, find Personal backup, and choose Download collection backup. The JSON file includes card details and available private images. If an image cannot be retrieved, the backup still downloads and identifies the affected card."] },
+  { id: "backup", category: "Account", title: "Download a collection backup", summary: "Download a readable spreadsheet or a complete technical backup.", sections: [
+    { heading: "Create a backup", paragraphs: ["Open Account and find Collection downloads. Choose Download collection spreadsheet for an Excel and Google Sheets compatible file, or Download complete backup (JSON) for structured card details and compressed thumbnail images. If an image cannot be retrieved, the JSON backup still downloads and identifies the affected card."] },
   ] },
   { id: "faq", category: "FAQ", title: "Frequently asked questions", summary: "Quick answers to common CardPilot questions.", sections: [
     { heading: "Why did CardPilot not find an exact comparison?", paragraphs: ["The exact card may have no compatible active or completed records, or visible details may conflict. Review year, set, card number, parallel, grading, autograph, memorabilia, and serial details."] },

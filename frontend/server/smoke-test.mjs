@@ -122,6 +122,19 @@ try {
     throw new Error("The account backup endpoint did not return a downloadable backup.");
   }
 
+
+  const spreadsheetResponse = await fetch(`${baseUrl}/api/account/collection.csv`);
+  const spreadsheet = await spreadsheetResponse.text();
+  if (
+    !spreadsheetResponse.ok ||
+    !spreadsheetResponse.headers.get("content-type")?.includes("text/csv") ||
+    !spreadsheetResponse.headers.get("content-disposition")?.includes("cardpilot-collection-") ||
+    !spreadsheet.includes('"Card"') ||
+    !spreadsheet.includes('"Saved value"')
+  ) {
+    throw new Error("The collection spreadsheet endpoint did not return a downloadable CSV file.");
+  }
+
   const missingActiveMarketResponse = await fetch(
     `${baseUrl}/api/collection/not-a-card/active-market`,
   );
