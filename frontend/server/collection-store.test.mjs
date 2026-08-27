@@ -60,8 +60,8 @@ test("collection records persist images and support update and removal", async (
       featureType: "ordinary",
       source: "derived",
     });
-    assert.match(created.images.frontUrl, /\/images\/front$/);
-    assert.match(created.images.backUrl, /\/images\/back$/);
+    assert.match(created.images.frontUrl, /\/images\/front\?size=thumbnail$/);
+    assert.match(created.images.backUrl, /\/images\/back\?size=thumbnail$/);
     assert.equal((await store.list()).length, 1);
 
     assert.equal(

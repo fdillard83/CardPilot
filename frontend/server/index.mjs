@@ -2819,13 +2819,19 @@ app.get(
         collectionUserId(request),
         request.params.collectionId,
         request.params.side,
+        request.query.size === "thumbnail" ? "thumbnail" : "original",
       );
       if (!image) {
         response.status(404).end();
         return;
       }
       if (image.signedUrl) {
-        response.set("Cache-Control", "private, no-store");
+        response.set(
+          "Cache-Control",
+          request.query.size === "thumbnail"
+            ? "private, max-age=300"
+            : "private, no-store",
+        );
         response.redirect(302, image.signedUrl);
         return;
       }

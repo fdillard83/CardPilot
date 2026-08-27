@@ -85,15 +85,26 @@ class FakeQuery {
 
 function fakeClient() {
   const objects = new Map();
+  const downloads = [];
   return {
     rows: [],
     objects,
+    downloads,
     from() {
       return new FakeQuery(this);
     },
     storage: {
       from() {
         return {
+          async list(folder, options = {}) {
+            const prefix = folder ? `${folder}/` : "";
+            const data = [...objects.keys()]
+              .filter((path) => path.startsWith(prefix))
+              .map((path) => ({ name: path.slice(prefix.length) }))
+              .filter((item) => !options.search || item.name.includes(options.search))
+              .slice(0, options.limit ?? 100);
+            return { data, error: null };
+          },
           async upload(path, buffer, options) {
             objects.set(path, { buffer, options });
             return { error: null };
@@ -103,6 +114,7 @@ function fakeClient() {
             return { error: null };
           },
           async download(path) {
+            downloads.push(path);
             const object = objects.get(path);
             return object
               ? { data: new Blob([object.buffer]), error: null }
@@ -120,9 +132,11 @@ function fakeClient() {
   };
 }
 
-const passthroughBackupImageEncoder = async (blob, mimeType) => ({
+const passthroughBackupImageEncoder = async (image, mimeType) => ({
   mimeType,
-  base64: Buffer.from(await blob.arrayBuffer()).toString("base64"),
+  base64: Buffer.isBuffer(image)
+    ? image.toString("base64")
+    : Buffer.from(await image.arrayBuffer()).toString("base64"),
 });
 
 const fields = {
@@ -148,6 +162,7 @@ test("Supabase collections and images are scoped to one account", async () => {
   const store = new SupabaseCollectionRepository({
     client,
     now: () => new Date("2026-08-14T12:00:00.000Z"),
+    backupImageEncoder: passthroughBackupImageEncoder,
   });
   const created = await store.create("user-a", {
     identificationId: "identification-1",
@@ -160,7 +175,7 @@ test("Supabase collections and images are scoped to one account", async () => {
   assert.equal((await store.list("user-a")).length, 1);
   assert.equal((await store.list("user-b")).length, 0);
   assert.equal(await store.get("user-b", created.collectionId), null);
-  assert.equal(client.objects.size, 1);
+  assert.equal(client.objects.size, 2);
 
   const image = await store.image("user-a", created.collectionId, "front");
   assert.match(image.signedUrl, new RegExp(`user-a/${created.collectionId}`));
@@ -171,6 +186,41 @@ test("Supabase collections and images are scoped to one account", async () => {
   assert.equal(client.objects.size, 0);
 });
 
+
+
+test("legacy cards create and remember a thumbnail on first display", async () => {
+  const client = fakeClient();
+  const store = new SupabaseCollectionRepository({
+    client,
+    backupImageEncoder: passthroughBackupImageEncoder,
+  });
+  const created = await store.create("user-a", {
+    identificationId: "identification-legacy",
+    fields,
+    overallConfidence: 0.91,
+    decision: "confirm",
+    frontImage: "data:image/jpeg;base64,Zm9v",
+  });
+  const record = client.rows[0].record;
+  const thumbnailPath = record.images.front.thumbnailObjectPath;
+  delete record.images.front.thumbnailObjectPath;
+  delete record.images.front.thumbnailMimeType;
+  client.objects.delete(thumbnailPath);
+
+  const image = await store.image(
+    "user-a",
+    created.collectionId,
+    "front",
+    "thumbnail",
+  );
+
+  assert.match(image.signedUrl, /front-thumbnail\.jpg/);
+  assert.equal(client.objects.size, 2);
+  assert.equal(
+    client.rows[0].record.images.front.thumbnailObjectPath,
+    thumbnailPath,
+  );
+});
 test("collection export includes private images and account cleanup stays scoped", async () => {
   const client = fakeClient();
   const store = new SupabaseCollectionRepository({
@@ -192,8 +242,10 @@ test("collection export includes private images and account cleanup stays scoped
     frontImage: "data:image/jpeg;base64,YmFy",
   });
 
+  client.downloads.length = 0;
   const backup = await store.export("user-a");
   assert.equal(backup.length, 1);
+  assert.ok(client.downloads.every((path) => path.endsWith("-thumbnail.jpg")));
   assert.equal(backup[0].images.front.base64, "Zm9v");
   assert.equal(backup[0].images.front.mimeType, "image/jpeg");
 
@@ -201,7 +253,7 @@ test("collection export includes private images and account cleanup stays scoped
   assert.deepEqual(removed, { cardCount: 1, imageCount: 1 });
   assert.equal((await store.list("user-a")).length, 0);
   assert.equal((await store.list("user-b")).length, 1);
-  assert.equal(client.objects.size, 1);
+  assert.equal(client.objects.size, 2);
 });
 
 test("collection export retries images and preserves card details when an image is unavailable", async () => {

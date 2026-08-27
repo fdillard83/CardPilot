@@ -190,9 +190,9 @@ export function publicRecord(record) {
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     images: {
-      frontUrl: `/api/collection/${encodeURIComponent(record.collectionId)}/images/front`,
+      frontUrl: `/api/collection/${encodeURIComponent(record.collectionId)}/images/front?size=thumbnail`,
       backUrl: record.images.back
-        ? `/api/collection/${encodeURIComponent(record.collectionId)}/images/back`
+        ? `/api/collection/${encodeURIComponent(record.collectionId)}/images/back?size=thumbnail`
         : null,
     },
   };

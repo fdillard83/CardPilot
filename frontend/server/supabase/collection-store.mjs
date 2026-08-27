@@ -31,6 +31,18 @@ async function mapWithConcurrency(items, concurrency, operation) {
   return results;
 }
 
+function thumbnailObjectPath(objectPath, side) {
+  const slash = objectPath.lastIndexOf("/");
+  return `${objectPath.slice(0, slash + 1)}${side}-thumbnail.jpg`;
+}
+
+function encodedImage(encoded) {
+  return {
+    buffer: Buffer.from(encoded.base64, "base64"),
+    mimeType: encoded.mimeType,
+  };
+}
+
 function databaseError(operation, error) {
   const wrapped = new Error(`Supabase ${operation} failed.`);
   wrapped.cause = error;
@@ -76,10 +88,28 @@ export class SupabaseCollectionRepository {
     const backPath = back
       ? `${userId}/${collectionId}/back.${back.extension}`
       : null;
+    const frontThumbnailPath = thumbnailObjectPath(frontPath, "front");
+    const backThumbnailPath = backPath
+      ? thumbnailObjectPath(backPath, "back")
+      : null;
+    const frontThumbnail = encodedImage(
+      await this.backupImageEncoder(front.buffer, front.mimeType),
+    );
+    const backThumbnail = back
+      ? encodedImage(await this.backupImageEncoder(back.buffer, back.mimeType))
+      : null;
 
-    await this.#upload(frontPath, front);
     try {
+      await this.#upload(frontPath, front);
+      await this.#upload(frontThumbnailPath, frontThumbnail, {
+        cacheControl: "31536000",
+      });
       if (back && backPath) await this.#upload(backPath, back);
+      if (backThumbnail && backThumbnailPath) {
+        await this.#upload(backThumbnailPath, backThumbnail, {
+          cacheControl: "31536000",
+        });
+      }
       const record = {
         collectionId,
         identificationId: validated.identificationId,
@@ -96,10 +126,20 @@ export class SupabaseCollectionRepository {
         createdAt: timestamp,
         updatedAt: timestamp,
         images: {
-          front: { objectPath: frontPath, mimeType: front.mimeType },
+          front: {
+            objectPath: frontPath,
+            mimeType: front.mimeType,
+            thumbnailObjectPath: frontThumbnailPath,
+            thumbnailMimeType: frontThumbnail.mimeType,
+          },
           back:
-            back && backPath
-              ? { objectPath: backPath, mimeType: back.mimeType }
+            back && backPath && backThumbnail && backThumbnailPath
+              ? {
+                  objectPath: backPath,
+                  mimeType: back.mimeType,
+                  thumbnailObjectPath: backThumbnailPath,
+                  thumbnailMimeType: backThumbnail.mimeType,
+                }
               : null,
         },
       };
@@ -113,7 +153,12 @@ export class SupabaseCollectionRepository {
       if (error) throw databaseError("collection insert", error);
       return publicRecord(record);
     } catch (error) {
-      await this.#removeObjects([frontPath, backPath]);
+      await this.#removeObjects([
+        frontPath,
+        backPath,
+        frontThumbnailPath,
+        backThumbnailPath,
+      ]);
       throw error;
     }
   }
@@ -160,6 +205,14 @@ export class SupabaseCollectionRepository {
     await this.#removeObjects([
       record.images?.front?.objectPath,
       record.images?.back?.objectPath,
+      record.images?.front?.thumbnailObjectPath ??
+        (record.images?.front?.objectPath
+          ? thumbnailObjectPath(record.images.front.objectPath, "front")
+          : null),
+      record.images?.back?.thumbnailObjectPath ??
+        (record.images?.back?.objectPath
+          ? thumbnailObjectPath(record.images.back.objectPath, "back")
+          : null),
     ]);
     return true;
   }
@@ -187,17 +240,23 @@ export class SupabaseCollectionRepository {
     return publicRecord(updated);
   }
 
-  async image(userId, collectionId, side) {
+  async image(userId, collectionId, side, size = "original") {
     const record = await this.#record(userId, collectionId);
     const image = record?.images?.[side] ?? null;
     if (!image?.objectPath) return null;
+    const objectPath = size === "thumbnail"
+      ? await this.#ensureThumbnail(userId, collectionId, side, record)
+      : image.objectPath;
+    const mimeType = size === "thumbnail"
+      ? image.thumbnailMimeType ?? "image/jpeg"
+      : image.mimeType;
     const { data, error } = await this.client.storage
       .from(this.bucket)
-      .createSignedUrl(image.objectPath, 300);
+      .createSignedUrl(objectPath, size === "thumbnail" ? 3600 : 300);
     if (error || !data?.signedUrl) {
       throw databaseError("private image link", error);
     }
-    return { signedUrl: data.signedUrl, mimeType: image.mimeType };
+    return { signedUrl: data.signedUrl, mimeType };
   }
 
   async export(userId) {
@@ -215,21 +274,26 @@ export class SupabaseCollectionRepository {
         const encode = async (image, side) => {
           if (!image?.objectPath) return null;
           let lastError = null;
-          for (let attempt = 0; attempt < 3; attempt += 1) {
-            const { data: blob, error: downloadError } = await this.client.storage
-              .from(this.bucket)
-              .download(image.objectPath);
-            if (!downloadError && blob) {
-              try {
-                return await this.backupImageEncoder(blob, image.mimeType);
-              } catch (encodingError) {
-                lastError = encodingError;
-                break;
+          try {
+            const thumbnailPath = await this.#ensureThumbnail(
+              userId,
+              record.collectionId,
+              side.toLowerCase(),
+              record,
+            );
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              const { data: blob, error: downloadError } = await this.client.storage
+                .from(this.bucket)
+                .download(thumbnailPath);
+              if (!downloadError && blob) {
+                return await this.backupImageEncoder(blob, "image/jpeg");
               }
+              lastError = downloadError;
             }
-            lastError = downloadError;
+          } catch (thumbnailError) {
+            lastError = thumbnailError;
           }
-          console.warn("A private card image could not be included in an account backup", {
+          console.warn("A private card thumbnail could not be included in an account backup", {
             collectionId: record.collectionId,
             side,
             error: lastError?.message ?? lastError,
@@ -257,10 +321,21 @@ export class SupabaseCollectionRepository {
       .select("record")
       .eq("user_id", userId);
     if (error) throw databaseError("account collection lookup", error);
-    const paths = (data ?? []).flatMap(({ record }) => [
+    const originalPaths = (data ?? []).flatMap(({ record }) => [
       record.images?.front?.objectPath,
       record.images?.back?.objectPath,
     ]).filter(Boolean);
+    const thumbnailPaths = (data ?? []).flatMap(({ record }) => [
+      record.images?.front?.thumbnailObjectPath ??
+        (record.images?.front?.objectPath
+          ? thumbnailObjectPath(record.images.front.objectPath, "front")
+          : null),
+      record.images?.back?.thumbnailObjectPath ??
+        (record.images?.back?.objectPath
+          ? thumbnailObjectPath(record.images.back.objectPath, "back")
+          : null),
+    ]).filter(Boolean);
+    const paths = [...new Set([...originalPaths, ...thumbnailPaths])];
     if (paths.length > 0) {
       const { error: storageError } = await this.client.storage
         .from(this.bucket)
@@ -272,7 +347,7 @@ export class SupabaseCollectionRepository {
       .delete()
       .eq("user_id", userId);
     if (deleteError) throw databaseError("account collection removal", deleteError);
-    return { cardCount: data?.length ?? 0, imageCount: paths.length };
+    return { cardCount: data?.length ?? 0, imageCount: originalPaths.length };
   }
 
   async #record(userId, collectionId) {
@@ -299,13 +374,70 @@ export class SupabaseCollectionRepository {
     }
   }
 
-  async #upload(objectPath, image) {
+  async #ensureThumbnail(userId, collectionId, side, record) {
+    const image = record.images?.[side];
+    if (!image?.objectPath) return null;
+    if (image.thumbnailObjectPath) return image.thumbnailObjectPath;
+
+    const objectPath = thumbnailObjectPath(image.objectPath, side);
+    const slash = objectPath.lastIndexOf("/");
+    const folder = objectPath.slice(0, slash);
+    const fileName = objectPath.slice(slash + 1);
+    const storage = this.client.storage.from(this.bucket);
+    const { data: existing, error: listError } = await storage.list(folder, {
+      limit: 1,
+      search: fileName,
+    });
+    if (listError) throw databaseError("thumbnail lookup", listError);
+
+    if (!(existing ?? []).some((item) => item.name === fileName)) {
+      const { data: original, error: downloadError } = await storage.download(
+        image.objectPath,
+      );
+      if (downloadError || !original) {
+        throw databaseError("thumbnail source download", downloadError);
+      }
+      const thumbnail = encodedImage(
+        await this.backupImageEncoder(original, image.mimeType),
+      );
+      await this.#upload(objectPath, thumbnail, {
+        cacheControl: "31536000",
+        upsert: true,
+      });
+    }
+
+    record.images = {
+      ...record.images,
+      [side]: {
+        ...image,
+        thumbnailObjectPath: objectPath,
+        thumbnailMimeType: "image/jpeg",
+      },
+    };
+    try {
+      await this.#updateRecord(
+        userId,
+        collectionId,
+        record,
+        record.updatedAt ?? this.now().toISOString(),
+      );
+    } catch (error) {
+      console.warn("Card thumbnail metadata could not be saved", {
+        collectionId,
+        side,
+        error: error?.message ?? error,
+      });
+    }
+    return objectPath;
+  }
+
+  async #upload(objectPath, image, options = {}) {
     const { error } = await this.client.storage
       .from(this.bucket)
       .upload(objectPath, image.buffer, {
         contentType: image.mimeType,
-        cacheControl: "3600",
-        upsert: false,
+        cacheControl: options.cacheControl ?? "3600",
+        upsert: options.upsert ?? false,
       });
     if (error) throw databaseError("private image upload", error);
   }
