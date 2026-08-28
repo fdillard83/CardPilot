@@ -362,8 +362,14 @@ function activeMarketFloor(activeSnapshot, grading) {
 
 export function buildSaleStrategyOptions(recommendation, activeSnapshot = null, grading = null) {
   if (!recommendation) return null;
-  const floor = activeMarketFloor(activeSnapshot, grading) ?? recommendation.typicalRange.lowAmountCents;
-  const fasterAmount = Math.max(1, Math.min(recommendation.amountCents, floor - 5));
+  const activeFloor = activeMarketFloor(activeSnapshot, grading);
+  const fallbackFloor = recommendation.typicalRange.lowAmountCents;
+  const fasterAmount = Math.max(
+    1,
+    activeFloor === null
+      ? Math.min(recommendation.amountCents, fallbackFloor - 5)
+      : activeFloor - 5,
+  );
   const maximizeAmount = roundRecommendedValueCents(
     Math.max(recommendation.amountCents, recommendation.typicalRange.highAmountCents),
   );
@@ -371,7 +377,9 @@ export function buildSaleStrategyOptions(recommendation, activeSnapshot = null, 
     sell_faster: {
       amountCents: fasterAmount,
       label: "Sell faster",
-      rationale: "Targets 5¢ below the lowest compatible exact-card active buyer total. Shipping is subtracted when the listing is finalized.",
+      rationale: activeFloor === null
+        ? "No compatible active listing was available, so this uses the lower recommendation range."
+        : "Targets 5¢ below the lowest compatible active buyer total. Shipping is subtracted when the listing is finalized.",
     },
     balanced: {
       amountCents: recommendation.amountCents,

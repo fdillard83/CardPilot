@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ValuationRecommendationService,
+  buildSaleStrategyOptions,
   buildValuationRecommendation,
   roundRecommendedValueCents,
 } from "./recommendation.mjs";
@@ -75,6 +76,32 @@ test("selling strategies separate the market floor from midpoint and upper value
   assert.equal(snapshot.saleStrategyOptions.maximize_value.amountCents, 295);
 });
 
+test("Sell Faster is not capped by a lower sold-based recommendation when active listings exist", () => {
+  const options = buildSaleStrategyOptions(
+    {
+      amountCents: 100,
+      typicalRange: { lowAmountCents: 100, highAmountCents: 150 },
+    },
+    activeSnapshot([{
+      matchTier: "exact",
+      classification: "raw",
+      label: "Raw / ungraded",
+      currency: "USD",
+      listingCount: 2,
+      medianAmountCents: 3000,
+      typicalRange: { lowAmountCents: 2500, highAmountCents: 3500 },
+      confidence: "medium",
+      listings: [
+        { totalPriceCents: 2500 },
+        { totalPriceCents: 3500 },
+      ],
+    }]),
+    raw,
+  );
+
+  assert.equal(options.sell_faster.amountCents, 2495);
+});
+
 test("exact sold and active evidence are blended with more weight on active listings", () => {
   const snapshot = buildValuationRecommendation({
     grading: raw,
@@ -130,6 +157,7 @@ test("exact sold and active evidence are blended with more weight on active list
     completedSalesCount: 4,
   });
   assert.equal(snapshot.activeAskingReference.amountCents, 6000);
+  assert.equal(snapshot.saleStrategyOptions.sell_faster.amountCents, 5495);
 });
 
 test("active asking evidence is a low-confidence fallback when sales are absent", () => {

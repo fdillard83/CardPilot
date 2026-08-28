@@ -3436,13 +3436,13 @@ main {
     var(--subtle-bg-strong);
 }
 
-.card-value-heading-actions {
+.valuation-heading-actions {
   display: flex;
   align-items: center;
   gap: 7px;
 }
 
-.card-value-heading-actions > button {
+.valuation-heading-actions > button {
   min-height: 30px;
   border: 1px solid var(--line-bright);
   border-radius: 9px;
@@ -3791,6 +3791,10 @@ main {
   display: grid;
   gap: 12px;
   margin-top: 16px;
+}
+
+.market-groups > .variant-estimates {
+  margin-top: 0;
 }
 
 .market-fallback-note {

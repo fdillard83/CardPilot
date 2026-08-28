@@ -71,6 +71,7 @@ test("listing drafts require an editable title and positive price", () => {
     listingFormat: "FIXED_PRICE",
   };
   assert.equal(EbayListingDraftSchema.safeParse(base).success, true);
+  assert.equal(EbayListingDraftSchema.safeParse({ ...base, currency: "CAD" }).success, false);
   const promoted = EbayListingDraftSchema.parse({ ...base, promoteListing: true, promotionAdRatePercent: 3.5, pricingStrategy: "sell_faster" });
   assert.equal(promoted.promoteListing, true);
   assert.equal(promoted.promotionAdRatePercent, 3.5);

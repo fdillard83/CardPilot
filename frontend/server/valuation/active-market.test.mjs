@@ -478,6 +478,24 @@ test("priced Best Offer listings are active asking-price evidence", () => {
   assert.equal(snapshot.groups[0].listings[0].itemId, "v1|best-offer|0");
 });
 
+test("active snapshots never mix non-USD amounts into U.S. comparisons", () => {
+  const foreign = candidate({
+    id: "foreign",
+    title:
+      "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85",
+    price: 40,
+  });
+  foreign.price.currency = "CAD";
+  const snapshot = buildActiveMarketSnapshot({
+    fields,
+    marketplaceId: "EBAY_US",
+    candidates: [foreign],
+  });
+
+  assert.equal(snapshot.matchedCount, 0);
+  assert.equal(snapshot.groups.length, 0);
+});
+
 test("active snapshots keep variant-adjusted asking estimates separate", () => {
   const snapshot = buildActiveMarketSnapshot({
     fields: {

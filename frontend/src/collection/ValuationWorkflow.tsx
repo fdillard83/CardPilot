@@ -75,11 +75,11 @@ export function CardValuationPanel({
           <span className="step-label">CardPilot decision support</span>
           <h3 id={`card-value-${card.collectionId}`}>Estimated card value</h3>
         </div>
-        <div className="card-value-heading-actions">
+        <div className="valuation-heading-actions">
           <span className="valuation-source">Review before saving</span>
           <button type="button" disabled={isSaving} onClick={onOpenHelp}>Help</button>
           <button type="button" disabled={isSaving} onClick={onClose}>
-            Close
+            Minimize
           </button>
         </div>
       </div>

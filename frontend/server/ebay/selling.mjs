@@ -6,7 +6,7 @@ export const EbayListingDraftSchema = z.object({
   title: z.string().trim().min(1).max(80),
   description: z.string().trim().min(1).max(100_000),
   priceCents: z.number().int().min(1).max(100_000_000),
-  currency: z.string().length(3).default("USD"),
+  currency: z.literal("USD").default("USD"),
   condition: z.enum(["LIKE_NEW", "NEW_OTHER", "USED_EXCELLENT", "USED_VERY_GOOD", "USED_GOOD", "USED_ACCEPTABLE"]),
   conditionDescription: z.string().trim().max(1000),
   categoryId: z.string().trim().max(20),

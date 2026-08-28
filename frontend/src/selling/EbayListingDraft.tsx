@@ -63,7 +63,15 @@ async function responsePayload(response: Response) {
   catch { return { error: "CardPilot received an invalid response from the server. Please try again." }; }
 }
 
-export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard; onClose: () => void }) {
+export function EbayListingDraft({
+  card,
+  onClose,
+  onPosted,
+}: {
+  card: SavedCollectionCard;
+  onClose: () => void;
+  onPosted: (collectionId: string) => void;
+}) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState<SellingStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -355,6 +363,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
         : payload.draft.promotion?.status === "failed"
           ? `Published to eBay, but promotion was not enabled: ${payload.draft.promotion.error}`
           : `Published to eBay ${status?.environment}. Listing ${payload.draft.ebayListingId}.`);
+      onPosted(card.collectionId);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "eBay could not publish this listing."); }
     finally { setBusy(false); }
   };
@@ -402,6 +411,7 @@ export function EbayListingDraft({ card, onClose }: { card: SavedCollectionCard;
       if (!response.ok) throw new Error(payload.error);
       setDraft(payload.draft); revisionDetailsDirtyRef.current = false;
       setMessage(priceOnly ? "The active eBay price was revised." : "The active eBay listing was revised.");
+      onPosted(card.collectionId);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "The listing could not be revised."); }
     finally { setBusy(false); }
   };

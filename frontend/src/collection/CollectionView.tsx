@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { AccountPreferences } from "../accounts/preferences";
 import { EbayListingDraft } from "../selling/EbayListingDraft";
 import { EbayListingQueue } from "../selling/EbayListingQueue";
@@ -757,6 +757,7 @@ function ActiveMarketPanel({
   matchDetails,
   onSelectMatch,
   onConfirmMatch,
+  onClose,
 }: {
   card: SavedCollectionCard;
   snapshot: ActiveMarketSnapshot | null;
@@ -779,14 +780,24 @@ function ActiveMarketPanel({
   matchDetails: EbayItemDetails | null;
   onSelectMatch: (listing: ActiveMarketListing | null) => void;
   onConfirmMatch: (listing: ActiveMarketListing) => void;
+  onClose: () => void;
 }) {
   const orderedGroups = snapshot
     ? [...snapshot.groups].sort(
-        (left, right) =>
-          Number(groupMatchesSavedCondition(card, right)) -
-          Number(groupMatchesSavedCondition(card, left)),
+        (left, right) => {
+          if (left.classification !== right.classification) {
+            return left.classification === "raw" ? -1 : 1;
+          }
+          return (
+            Number(groupMatchesSavedCondition(card, right)) -
+            Number(groupMatchesSavedCondition(card, left))
+          );
+        },
       )
     : [];
+  const firstGradedGroupIndex = orderedGroups.findIndex(
+    (group) => group.classification === "graded",
+  );
   return (
     <section
       className="valuation-panel"
@@ -799,7 +810,10 @@ function ActiveMarketPanel({
             Comparable Buy It Now listings
           </h3>
         </div>
-        <span className="valuation-source">eBay Buy It Now</span>
+        <div className="valuation-heading-actions">
+          <span className="valuation-source">eBay Buy It Now</span>
+          <button type="button" onClick={onClose}>Minimize</button>
+        </div>
       </div>
 
       {error && (
@@ -877,16 +891,19 @@ function ActiveMarketPanel({
             </div>
           )}
 
-          <VariantEstimateSection
-            estimates={snapshot.variantEstimates}
-            context="active"
-            onExcludeAnchor={onExcludeAnchor}
-          />
-
           {orderedGroups.length > 0 ? (
-            <div className="market-groups">
-              {orderedGroups.map((group) => (
-                <article className="market-group" key={`${group.id}-${group.currency}`}>
+            <>
+              <div className="market-groups">
+              {orderedGroups.map((group, index) => (
+                <Fragment key={`${group.id}-${group.currency}`}>
+                  {index === firstGradedGroupIndex && (
+                    <VariantEstimateSection
+                      estimates={snapshot.variantEstimates}
+                      context="active"
+                      onExcludeAnchor={onExcludeAnchor}
+                    />
+                  )}
+                  <article className="market-group">
                   <div className="market-group-heading">
                     <div>
                       <span>
@@ -1049,15 +1066,31 @@ function ActiveMarketPanel({
                       );
                     })}
                   </div>
-                </article>
+                  </article>
+                </Fragment>
               ))}
-            </div>
+              </div>
+              {firstGradedGroupIndex === -1 && (
+                <VariantEstimateSection
+                  estimates={snapshot.variantEstimates}
+                  context="active"
+                  onExcludeAnchor={onExcludeAnchor}
+                />
+              )}
+            </>
           ) : (
-            <div className="valuation-loading">
-              {snapshot.variantEstimates.length > 0
-                ? "No exact active matches were found. The modeled estimate above uses other versions of the same card family."
-                : "No close fixed-price matches were found. More complete card details can improve the search."}
-            </div>
+            <>
+              <VariantEstimateSection
+                estimates={snapshot.variantEstimates}
+                context="active"
+                onExcludeAnchor={onExcludeAnchor}
+              />
+              <div className="valuation-loading">
+                {snapshot.variantEstimates.length > 0
+                  ? "No exact active matches were found. The modeled estimate above uses other versions of the same card family."
+                  : "No close fixed-price matches were found. More complete card details can improve the search."}
+              </div>
+            </>
           )}
 
           <p className="valuation-disclaimer">
@@ -1092,6 +1125,7 @@ function SoldCompsPanel({
   isConfirmingMatch,
   onSelectMatch,
   onConfirmMatch,
+  onClose,
 }: {
   card: SavedCollectionCard;
   snapshot: SoldCompsSnapshot | null;
@@ -1111,6 +1145,7 @@ function SoldCompsPanel({
   isConfirmingMatch: boolean;
   onSelectMatch: (sale: SoldComparable | null) => void;
   onConfirmMatch: (sale: SoldComparable) => void;
+  onClose: () => void;
 }) {
   const coverageLabel = snapshot?.coverage.from || snapshot?.coverage.to
     ? `${snapshot.coverage.from ?? "earliest available"} to ${snapshot.coverage.to ?? "latest available"}`
@@ -1125,7 +1160,10 @@ function SoldCompsPanel({
           <span className="step-label">Completed marketplace sales</span>
           <h3 id={`sold-comps-${card.collectionId}`}>Comparable sold cards</h3>
         </div>
-        <span className="valuation-source">Completed sales data</span>
+        <div className="valuation-heading-actions">
+          <span className="valuation-source">Completed sales data</span>
+          <button type="button" onClick={onClose}>Minimize</button>
+        </div>
       </div>
 
       {error && (
@@ -1413,6 +1451,7 @@ export function CollectionView({
   const [collectionSection, setCollectionSection] = useState<"collection" | "sold">("collection");
   const [sort, setSort] = useState<CollectionSort>("newest");
   const [expandedDetailIds, setExpandedDetailIds] = useState<string[]>([]);
+  const [focusCollectionCardId, setFocusCollectionCardId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<FieldKey, FieldValue> | null>(null);
   const [gradingDraft, setGradingDraft] = useState<GradingProfile | null>(null);
@@ -1507,8 +1546,32 @@ export function CollectionView({
   const [priceApplyBusy, setPriceApplyBusy] = useState(false);
   const [pricePositionMessage, setPricePositionMessage] = useState<string | null>(null);
 
-  const refreshCollectionAfterSelling = async () => {
+  useEffect(() => {
+    if (!focusCollectionCardId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const element = document.getElementById(`collection-card-${focusCollectionCardId}`);
+      if (!element) return;
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+      element.focus({ preventScroll: true });
+      setFocusCollectionCardId(null);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusCollectionCardId, cards]);
+
+  const refreshCollectionAfterSelling = async (postedCollectionId?: string) => {
     setSellingCard(null);
+    if (postedCollectionId) {
+      setCollectionSection("collection");
+      setQuery("");
+      setCategory("all");
+      setFilter("all");
+      setExpandedDetailIds((current) => current.filter((id) => id !== postedCollectionId));
+      setMarketCardId((current) => current === postedCollectionId ? null : current);
+      setSoldCardId((current) => current === postedCollectionId ? null : current);
+      setPricingSessionCardId((current) => current === postedCollectionId ? null : current);
+      setValuationCardId((current) => current === postedCollectionId ? null : current);
+      setFocusCollectionCardId(postedCollectionId);
+    }
     try {
       const response = await fetch("/api/collection");
       const payload = (await response.json().catch(() => null)) as { cards?: SavedCollectionCard[] } | null;
@@ -1784,6 +1847,11 @@ export function CollectionView({
     setValuationConfidence("low");
   };
 
+  const returnToCollapsedCard = (collectionId: string) => {
+    setExpandedDetailIds((current) => current.filter((id) => id !== collectionId));
+    setFocusCollectionCardId(collectionId);
+  };
+
   const hideValuationPanel = () => {
     valuationRequestIdRef.current += 1;
     setValuationCardId(null);
@@ -1902,18 +1970,26 @@ export function CollectionView({
     }
   };
 
+  const closeActiveMarketPanel = () => {
+    marketRequestIdRef.current += 1;
+    setMarketCardId(null);
+    setMarketSnapshot(null);
+    setMarketBusy(false);
+    setMarketError(null);
+    setMarketShowingPrevious(false);
+    setSelectedActiveMatchId(null);
+    setActiveMatchDetails(null);
+    setActiveMatchBusy(false);
+    setActiveMatchError(null);
+  };
+
   const toggleActiveMarket = (card: SavedCollectionCard) => {
-    if (marketBusy || soldBusy || valuationBusy || valuationSaving) return;
     if (marketCardId === card.collectionId) {
-      marketRequestIdRef.current += 1;
-      setMarketCardId(null);
-      setMarketSnapshot(null);
-      setMarketError(null);
-      setMarketShowingPrevious(false);
-      setSelectedActiveMatchId(null);
-      setActiveMatchDetails(null);
-      setActiveMatchError(null);
-    } else {
+      closeActiveMarketPanel();
+      return;
+    }
+    if (marketBusy || soldBusy || valuationBusy || valuationSaving) return;
+    {
       const samePricingSession = pricingSessionCardId === card.collectionId;
       if (!samePricingSession) {
         setPricingSessionCardId(card.collectionId);
@@ -2113,16 +2189,24 @@ export function CollectionView({
     }
   };
 
+  const closeSoldCompsPanel = () => {
+    soldRequestIdRef.current += 1;
+    setSoldCardId(null);
+    setSoldSnapshot(null);
+    setSoldBusy(false);
+    setSoldError(null);
+    setSoldShowingPrevious(false);
+    setSelectedSoldMatchId(null);
+    setConfirmingSoldMatchId(null);
+  };
+
   const toggleSoldComps = (card: SavedCollectionCard) => {
-    if (soldBusy || marketBusy || valuationBusy || valuationSaving) return;
     if (soldCardId === card.collectionId) {
-      soldRequestIdRef.current += 1;
-      setSoldCardId(null);
-      setSoldSnapshot(null);
-      setSoldError(null);
-      setSoldShowingPrevious(false);
-      setSelectedSoldMatchId(null);
-    } else {
+      closeSoldCompsPanel();
+      return;
+    }
+    if (soldBusy || marketBusy || valuationBusy || valuationSaving) return;
+    {
       const samePricingSession = pricingSessionCardId === card.collectionId;
       if (!samePricingSession) {
         setPricingSessionCardId(card.collectionId);
@@ -3082,7 +3166,9 @@ export function CollectionView({
             return (
               <article
                 className={`collection-card${isMarketOpen || isSoldOpen || isValuationOpen ? " collection-card-expanded" : ""}`}
+                id={`collection-card-${card.collectionId}`}
                 key={card.collectionId}
+                tabIndex={-1}
               >
                 <div className={`collection-card-image${isEditing ? " collection-card-image-editing" : ""}`}>
                   {isEditing ? (
@@ -3586,6 +3672,10 @@ export function CollectionView({
                     matchDetails={activeMatchDetails}
                     onSelectMatch={(listing) => void selectActiveMarketMatch(listing)}
                     onConfirmMatch={(listing) => void confirmActiveMarketMatch(card, listing)}
+                    onClose={() => {
+                      closeActiveMarketPanel();
+                      returnToCollapsedCard(card.collectionId);
+                    }}
                   />
                 )}
                 {isSoldOpen && !isEditing && (
@@ -3618,6 +3708,10 @@ export function CollectionView({
                     onConfirmMatch={(sale) =>
                       void confirmSoldCompMatch(card, sale)
                     }
+                    onClose={() => {
+                      closeSoldCompsPanel();
+                      returnToCollapsedCard(card.collectionId);
+                    }}
                   />
                 )}
                 {isValuationOpen && !isEditing && (
@@ -3638,7 +3732,10 @@ export function CollectionView({
                     onSave={() => void saveConfirmedValuation(card)}
                     onClear={() => void clearConfirmedValuation(card)}
                     onRetry={() => void loadValuationRecommendation(card, valuationStrategy)}
-                    onClose={closeValuationPanel}
+                    onClose={() => {
+                      closeValuationPanel();
+                      returnToCollapsedCard(card.collectionId);
+                    }}
                     onOpenHelp={() => onOpenHelp("card-values")}
                     excludedComparisonCount={
                       marketExcludedAnchorIds.length + soldExcludedAnchorIds.length
@@ -3673,7 +3770,11 @@ export function CollectionView({
           </section>
         </div>
       )}
-      {sellingCard && <EbayListingDraft card={sellingCard} onClose={() => void refreshCollectionAfterSelling()} />}
+      {sellingCard && <EbayListingDraft
+        card={sellingCard}
+        onClose={() => void refreshCollectionAfterSelling()}
+        onPosted={(collectionId) => void refreshCollectionAfterSelling(collectionId)}
+      />}
       {listingQueueOpen && <EbayListingQueue cards={cards} onClose={() => setListingQueueOpen(false)} onOpenDraft={(card) => { setListingQueueOpen(false); setSellingCard(card); }} />}
       {batchListingOpen && <BatchEbayListing cards={unlistedCards} onClose={() => setBatchListingOpen(false)} onComplete={() => { void fetch("/api/collection").then((response) => response.json()).then((payload) => { if (Array.isArray(payload.cards)) onCardsChange(payload.cards); }); }} />}
     </section>

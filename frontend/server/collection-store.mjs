@@ -80,7 +80,7 @@ export const ValuationProfileSchema = z
 export const ConfirmedValuationInputSchema = z
   .object({
     amountCents: z.number().int().min(0).max(100_000_000_000),
-    currency: z.string().trim().regex(/^[A-Z]{3}$/),
+    currency: z.literal("USD"),
     confidence: z.enum(["low", "medium", "high"]),
     method: z.enum(valuationMethods),
     userAdjusted: z.boolean().default(false),

@@ -11,7 +11,7 @@ import {
 import { isVisualMismatch } from "../identification/visual-image-matcher.mjs";
 
 const activeMarketDisclaimer =
-  "Active Buy It Now asking prices are not completed sales, appraisals, or guaranteed sale values. Shipping is included only when eBay provides it in search results.";
+  "Active Buy It Now asking prices are not completed sales, appraisals, or guaranteed sale values. Shipping is included only when eBay provides it in search results. For the U.S. marketplace, non-USD amounts are converted to USD using the latest available daily ECB reference rate.";
 
 const commonWords = new Set([
   "the",
@@ -705,7 +705,7 @@ export function buildActiveMarketSnapshot({
     ) return false;
     const itemPriceCents = parseCents(candidate.price);
     const currency = candidate.price?.currency;
-    return itemPriceCents !== null && Boolean(currency);
+    return itemPriceCents !== null && currency === "USD";
   });
 
   function listingFromMatch(candidate, match, matchTier) {
@@ -882,10 +882,11 @@ export function buildActiveMarketSnapshot({
 }
 
 export class ActiveMarketService {
-  constructor({ ebayClient, visualMatcher = null, now = () => Date.now(), cacheDurationMs = 10 * 60 * 1000 }) {
+  constructor({ ebayClient, visualMatcher = null, currencyConverter = null, now = () => Date.now(), cacheDurationMs = 10 * 60 * 1000 }) {
     if (!ebayClient) throw new TypeError("An eBay Browse client is required.");
     this.ebayClient = ebayClient;
     this.visualMatcher = visualMatcher;
+    this.currencyConverter = currencyConverter;
     this.now = now;
     this.cacheDurationMs = cacheDurationMs;
     this.cache = new Map();
@@ -960,9 +961,12 @@ export class ActiveMarketService {
     const prioritize = (values) => [...values].sort(
       (left, right) => prioritizeForVisualInspection(right) - prioritizeForVisualInspection(left),
     );
-    let candidates = sourceImageDataUrl && this.visualMatcher
-      ? await this.visualMatcher.rank({ sourceImageDataUrl, candidates: prioritize(result.candidates), limit: 20 })
+    const primaryCandidates = this.currencyConverter
+      ? await this.currencyConverter.ebayCandidates(result.candidates)
       : result.candidates;
+    let candidates = sourceImageDataUrl && this.visualMatcher
+      ? await this.visualMatcher.rank({ sourceImageDataUrl, candidates: prioritize(primaryCandidates), limit: 20 })
+      : primaryCandidates;
     const queriesUsed = [query];
     const searchedAt = new Date(this.now()).toISOString();
     let snapshot = buildActiveMarketSnapshot({
@@ -986,8 +990,11 @@ export class ActiveMarketService {
         query: discoveryQuery,
         limit: 50,
       });
+      const discoveryCandidates = this.currencyConverter
+        ? await this.currencyConverter.ebayCandidates(discovery.candidates)
+        : discovery.candidates;
       const unique = new Map(
-        [...candidates, ...discovery.candidates].map((candidate) => [
+        [...candidates, ...discoveryCandidates].map((candidate) => [
           candidate.itemId,
           candidate,
         ]),

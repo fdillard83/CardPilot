@@ -14,7 +14,7 @@ import { suggestionsFromListingTitle } from "../ebay/image-search.mjs";
 import { isVisualMismatch } from "../identification/visual-image-matcher.mjs";
 
 const soldCompsDisclaimer =
-  "Completed-sale records are supplied by a third-party market-data provider and are informational comparisons, not an appraisal or guaranteed value. Exact and broader title matches remain separate, and marketplace fee or buyer-premium treatment can differ by platform.";
+  "Completed-sale records are supplied by a third-party market-data provider and are informational comparisons, not an appraisal or guaranteed value. Exact and broader title matches remain separate, and marketplace fee or buyer-premium treatment can differ by platform. For U.S. valuations, non-USD amounts are converted to USD using the latest available daily ECB reference rate.";
 
 function cleanText(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -162,7 +162,7 @@ export function buildSoldCompsSnapshot({
       !excludedObservationIdSet.has(saleId(sale, index)) &&
       sale.priceConfirmed === true &&
       cents(sale.price) !== null &&
-      Boolean(cleanText(sale.currency)) &&
+      cleanText(sale.currency) === "USD" &&
       !knownVisualMismatch(sale),
   );
 
@@ -317,12 +317,14 @@ export class SoldCompsService {
   constructor({
     cardApiClient,
     visualMatcher = null,
+    currencyConverter = null,
     now = () => Date.now(),
     cacheDurationMs = 10 * 60 * 1000,
   }) {
     if (!cardApiClient) throw new TypeError("A The Card API client is required.");
     this.cardApiClient = cardApiClient;
     this.visualMatcher = visualMatcher;
+    this.currencyConverter = currencyConverter;
     this.now = now;
     this.cacheDurationMs = cacheDurationMs;
     this.cache = new Map();
@@ -387,6 +389,9 @@ export class SoldCompsService {
       ...searchOptions,
       limit: 100,
     });
+    if (this.currencyConverter) {
+      primary = await this.currencyConverter.soldResult(primary);
+    }
     primary = await this.#rankResult(
       primary,
       sourceImageDataUrl,
@@ -416,13 +421,17 @@ export class SoldCompsService {
       ) {
         break;
       }
-      results.push(
-        await this.#rankResult(
-          await this.cardApiClient.searchSales({
+      let discoveryResult = await this.cardApiClient.searchSales({
             query: discoveryQuery,
             ...searchOptions,
             limit: 100,
-          }),
+          });
+      if (this.currencyConverter) {
+        discoveryResult = await this.currencyConverter.soldResult(discoveryResult);
+      }
+      results.push(
+        await this.#rankResult(
+          discoveryResult,
           sourceImageDataUrl,
           fields,
           resolvedIdentityConsensus,

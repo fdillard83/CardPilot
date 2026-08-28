@@ -81,6 +81,7 @@ import { MarketFeedbackSubmissionSchema } from "./supabase/market-feedback.mjs";
 import { listingHealth, optimizedListingDetails } from "./ebay/listing-health.mjs";
 import { removeCollectionCardSafely } from "./ebay/collection-removal.mjs";
 import { collectionSpreadsheetCsv } from "./collection-spreadsheet.mjs";
+import { UsdCurrencyConverter } from "./currency/usd-converter.mjs";
 
 const serverFile = fileURLToPath(import.meta.url);
 const currentDirectory = path.dirname(serverFile);
@@ -133,8 +134,13 @@ const ebayTaxonomy = ebayConfigured
     })
   : null;
 const visualImageMatcher = new VisualImageMatcher();
+const usdCurrencyConverter = new UsdCurrencyConverter();
 const activeMarket = ebayImageSearch
-  ? new ActiveMarketService({ ebayClient: ebayImageSearch, visualMatcher: visualImageMatcher })
+  ? new ActiveMarketService({
+      ebayClient: ebayImageSearch,
+      visualMatcher: visualImageMatcher,
+      currencyConverter: usdCurrencyConverter,
+    })
   : null;
 const googleVisionConfig = googleVisionConfiguration();
 const webEvidence = new WebEvidenceOrchestrator({
@@ -147,6 +153,7 @@ const soldComps = theCardApiKey
   ? new SoldCompsService({
       cardApiClient: new TheCardApiClient({ apiKey: theCardApiKey }),
       visualMatcher: visualImageMatcher,
+      currencyConverter: usdCurrencyConverter,
     })
   : null;
 const theCardCatalog = theCardApiKey
@@ -1372,8 +1379,14 @@ async function assertListingCostSafety(userId, draft, token, buyerShippingCents 
 
 async function syncCollectionValueToListing(userId, card, priceCents, currency = "USD") {
   if (!card || !Number.isInteger(priceCents) || priceCents < 0) return;
+  const converted = await usdCurrencyConverter.convert(priceCents / 100, currency);
+  if (!converted) return;
   return collectionStore.updateConfirmedValuation(userId, card.collectionId, {
-    amountCents: priceCents, currency, confidence: "high", method: "active_listing", userAdjusted: false,
+    amountCents: Math.round(Number(converted.value) * 100),
+    currency: "USD",
+    confidence: "high",
+    method: "active_listing",
+    userAdjusted: false,
   });
 }
 
@@ -1445,20 +1458,26 @@ async function reconcileActiveEbayPrices(userId, cards, drafts, activeListingsBy
     if (!Number.isInteger(live?.priceCents) || live.priceCents < 1) return;
     const card = cardsById.get(draft.collectionId);
     if (!card) return;
-    const currency = live.currency || draft.currency;
+    const converted = await usdCurrencyConverter.convert(
+      live.priceCents / 100,
+      live.currency || draft.currency,
+    );
+    if (!converted) return;
+    const livePriceCents = Math.round(Number(converted.value) * 100);
+    const currency = "USD";
     try {
-      if (draft.priceCents !== live.priceCents || draft.currency !== currency) {
+      if (draft.priceCents !== livePriceCents || draft.currency !== currency) {
         updatedDrafts.set(draft.collectionId, await cloudServices.ebaySelling.saveDraft(
           userId,
           draft.collectionId,
-          { ...editableEbayDraft(draft), priceCents: live.priceCents, currency },
+          { ...editableEbayDraft(draft), priceCents: livePriceCents, currency },
           ebaySellEnvironment,
         ));
       }
       const valuation = card.confirmedValuation;
-      if (valuation?.amountCents !== live.priceCents || valuation?.currency !== currency ||
+      if (valuation?.amountCents !== livePriceCents || valuation?.currency !== currency ||
         valuation?.method !== "active_listing" || valuation?.userAdjusted) {
-        const updated = await syncCollectionValueToListing(userId, card, live.priceCents, currency);
+        const updated = await syncCollectionValueToListing(userId, card, livePriceCents, currency);
         if (updated) updatedCards.set(card.collectionId, updated);
       }
     } catch (error) {
@@ -2326,12 +2345,17 @@ async function syncEbaySalesForUser(userId) {
       const listingId = String(item.legacyItemId ?? item.itemId ?? "");
       const draft = byListingId.get(listingId);
       const price = item.lineItemCost ?? item.total ?? {};
+      const converted = await usdCurrencyConverter.convert(
+        price.value ?? 0,
+        String(price.currency ?? "USD"),
+      );
+      if (!converted) continue;
       await cloudServices.ebaySelling.saveSale(userId, {
         saleId: randomUUID(), collectionId: draft?.collectionId ?? null,
         orderId: String(order.orderId), lineItemId: String(item.lineItemId), listingId,
         orderStatus: String(order.orderFulfillmentStatus ?? order.orderPaymentStatus ?? "UNKNOWN"),
-        amountCents: Math.max(0, Math.round(Number(price.value ?? 0) * 100)),
-        currency: String(price.currency ?? "USD"), quantity: Math.max(1, Number(item.quantity ?? 1)),
+        amountCents: Math.max(0, Math.round(Number(converted.value) * 100)),
+        currency: "USD", quantity: Math.max(1, Number(item.quantity ?? 1)),
         soldAt: order.creationDate ?? new Date().toISOString(),
       });
       saved += 1;

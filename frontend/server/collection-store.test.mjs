@@ -130,6 +130,15 @@ test("collection records persist images and support update and removal", async (
       userAdjusted: false,
       valuedAt: "2026-08-12T12:00:03.000Z",
     });
+    await assert.rejects(
+      store.updateConfirmedValuation(created.collectionId, {
+        amountCents: 4250,
+        currency: "CAD",
+        confidence: "medium",
+        method: "exact_sold",
+        userAdjusted: false,
+      }),
+    );
 
     const storedRecord = JSON.parse(
       await readFile(path.join(directory, "collection.json"), "utf8"),

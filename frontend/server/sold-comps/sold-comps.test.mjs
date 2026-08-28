@@ -131,6 +131,20 @@ test("sold snapshots use only confirmed prices and trim outliers", () => {
   });
 });
 
+test("sold snapshots never mix non-USD amounts into U.S. comparisons", () => {
+  const snapshot = buildSoldCompsSnapshot({
+    fields,
+    grading: raw,
+    query: "Nolan Ryan",
+    results: [result([sale("cad", 40, { currency: "CAD" })])],
+    searchedAt: "2026-08-12T20:00:00.000Z",
+  });
+
+  assert.equal(snapshot.confirmedPriceCount, 0);
+  assert.equal(snapshot.exactMatchedCount, 0);
+  assert.equal(snapshot.groups.length, 0);
+});
+
 test("broader sold comparisons stay separate and reject known conflicts", () => {
   const snapshot = buildSoldCompsSnapshot({
     fields,
