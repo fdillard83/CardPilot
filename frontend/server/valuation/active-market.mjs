@@ -698,7 +698,11 @@ export function buildActiveMarketSnapshot({
   const excludedObservationIdSet = new Set(excludedObservationIds);
   const eligibleCandidates = candidates.filter((candidate) => {
     if (excludedObservationIdSet.has(candidate.itemId)) return false;
-    if (!candidate.buyingOptions.includes("FIXED_PRICE")) return false;
+    if (
+      !candidate.buyingOptions.some((option) =>
+        ["FIXED_PRICE", "BEST_OFFER"].includes(option),
+      )
+    ) return false;
     const itemPriceCents = parseCents(candidate.price);
     const currency = candidate.price?.currency;
     return itemPriceCents !== null && Boolean(currency);

@@ -81,6 +81,12 @@ function normalizeCandidate(item, index) {
   };
 }
 
+function hasFixedAskingPrice(candidate) {
+  return candidate.buyingOptions.some((option) =>
+    ["FIXED_PRICE", "BEST_OFFER"].includes(option),
+  );
+}
+
 function normalizeAspectName(value) {
   return typeof value === "string"
     ? value.toLowerCase().replace(/[^a-z0-9]/g, "")
@@ -358,7 +364,7 @@ export class EbayImageSearchClient {
         (candidate) =>
           candidate &&
           candidate.price &&
-          candidate.buyingOptions.includes("FIXED_PRICE"),
+          hasFixedAskingPrice(candidate),
       );
     return {
       marketplaceId: this.marketplaceId,
@@ -474,7 +480,10 @@ export class EbayImageSearchClient {
     const url = new URL(this.keywordSearchUrl);
     url.searchParams.set("q", query);
     url.searchParams.set("limit", String(limit));
-    url.searchParams.set("filter", "buyingOptions:{FIXED_PRICE}");
+    url.searchParams.set(
+      "filter",
+      "buyingOptions:{FIXED_PRICE|BEST_OFFER}",
+    );
     if (categoryId) url.searchParams.set("category_ids", categoryId);
 
     try {

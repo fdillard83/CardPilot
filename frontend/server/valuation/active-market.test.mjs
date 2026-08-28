@@ -452,6 +452,32 @@ test("active exclusions remove exact and broader comparisons from summaries", ()
   assert.equal(withoutBroader.groups[0].listings[0].itemId, "v1|exact|0");
 });
 
+test("priced Best Offer listings are active asking-price evidence", () => {
+  const snapshot = buildActiveMarketSnapshot({
+    fields,
+    marketplaceId: "EBAY_US",
+    candidates: [
+      candidate({
+        id: "best-offer",
+        title:
+          "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85",
+        price: 40,
+        buyingOptions: ["BEST_OFFER"],
+      }),
+      candidate({
+        id: "auction",
+        title:
+          "2026 Topps Series 2 Nolan Ryan Crooked Numbers #CN-14 Green Foil /85",
+        price: 20,
+        buyingOptions: ["AUCTION"],
+      }),
+    ],
+  });
+
+  assert.equal(snapshot.exactMatchedCount, 1);
+  assert.equal(snapshot.groups[0].listings[0].itemId, "v1|best-offer|0");
+});
+
 test("active snapshots keep variant-adjusted asking estimates separate", () => {
   const snapshot = buildActiveMarketSnapshot({
     fields: {

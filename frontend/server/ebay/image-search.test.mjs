@@ -104,7 +104,7 @@ test("keyword search requests fixed-price sports cards and keeps shipping separa
     fetchImpl: async (url, options) => {
       request = { url, options };
       return jsonResponse({
-        total: 2,
+        total: 3,
         itemSummaries: [
           {
             itemId: "v1|123|0",
@@ -116,6 +116,14 @@ test("keyword search requests fixed-price sports cards and keeps shipping separa
               { shippingCost: { value: "4.50", currency: "USD" } },
             ],
             buyingOptions: ["FIXED_PRICE"],
+          },
+          {
+            itemId: "v1|best-offer|0",
+            title: "2026 Topps Nolan Ryan Green Foil #CN-14 /85 Or Best Offer",
+            itemWebUrl: "https://www.ebay.com/itm/best-offer",
+            image: { imageUrl: "https://i.ebayimg.com/best-offer.jpg" },
+            price: { value: "42.00", currency: "USD" },
+            buyingOptions: ["BEST_OFFER"],
           },
           {
             itemId: "v1|456|0",
@@ -140,9 +148,10 @@ test("keyword search requests fixed-price sports cards and keeps shipping separa
   assert.equal(request.url.searchParams.get("category_ids"), "212");
   assert.equal(
     request.url.searchParams.get("filter"),
-    "buyingOptions:{FIXED_PRICE}",
+    "buyingOptions:{FIXED_PRICE|BEST_OFFER}",
   );
-  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates.length, 2);
+  assert.deepEqual(result.candidates[1].buyingOptions, ["BEST_OFFER"]);
   assert.deepEqual(result.candidates[0].shippingCost, {
     value: "4.50",
     currency: "USD",
