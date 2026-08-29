@@ -28,13 +28,16 @@ export function CardValuationPanel({
   error,
   showingPrevious,
   amountInput,
+  floorInput,
   currency,
   confidence,
   strategy,
   onAmountChange,
+  onFloorChange,
   onStrategyChange,
   onConfidenceChange,
   onSave,
+  onSaveFloor,
   onClear,
   onRetry,
   onClose,
@@ -49,13 +52,16 @@ export function CardValuationPanel({
   error: string | null;
   showingPrevious: boolean;
   amountInput: string;
+  floorInput: string;
   currency: string;
   confidence: "low" | "medium" | "high";
   strategy: ValuationStrategy;
   onAmountChange: (value: string) => void;
+  onFloorChange: (value: string) => void;
   onStrategyChange: (value: ValuationStrategy) => void;
   onConfidenceChange: (value: "low" | "medium" | "high") => void;
   onSave: () => void;
+  onSaveFloor: () => void;
   onClear: () => void;
   onRetry: () => void;
   onClose: () => void;
@@ -303,8 +309,42 @@ export function CardValuationPanel({
                 <small>
                   {selectedStrategyOption?.rationale} This choice overrides your account default for this card.
                 </small>
+                {selectedStrategyOption?.limitedByFloor && (
+                  <strong className="valuation-floor-notice">
+                    Sell Faster is below your floor limit. Floor limit used instead.
+                  </strong>
+                )}
               </label>
             )}
+            <div className="valuation-floor-editor">
+              <label>
+                <span>Minimum eBay listing price for this card</span>
+                <div className="money-input">
+                  <span>$</span>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={floorInput}
+                    placeholder="No floor"
+                    onChange={(event) => onFloorChange(event.target.value)}
+                  />
+                </div>
+              </label>
+              <div>
+                <button
+                  type="button"
+                  disabled={isSaving}
+                  onClick={onSaveFloor}
+                >
+                  {isSaving ? "Saving..." : floorInput.trim() ? "Save floor" : "Remove floor"}
+                </button>
+                <small>
+                  Sell Faster and new eBay drafts will never go below this card-specific amount. Leave blank to remove the floor.
+                </small>
+              </div>
+            </div>
             <div className="confirmed-value-fields">
               <label>
                 <span>Confirmed value</span>

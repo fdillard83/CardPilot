@@ -73,6 +73,13 @@ export async function importLocalCollection({
         confirmedInput,
       );
     }
+    if (card.minimumListingPriceCents) {
+      await cloudRepository.updateListingPriceFloor(
+        userId,
+        created.collectionId,
+        { minimumListingPriceCents: card.minimumListingPriceCents },
+      );
+    }
     existing.add(card.identificationId);
     importedCount += 1;
   }

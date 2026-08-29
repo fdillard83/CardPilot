@@ -2101,7 +2101,7 @@ function App() {
             type="button"
             onClick={() => setView("collection")}
           >
-            My Collection <span>{collectionCards.length}</span>
+            My Collection <span>{collectionCards.filter((card) => card.selling?.status !== "sold").length}</span>
           </button>
           <button className={activeView === "help" ? "active" : ""} type="button" onClick={() => openHelp()}>Help</button>
           {accountSession.user?.isAdmin && <button className={activeView === "admin" ? "active" : ""} type="button" onClick={() => setView("admin")}>Admin</button>}

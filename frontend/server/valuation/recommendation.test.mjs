@@ -4,6 +4,7 @@ import {
   ValuationRecommendationService,
   buildSaleStrategyOptions,
   buildValuationRecommendation,
+  roundDownToNickelCents,
   roundRecommendedValueCents,
 } from "./recommendation.mjs";
 
@@ -100,6 +101,59 @@ test("Sell Faster is not capped by a lower sold-based recommendation when active
   );
 
   assert.equal(options.sell_faster.amountCents, 2495);
+});
+
+test("Sell Faster rounds the five-cent undercut down to a whole nickel", () => {
+  assert.equal(roundDownToNickelCents(209), 205);
+  const options = buildSaleStrategyOptions(
+    {
+      amountCents: 225,
+      typicalRange: { lowAmountCents: 200, highAmountCents: 250 },
+    },
+    activeSnapshot([{
+      matchTier: "exact",
+      classification: "raw",
+      label: "Raw / ungraded",
+      currency: "USD",
+      listingCount: 1,
+      medianAmountCents: 214,
+      typicalRange: { lowAmountCents: 214, highAmountCents: 214 },
+      confidence: "low",
+      listings: [{ totalPriceCents: 214 }],
+    }]),
+    raw,
+  );
+
+  assert.equal(options.sell_faster.amountCents, 205);
+  assert.equal(options.sell_faster.limitedByFloor, false);
+});
+
+test("a card listing floor overrides a lower Sell Faster amount", () => {
+  const options = buildSaleStrategyOptions(
+    {
+      amountCents: 225,
+      typicalRange: { lowAmountCents: 200, highAmountCents: 250 },
+    },
+    activeSnapshot([{
+      matchTier: "exact",
+      classification: "raw",
+      label: "Raw / ungraded",
+      currency: "USD",
+      listingCount: 1,
+      medianAmountCents: 129,
+      typicalRange: { lowAmountCents: 129, highAmountCents: 129 },
+      confidence: "low",
+      listings: [{ totalPriceCents: 129 }],
+    }]),
+    raw,
+    195,
+  );
+
+  assert.equal(options.sell_faster.unconstrainedAmountCents, 120);
+  assert.equal(options.sell_faster.amountCents, 195);
+  assert.equal(options.sell_faster.minimumListingPriceCents, 195);
+  assert.equal(options.sell_faster.limitedByFloor, true);
+  assert.match(options.sell_faster.rationale, /below your floor limit/i);
 });
 
 test("exact sold and active evidence are blended with more weight on active listings", () => {

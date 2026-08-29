@@ -1017,7 +1017,10 @@ function ebayDraftFromCard(card, defaults = {}, saleStrategyOptions = null) {
     referencePriceCents <= defaults.sellFasterBelowCents
     ? "sell_faster"
     : defaults.pricingStrategy ?? "balanced";
-  const priceCents = saleStrategyOptions?.[pricingStrategy]?.amountCents ?? referencePriceCents;
+  const priceCents = Math.max(
+    saleStrategyOptions?.[pricingStrategy]?.amountCents ?? referencePriceCents,
+    card.minimumListingPriceCents ?? 1,
+  );
   const detailLines = [
     `Card: ${fields.player ?? fields.character ?? card.title}`,
     fields.year && `Year: ${fields.year}`,
@@ -1515,6 +1518,15 @@ async function publishEbayListing(userId, collectionId) {
     if (saved.status === "sold") throw new Error("This card is marked sold. Create a separate collection record before intentionally listing another copy.");
     if (saved.status === "ended") throw new Error("This listing has ended. Create a new eBay draft before relisting the card.");
     const draft = editableEbayDraft(saved);
+    if (
+      draft.listingFormat === "FIXED_PRICE" &&
+      Number.isInteger(card.minimumListingPriceCents) &&
+      draft.priceCents < card.minimumListingPriceCents
+    ) {
+      throw new Error(
+        `This card's minimum listing price is $${(card.minimumListingPriceCents / 100).toFixed(2)}. Raise the Buy It Now price before publishing.`,
+      );
+    }
     if ([draft.categoryId, draft.merchantLocationKey, draft.fulfillmentPolicyId, draft.paymentPolicyId, draft.returnPolicyId].some((value) => !value)) {
       throw new Error("Category, location, and all three eBay policies are required.");
     }
@@ -2825,6 +2837,35 @@ app.delete(
       console.error("Confirmed card valuation removal failed", error);
       response.status(500).json({
         error: "CardPilot could not clear this value. Please try again.",
+      });
+    }
+  },
+);
+
+app.put(
+  "/api/collection/:collectionId/listing-price-floor",
+  async (request, response) => {
+    try {
+      const card = await collectionStore.updateListingPriceFloor(
+        collectionUserId(request),
+        request.params.collectionId,
+        request.body,
+      );
+      if (!card) {
+        response.status(404).json({ error: "That saved card was not found." });
+        return;
+      }
+      response.json({ card });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        response.status(400).json({
+          error: "Enter a valid minimum listing price or leave it blank.",
+        });
+        return;
+      }
+      console.error("Card listing price floor save failed", error);
+      response.status(500).json({
+        error: "CardPilot could not save this listing floor. Please try again.",
       });
     }
   },

@@ -48,8 +48,8 @@ export function listingProfitabilityAtTargets({
     ? Object.fromEntries(Object.entries(saleStrategyOptions).map(([key, option]) => {
         const amountCents = Math.max(1, Math.round(Number(option?.amountCents) || 0));
         const itemPriceCents = key === "sell_faster"
-          ? Math.max(1, amountCents - shipping)
-          : amountCents;
+          ? Math.max(1, amountCents - shipping, option?.minimumListingPriceCents ?? 1)
+          : Math.max(amountCents, option?.minimumListingPriceCents ?? 1);
         return [key, economicsAtItemPrice(itemPriceCents)];
       }))
     : null;

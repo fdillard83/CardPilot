@@ -649,6 +649,9 @@ export type ValuationRecommendationSnapshot = {
       amountCents: number;
       label: string;
       rationale: string;
+      unconstrainedAmountCents?: number;
+      minimumListingPriceCents?: number | null;
+      limitedByFloor?: boolean;
     }
   > | null;
   evidence: {
@@ -691,6 +694,7 @@ export type SavedCollectionCard = {
   grading: GradingProfile;
   valuationProfile: ValuationProfile;
   confirmedValuation: ConfirmedValuation | null;
+  minimumListingPriceCents?: number | null;
   ebayReference: {
     itemId: string;
     title: string;

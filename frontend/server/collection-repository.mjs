@@ -36,6 +36,10 @@ export class LocalCollectionRepository {
     return this.store.clearConfirmedValuation(collectionId);
   }
 
+  updateListingPriceFloor(_userId, collectionId, input) {
+    return this.store.updateListingPriceFloor(collectionId, input);
+  }
+
   image(_userId, collectionId, side, _size = "original") {
     return this.store.image(collectionId, side);
   }

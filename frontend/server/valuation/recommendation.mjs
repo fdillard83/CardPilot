@@ -360,16 +360,36 @@ function activeMarketFloor(activeSnapshot, grading) {
   return prices.length ? Math.min(...prices) : group?.typicalRange?.lowAmountCents ?? null;
 }
 
-export function buildSaleStrategyOptions(recommendation, activeSnapshot = null, grading = null) {
+export function roundDownToNickelCents(amountCents) {
+  if (!Number.isInteger(amountCents) || amountCents < 0) {
+    throw new TypeError("Sell Faster amount must be a non-negative cent amount.");
+  }
+  return Math.floor(amountCents / 5) * 5;
+}
+
+export function buildSaleStrategyOptions(
+  recommendation,
+  activeSnapshot = null,
+  grading = null,
+  minimumListingPriceCents = null,
+) {
   if (!recommendation) return null;
   const activeFloor = activeMarketFloor(activeSnapshot, grading);
   const fallbackFloor = recommendation.typicalRange.lowAmountCents;
-  const fasterAmount = Math.max(
+  const unconstrainedFasterAmount = Math.max(
     1,
-    activeFloor === null
+    roundDownToNickelCents(activeFloor === null
       ? Math.min(recommendation.amountCents, fallbackFloor - 5)
-      : activeFloor - 5,
+      : activeFloor - 5),
   );
+  const validMinimumListingPriceCents = Number.isInteger(minimumListingPriceCents) &&
+    minimumListingPriceCents > 0
+    ? minimumListingPriceCents
+    : null;
+  const fasterAmount = validMinimumListingPriceCents === null
+    ? unconstrainedFasterAmount
+    : Math.max(unconstrainedFasterAmount, validMinimumListingPriceCents);
+  const limitedByFloor = fasterAmount > unconstrainedFasterAmount;
   const maximizeAmount = roundRecommendedValueCents(
     Math.max(recommendation.amountCents, recommendation.typicalRange.highAmountCents),
   );
@@ -377,9 +397,14 @@ export function buildSaleStrategyOptions(recommendation, activeSnapshot = null, 
     sell_faster: {
       amountCents: fasterAmount,
       label: "Sell faster",
-      rationale: activeFloor === null
-        ? "No compatible active listing was available, so this uses the lower recommendation range."
-        : "Targets 5¢ below the lowest compatible active buyer total. Shipping is subtracted when the listing is finalized.",
+      rationale: limitedByFloor
+        ? "Sell Faster is below your floor limit. Floor limit used instead."
+        : activeFloor === null
+          ? "No compatible active listing was available, so this uses the lower recommendation range rounded down to the nearest nickel."
+          : "Targets 5¢ below the lowest compatible active buyer total, rounded down to the nearest nickel. Shipping is subtracted when the listing is finalized.",
+      unconstrainedAmountCents: unconstrainedFasterAmount,
+      minimumListingPriceCents: validMinimumListingPriceCents,
+      limitedByFloor,
     },
     balanced: {
       amountCents: recommendation.amountCents,
@@ -400,6 +425,7 @@ export function buildValuationRecommendation({
   grading,
   soldStatus = soldSnapshot ? "available" : "not_configured",
   activeStatus = activeSnapshot ? "available" : "not_configured",
+  minimumListingPriceCents = null,
   generatedAt = new Date().toISOString(),
 }) {
   const exactSold = soldSnapshot
@@ -483,6 +509,7 @@ export function buildValuationRecommendation({
     recommendation,
     activeSnapshot,
     grading,
+    minimumListingPriceCents,
   );
 
   return {
@@ -558,6 +585,7 @@ export class ValuationRecommendationService {
       activeSnapshot:
         activeResult.status === "fulfilled" ? activeResult.value : null,
       grading: card.grading,
+      minimumListingPriceCents: card.minimumListingPriceCents,
       soldStatus: resultStatus(soldResult, Boolean(this.soldComps)),
       activeStatus: resultStatus(activeResult, Boolean(this.activeMarket)),
       generatedAt: new Date(this.now()).toISOString(),

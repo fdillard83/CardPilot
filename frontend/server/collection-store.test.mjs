@@ -130,6 +130,14 @@ test("collection records persist images and support update and removal", async (
       userAdjusted: false,
       valuedAt: "2026-08-12T12:00:03.000Z",
     });
+    const floored = await store.updateListingPriceFloor(created.collectionId, {
+      minimumListingPriceCents: 195,
+    });
+    assert.equal(floored.minimumListingPriceCents, 195);
+    const floorCleared = await store.updateListingPriceFloor(created.collectionId, {
+      minimumListingPriceCents: null,
+    });
+    assert.equal(floorCleared.minimumListingPriceCents, null);
     await assert.rejects(
       store.updateConfirmedValuation(created.collectionId, {
         amountCents: 4250,

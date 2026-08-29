@@ -114,6 +114,19 @@ test("a visibly printed copyright year remains available", () => {
   assert.equal(normalized.fields.year.value, "2026");
 });
 
+test("a visibly printed product season remains complete", () => {
+  const input = extraction({ year: field("2024-25", 0.94) });
+  input.visibleMarks.push({
+    text: "2024-25 Panini Prizm Basketball",
+    kind: "product_title",
+    imageSide: "front",
+    location: "lower front",
+    confidence: 0.96,
+  });
+  const normalized = normalizeCardSemantics(input, 2026);
+  assert.equal(normalized.fields.year.value, "2024-25");
+});
+
 test("a stray single letter cannot become a card number", () => {
   const normalized = normalizeCardSemantics(
     extraction({ cardNumber: field("P", 0.84) }),

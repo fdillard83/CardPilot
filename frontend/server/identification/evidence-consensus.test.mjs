@@ -104,6 +104,36 @@ test("repeated Google full-image page matches correct a tentative year", () => {
   assert.match(result.evidence[0].observation, /2025 instead of the tentative 2026/);
 });
 
+test("explicit sports seasons outrank unrelated page years and retain both season years", () => {
+  const extraction = {
+    fields: { player: visible("Victor Wembanyama", 0.96), year: visible("2026", 0.65) },
+    evidence: [],
+  };
+  const result = applyEvidenceConsensus(extraction, [{
+    provider: "google_web_detection",
+    status: "completed",
+    signals: [
+      {
+        type: "full_matching_page",
+        text: "2024-25 Panini Prizm Victor Wembanyama Silver — updated 2026",
+        url: "https://example.com/2024-25-prizm-wembanyama",
+        imageUrl: null,
+        strength: 0.96,
+      },
+      {
+        type: "full_matching_page",
+        text: "Victor Wembanyama 2024/2025 Panini Prizm Silver sale 2026",
+        url: "https://example.org/wembanyama-prizm",
+        imageUrl: null,
+        strength: 0.94,
+      },
+    ],
+  }]);
+
+  assert.equal(result.fields.year.value, "2024-25");
+  assert.equal(result.fields.year.inferenceSource, "web");
+});
+
 test("one seller page cannot overwrite a tentative year", () => {
   const extraction = {
     fields: { player: visible("Nick Kurtz", 0.95), year: visible("2026", 0.72) },

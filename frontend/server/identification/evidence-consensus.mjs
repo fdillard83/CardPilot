@@ -39,12 +39,36 @@ function evidenceDescription(provider, signal, count) {
   return `${provider} returned ${kind}${count > 1 ? ` plus ${count - 1} corroborating result${count === 2 ? "" : "s"}` : ""} that agrees with this value.`;
 }
 
+function normalizedSeason(startText, endText) {
+  const start = Number(startText);
+  if (!Number.isInteger(start)) return null;
+  if (!endText) return String(start);
+  let end = Number(endText);
+  if (endText.length === 2) {
+    const century = Math.floor(start / 100) * 100;
+    end = century + end;
+    if (end < start) end += 100;
+  }
+  if (end !== start + 1) return null;
+  return `${start}-${String(end).slice(-2)}`;
+}
+
 function yearsInSignal(signal) {
   const text = [signal.text, signal.url, signal.imageUrl]
     .filter(Boolean)
     .join(" ");
+  const maximumYear = new Date().getFullYear() + 2;
+  const explicitSeasons = [...text.matchAll(
+    /\b((?:18|19|20)\d{2})\s*[-/]\s*((?:18|19|20)?\d{2})\b/g,
+  )]
+    .map((match) => normalizedSeason(match[1], match[2]))
+    .filter((season) => {
+      const start = Number(season?.slice(0, 4));
+      return season && start >= 1880 && start <= maximumYear;
+    });
+  if (explicitSeasons.length) return [...new Set(explicitSeasons)];
   return [...new Set(text.match(/\b(?:18|19|20)\d{2}\b/g) ?? [])]
-    .filter((year) => Number(year) >= 1880 && Number(year) <= new Date().getFullYear() + 2);
+    .filter((year) => Number(year) >= 1880 && Number(year) <= maximumYear);
 }
 
 function yearConsensus(providerResults, fields = {}) {
@@ -179,4 +203,5 @@ export const evidenceConsensusInternals = {
   signalSupportsValue,
   yearsInSignal,
   yearConsensus,
+  normalizedSeason,
 };

@@ -3,6 +3,7 @@ import {
   CollectionCreateSchema,
   CollectionUpdateSchema,
   ConfirmedValuationInputSchema,
+  ListingPriceFloorInputSchema,
   decodeImage,
   gradingFromRecord,
   publicRecord,
@@ -123,6 +124,7 @@ export class SupabaseCollectionRepository {
         valuationProfile:
           validated.valuationProfile ?? deriveValuationProfile(validated.fields),
         confirmedValuation: null,
+        minimumListingPriceCents: null,
         createdAt: timestamp,
         updatedAt: timestamp,
         images: {
@@ -236,6 +238,20 @@ export class SupabaseCollectionRepository {
     if (!record) return null;
     const updatedAt = this.now().toISOString();
     const updated = { ...record, confirmedValuation: null, updatedAt };
+    await this.#updateRecord(userId, collectionId, updated, updatedAt);
+    return publicRecord(updated);
+  }
+
+  async updateListingPriceFloor(userId, collectionId, input) {
+    const validated = ListingPriceFloorInputSchema.parse(input);
+    const record = await this.#record(userId, collectionId);
+    if (!record) return null;
+    const updatedAt = this.now().toISOString();
+    const updated = {
+      ...record,
+      minimumListingPriceCents: validated.minimumListingPriceCents,
+      updatedAt,
+    };
     await this.#updateRecord(userId, collectionId, updated, updatedAt);
     return publicRecord(updated);
   }

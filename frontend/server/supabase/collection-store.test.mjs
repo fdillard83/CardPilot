@@ -181,6 +181,21 @@ test("Supabase collections and images are scoped to one account", async () => {
   assert.match(image.signedUrl, new RegExp(`user-a/${created.collectionId}`));
   assert.equal(await store.image("user-b", created.collectionId, "front"), null);
 
+  const floored = await store.updateListingPriceFloor("user-a", created.collectionId, {
+    minimumListingPriceCents: 195,
+  });
+  assert.equal(floored.minimumListingPriceCents, 195);
+  assert.equal(
+    (await store.get("user-a", created.collectionId)).minimumListingPriceCents,
+    195,
+  );
+  assert.equal(
+    await store.updateListingPriceFloor("user-b", created.collectionId, {
+      minimumListingPriceCents: 250,
+    }),
+    null,
+  );
+
   assert.equal(await store.remove("user-b", created.collectionId), false);
   assert.equal(await store.remove("user-a", created.collectionId), true);
   assert.equal(client.objects.size, 0);

@@ -87,6 +87,12 @@ export const ConfirmedValuationInputSchema = z
   })
   .strict();
 
+export const ListingPriceFloorInputSchema = z
+  .object({
+    minimumListingPriceCents: z.number().int().min(1).max(100_000_000).nullable(),
+  })
+  .strict();
+
 const ConfirmedValuationSchema = ConfirmedValuationInputSchema.extend({
   valuedAt: z.string().datetime(),
 }).strict();
@@ -134,6 +140,13 @@ export function fieldsFromRecord(record) {
 
 export function confirmedValuationFromRecord(record) {
   const parsed = ConfirmedValuationSchema.safeParse(record.confirmedValuation);
+  return parsed.success ? parsed.data : null;
+}
+
+export function minimumListingPriceFromRecord(record) {
+  const parsed = ListingPriceFloorInputSchema.shape.minimumListingPriceCents.safeParse(
+    record.minimumListingPriceCents,
+  );
   return parsed.success ? parsed.data : null;
 }
 
@@ -187,6 +200,7 @@ export function publicRecord(record) {
     grading: gradingFromRecord(record),
     valuationProfile: valuationProfileFromRecord(record),
     confirmedValuation: confirmedValuationFromRecord(record),
+    minimumListingPriceCents: minimumListingPriceFromRecord(record),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     images: {
@@ -254,6 +268,7 @@ export class CollectionStore {
           valuationProfile:
             validated.valuationProfile ?? deriveValuationProfile(validated.fields),
           confirmedValuation: null,
+          minimumListingPriceCents: null,
           createdAt: timestamp,
           updatedAt: timestamp,
           images: {
@@ -363,6 +378,24 @@ export class CollectionStore {
       records[index] = {
         ...records[index],
         confirmedValuation: null,
+        updatedAt: this.now().toISOString(),
+      };
+      await this.writeRecords(records);
+      return publicRecord(records[index]);
+    });
+  }
+
+  async updateListingPriceFloor(collectionId, input) {
+    const validated = ListingPriceFloorInputSchema.parse(input);
+    return this.enqueue(async () => {
+      const records = await this.readRecords();
+      const index = records.findIndex(
+        (record) => record.collectionId === collectionId,
+      );
+      if (index < 0) return null;
+      records[index] = {
+        ...records[index],
+        minimumListingPriceCents: validated.minimumListingPriceCents,
         updatedAt: this.now().toISOString(),
       };
       await this.writeRecords(records);

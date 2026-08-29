@@ -42,3 +42,24 @@ test("market minimum profitability includes promotion and identifies unsafe stra
   assert.equal(result.strategies.balanced.safe, true);
   assert.equal(result.strategies.maximize_value.safe, true);
 });
+
+test("buyer-paid shipping cannot reduce Sell Faster below the card floor", () => {
+  const result = listingProfitabilityAtTargets({
+    draft: { listingFormat: "FIXED_PRICE", priceCents: 300, promoteListing: false },
+    preferences: {
+      listingTransactionFeePercent: 13.25,
+      listingTransactionFixedFeeCents: 30,
+      listingMailingCostCents: 78,
+      estimatedBuyerSalesTaxPercent: 7,
+    },
+    buyerShippingCents: 100,
+    marketMinimumBuyerTotalCents: 250,
+    saleStrategyOptions: {
+      sell_faster: { amountCents: 205, minimumListingPriceCents: 195 },
+      balanced: { amountCents: 250 },
+      maximize_value: { amountCents: 300 },
+    },
+  });
+
+  assert.equal(result.strategies.sell_faster.itemPriceCents, 195);
+});

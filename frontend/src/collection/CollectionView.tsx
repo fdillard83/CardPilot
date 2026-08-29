@@ -154,6 +154,22 @@ function searchableText(card: SavedCollectionCard) {
     .join(" ")
     .toLowerCase();
 }
+
+function normalizedYearOrSeason(value: string) {
+  const match = value.trim().match(/^((?:18|19|20)\d{2})(?:\s*[-/]\s*((?:18|19|20)?\d{2}))?$/);
+  if (!match) return null;
+  const firstYear = Number(match[1]);
+  if (firstYear < 1880 || firstYear > new Date().getFullYear() + 1) return null;
+  if (!match[2]) return String(firstYear);
+  let finalYear = Number(match[2]);
+  if (match[2].length === 2) {
+    finalYear = Math.floor(firstYear / 100) * 100 + finalYear;
+    if (finalYear < firstYear) finalYear += 100;
+  }
+  return finalYear === firstYear + 1
+    ? `${firstYear}-${String(finalYear).slice(-2)}`
+    : null;
+}
 function matchesFilter(card: SavedCollectionCard, filter: CollectionFilter) {
   if (filter === "numbered") return Boolean(card.fields.serialNumber);
   if (filter === "autograph") return card.fields.autograph === true;
@@ -1519,10 +1535,16 @@ export function CollectionView({
   const [valuationStrategy, setValuationStrategy] =
     useState<AccountPreferences["valuationStrategy"]>(accountPreferences.valuationStrategy);
   const [valuationAmountInput, setValuationAmountInput] = useState("");
+  const [valuationFloorInput, setValuationFloorInput] = useState("");
   const [valuationCurrency, setValuationCurrency] = useState("USD");
   const [valuationConfidence, setValuationConfidence] = useState<
     "low" | "medium" | "high"
   >("low");
+  const [missingYearEditorOpen, setMissingYearEditorOpen] = useState(false);
+  const [missingYearDrafts, setMissingYearDrafts] = useState<Record<string, string>>({});
+  const [missingYearErrors, setMissingYearErrors] = useState<Record<string, string>>({});
+  const [missingYearBusy, setMissingYearBusy] = useState(false);
+  const [missingYearCompleted, setMissingYearCompleted] = useState(0);
   const valuationRequestIdRef = useRef(0);
   const [bulkValuationResults, setBulkValuationResults] = useState<
     BulkValuationResult[]
@@ -1832,6 +1854,14 @@ export function CollectionView({
   }, [cards, category, collectionSection, filter, query, sort]);
 
   const unlistedCards = useMemo(() => cards.filter((card) => card.selling?.status !== "sold" && !card.selling), [cards]);
+  const sportsCardsMissingYear = useMemo(
+    () => cards.filter((card) =>
+      card.selling?.status !== "sold" &&
+      cardKindFromFields(card.fields) === "sports" &&
+      !String(card.fields.year ?? "").trim(),
+    ),
+    [cards],
+  );
 
   const closeValuationPanel = () => {
     valuationRequestIdRef.current += 1;
@@ -1843,6 +1873,7 @@ export function CollectionView({
     setValuationShowingPrevious(false);
     setValuationStrategy(accountPreferences.valuationStrategy);
     setValuationAmountInput("");
+    setValuationFloorInput("");
     setValuationCurrency("USD");
     setValuationConfidence("low");
   };
@@ -2370,6 +2401,11 @@ export function CollectionView({
       );
       setValuationCurrency(card.confirmedValuation?.currency ?? "USD");
       setValuationConfidence(card.confirmedValuation?.confidence ?? "low");
+      setValuationFloorInput(
+        card.minimumListingPriceCents == null
+          ? ""
+          : amountInputFromCents(card.minimumListingPriceCents),
+      );
     }
     setValuationBusy(true);
     try {
@@ -2580,6 +2616,56 @@ export function CollectionView({
         caughtError instanceof Error
           ? caughtError.message
           : "CardPilot could not save this value.",
+      );
+    } finally {
+      setValuationSaving(false);
+    }
+  };
+
+  const saveListingPriceFloor = async (card: SavedCollectionCard) => {
+    const minimumListingPriceCents = valuationFloorInput.trim() === ""
+      ? null
+      : amountCentsFromInput(valuationFloorInput);
+    if (valuationFloorInput.trim() !== "" && (!minimumListingPriceCents || valuationSaving)) {
+      setValuationError("Enter a valid minimum listing price of at least $0.01, or leave it blank.");
+      return;
+    }
+    if (valuationSaving) return;
+    setValuationSaving(true);
+    setValuationError(null);
+    try {
+      const response = await fetch(
+        `/api/collection/${encodeURIComponent(card.collectionId)}/listing-price-floor`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ minimumListingPriceCents }),
+        },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { card?: SavedCollectionCard; error?: string }
+        | null;
+      if (!response.ok || !payload?.card) {
+        throw new Error(payload?.error ?? "CardPilot could not save this listing floor.");
+      }
+      const updatedCard = payload.card;
+      onCardsChange(
+        cards.map((item) =>
+          item.collectionId === updatedCard.collectionId ? updatedCard : item,
+        ),
+      );
+      await refreshValuationSnapshot(
+        updatedCard,
+        soldExcludedAnchorIds,
+        marketExcludedAnchorIds,
+        true,
+        valuationStrategy,
+      );
+    } catch (caughtError) {
+      setValuationError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "CardPilot could not save this listing floor.",
       );
     } finally {
       setValuationSaving(false);
@@ -2877,6 +2963,89 @@ export function CollectionView({
     }
   };
 
+  const openMissingYearEditor = (card?: SavedCollectionCard) => {
+    setMissingYearDrafts(Object.fromEntries(
+      sportsCardsMissingYear.map((item) => [
+        item.collectionId,
+        item.collectionId === card?.collectionId ? String(item.fields.year ?? "") : "",
+      ]),
+    ));
+    setMissingYearErrors({});
+    setMissingYearCompleted(0);
+    setMissingYearEditorOpen(true);
+  };
+
+  const saveMissingYears = async () => {
+    if (missingYearBusy) return;
+    const targets = sportsCardsMissingYear.filter((card) =>
+      String(missingYearDrafts[card.collectionId] ?? "").trim(),
+    );
+    const validationErrors = Object.fromEntries(
+      targets
+        .filter((card) => !normalizedYearOrSeason(missingYearDrafts[card.collectionId] ?? ""))
+        .map((card) => [card.collectionId, "Enter a year such as 2025 or a season such as 2024-25."]),
+    );
+    if (Object.keys(validationErrors).length > 0) {
+      setMissingYearErrors(validationErrors);
+      return;
+    }
+    if (targets.length === 0) {
+      setMissingYearErrors({ _form: "Enter at least one year or season to save." });
+      return;
+    }
+    setMissingYearBusy(true);
+    setMissingYearCompleted(0);
+    setMissingYearErrors({});
+    const updatedCards = new Map<string, SavedCollectionCard>();
+    const failed: Record<string, string> = {};
+    for (const card of targets) {
+      try {
+        const response = await fetch(
+          `/api/collection/${encodeURIComponent(card.collectionId)}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              fields: {
+                ...card.fields,
+                year: normalizedYearOrSeason(missingYearDrafts[card.collectionId])!,
+              },
+              grading: card.grading,
+              valuationProfile: card.valuationProfile,
+            }),
+          },
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | { card?: SavedCollectionCard; error?: string }
+          | null;
+        if (!response.ok || !payload?.card) {
+          throw new Error(payload?.error ?? "The year or season could not be saved.");
+        }
+        updatedCards.set(card.collectionId, payload.card);
+      } catch (error) {
+        failed[card.collectionId] = error instanceof Error
+          ? error.message
+          : "The year or season could not be saved.";
+      } finally {
+        setMissingYearCompleted((value) => value + 1);
+      }
+    }
+    if (updatedCards.size > 0) {
+      onCardsChange(cards.map((card) => updatedCards.get(card.collectionId) ?? card));
+    }
+    setMissingYearBusy(false);
+    if (Object.keys(failed).length > 0) {
+      setMissingYearErrors(failed);
+      setMissingYearDrafts((current) => Object.fromEntries(
+        Object.entries(current).filter(([collectionId]) => failed[collectionId]),
+      ));
+      return;
+    }
+    setMissingYearEditorOpen(false);
+    setMissingYearDrafts({});
+    setMissingYearCompleted(0);
+  };
+
   const removeCard = async (card: SavedCollectionCard) => {
     if (busyId) return;
 
@@ -2987,6 +3156,20 @@ export function CollectionView({
         <div><strong>{collectionValuation.soldEstimatedProfitLabel}</strong><span>Estimated profit — sold eBay</span></div>
       </div>
       <p className="collection-summary-note">Active and sold profit estimates subtract an illustrative 13.25% eBay fee plus $0.30 per sale and any applicable promotion rate. Card cost, shipping, taxes, returns, and other expenses are not included.</p></>}
+      {collectionSection === "collection" && sportsCardsMissingYear.length > 0 && (
+        <section className="missing-year-summary" aria-labelledby="missing-year-summary-title">
+          <div>
+            <span>Card details need attention</span>
+            <strong id="missing-year-summary-title">
+              {sportsCardsMissingYear.length} sports card{sportsCardsMissingYear.length === 1 ? " is" : "s are"} missing a year or season
+            </strong>
+            <small>Add values such as 2025 or 2024-25 together so identification, comparisons, and eBay titles use the correct issue.</small>
+          </div>
+          <button type="button" onClick={() => openMissingYearEditor()}>
+            Batch add year / season
+          </button>
+        </section>
+      )}
       <div className="ebay-queue-launch"><div><strong>eBay listings and drafts</strong><span>See drafts, scheduled listings, active listings, ended listings, and synchronized sales.</span></div><button className="collection-action-outline" type="button" onClick={() => setListingQueueOpen(true)}>Open Listings and drafts</button></div>
       {collectionSection === "collection" && unlistedCards.length > 1 && <section className="collection-batch-listing" aria-labelledby="batch-listing-title">
         <div><span>Batch eBay listing</span><strong id="batch-listing-title">Use shared rules, review every card, publish once</strong><small>Set shipping, payment, returns, promotion, and other shared choices once. Then check the distinct title, price, and category for every card in a review grid.</small></div>
@@ -3426,6 +3609,15 @@ export function CollectionView({
                     <div>
                       <span>{cardCategoryLabel(card.fields)}</span>
                       <h2>{card.title}</h2>
+                      {card.selling?.status !== "sold" && cardKindFromFields(card.fields) === "sports" && !String(card.fields.year ?? "").trim() && (
+                        <button
+                          className="missing-year-flag"
+                          type="button"
+                          onClick={() => openMissingYearEditor(card)}
+                        >
+                          Missing year / season · Batch edit
+                        </button>
+                      )}
                     </div>
                     {card.selling?.status === "sold" ? (
                       <div className="collection-card-value collection-card-value-sold">
@@ -3723,13 +3915,16 @@ export function CollectionView({
                     error={valuationError}
                     showingPrevious={valuationShowingPrevious}
                     amountInput={valuationAmountInput}
+                    floorInput={valuationFloorInput}
                     currency={valuationCurrency}
                     confidence={valuationConfidence}
                     strategy={valuationStrategy}
                     onAmountChange={setValuationAmountInput}
+                    onFloorChange={setValuationFloorInput}
                     onStrategyChange={changeValuationStrategy}
                     onConfidenceChange={setValuationConfidence}
                     onSave={() => void saveConfirmedValuation(card)}
+                    onSaveFloor={() => void saveListingPriceFloor(card)}
                     onClear={() => void clearConfirmedValuation(card)}
                     onRetry={() => void loadValuationRecommendation(card, valuationStrategy)}
                     onClose={() => {
@@ -3748,6 +3943,90 @@ export function CollectionView({
               </article>
             );
           })}
+        </div>
+      )}
+      {missingYearEditorOpen && (
+        <div className="ebay-draft-backdrop" role="presentation">
+          <section
+            className="ebay-draft-panel missing-year-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="missing-year-panel-title"
+          >
+            <header>
+              <div>
+                <span>Batch card details</span>
+                <h2 id="missing-year-panel-title">Add missing sports-card years and seasons</h2>
+              </div>
+              <button
+                type="button"
+                disabled={missingYearBusy}
+                onClick={() => setMissingYearEditorOpen(false)}
+              >
+                Close
+              </button>
+            </header>
+            <p className="missing-year-intro">
+              Enter the confirmed issue shown by the card or checklist. Blank cards will remain unchanged.
+            </p>
+            {missingYearErrors._form && (
+              <div className="error-banner" role="alert">{missingYearErrors._form}</div>
+            )}
+            <div className="missing-year-grid">
+              {sportsCardsMissingYear.map((card) => (
+                <article key={card.collectionId}>
+                  <img src={card.images.frontUrl} alt={`Front of ${card.title}`} />
+                  <div>
+                    <strong>{card.title}</strong>
+                    <small>{card.fields.player ?? "Sports card"}{card.fields.cardNumber ? ` · #${card.fields.cardNumber}` : ""}</small>
+                  </div>
+                  <label>
+                    <span>Year / season</span>
+                    <input
+                      value={missingYearDrafts[card.collectionId] ?? ""}
+                      placeholder="Example: 2025 or 2024-25"
+                      disabled={missingYearBusy}
+                      aria-invalid={Boolean(missingYearErrors[card.collectionId])}
+                      onChange={(event) => {
+                        setMissingYearDrafts((current) => ({
+                          ...current,
+                          [card.collectionId]: event.target.value,
+                        }));
+                        setMissingYearErrors((current) => {
+                          const next = { ...current };
+                          delete next[card.collectionId];
+                          delete next._form;
+                          return next;
+                        });
+                      }}
+                    />
+                    {missingYearErrors[card.collectionId] && (
+                      <small className="account-inline-error">{missingYearErrors[card.collectionId]}</small>
+                    )}
+                  </label>
+                </article>
+              ))}
+            </div>
+            {missingYearBusy && (
+              <div className="batch-progress" aria-label={`${missingYearCompleted} cards updated`}>
+                <span style={{ width: `${Math.round(missingYearCompleted / Math.max(1, Object.values(missingYearDrafts).filter((value) => value.trim()).length) * 100)}%` }} />
+              </div>
+            )}
+            <div className="batch-ebay-final">
+              <div>
+                <strong>Save entered years and seasons</strong>
+                <small>CardPilot will update only rows with an entry. You can return later for anything still unknown.</small>
+              </div>
+              <button
+                className="primary-action"
+                type="button"
+                disabled={missingYearBusy}
+                onClick={() => void saveMissingYears()}
+              >
+                {missingYearBusy ? `Saving ${missingYearCompleted}...` : "Save entered card details"}
+              </button>
+            </div>
+          </section>
         </div>
       )}
       {expandedImageCard && (

@@ -368,7 +368,7 @@ export function normalizeCardSemantics(extraction, currentYear = new Date().getF
     addMissingEvidence(
       normalized,
       "year",
-      "A valid four-digit issue year was not visibly printed; anniversary numbers are branding, not the card year.",
+      "A valid issue year or sports season was not visibly printed; anniversary numbers are branding, not the card year.",
       "catalog",
       0.12,
     );

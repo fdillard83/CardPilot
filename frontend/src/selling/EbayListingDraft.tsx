@@ -25,6 +25,8 @@ type Draft = {
 };
 type SaleStrategyOptions = Record<"sell_faster" | "balanced" | "maximize_value", {
   amountCents: number; label: string; rationale: string;
+  minimumListingPriceCents?: number | null;
+  limitedByFloor?: boolean;
 }>;
 
 type SellingStatus = { configured: boolean; connected: boolean; environment: "sandbox" | "production"; marketingAuthorized?: boolean };
@@ -546,7 +548,9 @@ export function EbayListingDraft({
                 const option = saleStrategyOptions?.[strategy];
                 if (option) {
                   const shipping = setup?.fulfillmentPolicies.find((policy) => policy.id === draft.fulfillmentPolicyId)?.buyerShippingCostCents ?? 0;
-                  const target = strategy === "sell_faster" ? Math.max(1, option.amountCents - shipping) : option.amountCents;
+                  const target = strategy === "sell_faster"
+                    ? Math.max(1, option.amountCents - shipping, option.minimumListingPriceCents ?? 1)
+                    : Math.max(option.amountCents, card.minimumListingPriceCents ?? 1);
                   setPriceInput((target / 100).toFixed(2));
                 }
               }}><option value="sell_faster">Sell faster</option><option value="balanced">Balanced</option><option value="maximize_value">Maximize value</option></select><small>{saleStrategyOptions?.[draft.pricingStrategy ?? "balanced"]?.rationale ?? "Choose how price and expected selling time should trade off."}</small></label>}
