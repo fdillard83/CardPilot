@@ -37,7 +37,7 @@ type SellerSetup = {
   returnPolicies: { id: string; name: string }[];
 };
 type CategoryOption = { id: string; name: string; breadcrumb: string };
-type AspectDefinition = { name: string; required: boolean; recommended: boolean; multiValue: boolean; values: string[] };
+type AspectDefinition = { name: string; required: boolean; recommended: boolean; multiValue: boolean; selectionOnly?: boolean; values: string[] };
 type Readiness = { definitions: AspectDefinition[]; aspects: Record<string, string[]>; missingAspects: string[]; checks: { key: string; label: string; ready: boolean }[]; ready: boolean };
 type RawCondition = "LIKE_NEW" | "USED_EXCELLENT" | "USED_VERY_GOOD" | "USED_ACCEPTABLE";
 const pokemonConditionOptions: { value: RawCondition; label: string }[] = [
@@ -127,7 +127,12 @@ export function EbayListingDraft({
       if (!response.ok) throw new Error(payload.error);
       if (!current) return;
       setReadiness(payload);
-      setDraft((existing) => existing ? { ...existing, aspects: { ...payload.aspects, ...existing.aspects } } : existing);
+      setDraft((existing) => {
+        if (!existing) return existing;
+        const aspects = { ...existing.aspects };
+        for (const definition of payload.definitions as AspectDefinition[]) delete aspects[definition.name];
+        return { ...existing, aspects: { ...aspects, ...payload.aspects } };
+      });
     }).catch(() => current && setReadiness(null));
     return () => { current = false; };
   }, [card.collectionId, selectedCategoryId]);

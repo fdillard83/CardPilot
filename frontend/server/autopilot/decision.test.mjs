@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assessAutopilot, autopilotRepriceCents, shouldAutomaticallySaveValuation } from "./decision.mjs";
+import { assessAutopilot, autopilotRepriceCents, shouldAutomaticallySaveValuation, shouldPrepareAutomaticEbayDraft } from "./decision.mjs";
 
 const card = {
   decision: "auto_accept",
@@ -34,6 +34,11 @@ test("Preview mode never publishes", () => {
   assert.deepEqual(assessAutopilot({ card, preferences: { ...preferences, automationMode: "preview" }, recommendation, connection: {}, draft }), {
     status: "preview", publish: false, reason: "Preview mode is enabled for this account.",
   });
+});
+
+test("Preview mode does not create an automatic eBay draft", () => {
+  assert.equal(shouldPrepareAutomaticEbayDraft({ automationMode: "preview" }), false);
+  assert.equal(shouldPrepareAutomaticEbayDraft({ automationMode: "autopilot" }), true);
 });
 
 test("automatic repricing follows the market without crossing owner floors", () => {

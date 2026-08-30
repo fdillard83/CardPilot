@@ -34,6 +34,7 @@ import {
   inventoryConditionForCard,
   resolvedEbaySellingScopes,
   shouldSyncCollectionValue,
+  batchDraftUsingCollectionValue,
 } from "./ebay/selling.mjs";
 import { CatalogCandidateGenerator, RemoteCatalogCandidateGenerator } from "./identification/candidate-generator.mjs";
 import { OpenAIEvidenceEngine } from "./identification/evidence-engine.mjs";
@@ -77,7 +78,7 @@ import {
   importLocalCollection,
   localImportStatus,
 } from "./supabase/local-import.mjs";
-import { assessAutopilot, shouldAutomaticallySaveValuation } from "./autopilot/decision.mjs";
+import { assessAutopilot, shouldAutomaticallySaveValuation, shouldPrepareAutomaticEbayDraft } from "./autopilot/decision.mjs";
 import { MarketFeedbackSubmissionSchema } from "./supabase/market-feedback.mjs";
 import { listingHealth, optimizedListingDetails } from "./ebay/listing-health.mjs";
 import { removeCollectionCardSafely } from "./ebay/collection-removal.mjs";
@@ -1106,6 +1107,14 @@ async function runCardAutopilot(userId, originalCard) {
     // The exception status below explains that pricing evidence is incomplete.
   }
 
+  if (!shouldPrepareAutomaticEbayDraft(preferences)) {
+    return {
+      card,
+      draft: null,
+      automation: { status: "preview", publish: false, reason: "Preview mode is enabled; no eBay draft was created." },
+    };
+  }
+
   let draft;
   try {
     draft = await prepareAutomaticEbayDraft(card, preferences.ebaySellingDefaults, snapshot?.saleStrategyOptions ?? null);
@@ -1185,8 +1194,11 @@ app.get("/api/collection/:collectionId/ebay-draft", async (request, response) =>
     try { generatedDraft = await prepareAutomaticEbayDraft(card, preferences.ebaySellingDefaults, saleStrategyOptions); }
     catch { generatedDraft = ebayDraftFromCard(card, preferences.ebaySellingDefaults, saleStrategyOptions); }
   }
+  const draft = saved ?? generatedDraft;
   response.json({
-    draft: saved ?? generatedDraft,
+    draft: request.query.preferCollectionValue === "true"
+      ? batchDraftUsingCollectionValue(draft, card)
+      : draft,
     generated: !saved,
     saleStrategyOptions,
     listingCostSafety: {
@@ -1524,7 +1536,7 @@ async function publishEbayListing(userId, collectionId) {
     if (!card || !saved) throw new Error("Save the listing draft first.");
     if (saved.status === "sold") throw new Error("This card is marked sold. Create a separate collection record before intentionally listing another copy.");
     if (saved.status === "ended") throw new Error("This listing has ended. Create a new eBay draft before relisting the card.");
-    const draft = editableEbayDraft(saved);
+    let draft = editableEbayDraft(saved);
     if (
       draft.listingFormat === "FIXED_PRICE" &&
       Number.isInteger(card.minimumListingPriceCents) &&
@@ -1542,6 +1554,7 @@ async function publishEbayListing(userId, collectionId) {
       if (requirements.missingAspects.length) {
         throw new Error(`Complete the required eBay item specifics: ${requirements.missingAspects.join(", ")}.`);
       }
+      draft = { ...draft, aspects: requirements.aspects };
     }
     const token = await ebaySellerAccessToken(userId);
     await assertListingCostSafety(userId, draft, token);

@@ -60,6 +60,17 @@ export function shouldSyncCollectionValue(draft) {
   return draft?.preserveCollectionValue !== true;
 }
 
+export function batchDraftUsingCollectionValue(draft, card) {
+  const amountCents = card?.confirmedValuation?.amountCents;
+  if (!Number.isInteger(amountCents) || amountCents < 1) return draft;
+  return {
+    ...draft,
+    priceCents: Math.max(amountCents, card?.minimumListingPriceCents ?? 1),
+    currency: "USD",
+    preserveCollectionValue: true,
+  };
+}
+
 const ebayDraftMetadataKeys = [
   "draftId", "collectionId", "status", "ebayOfferId", "ebayListingId", "updatedAt",
   "scheduledPublishAt", "desiredEndAt", "scheduleStatus", "scheduleError",

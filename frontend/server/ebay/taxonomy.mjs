@@ -27,6 +27,7 @@ export class EbayTaxonomyClient {
       required: aspect.aspectConstraint?.aspectRequired === true,
       recommended: aspect.aspectConstraint?.aspectUsage === "RECOMMENDED",
       multiValue: aspect.aspectConstraint?.itemToAspectCardinality === "MULTI",
+      selectionOnly: aspect.aspectConstraint?.aspectMode === "SELECTION_ONLY",
       values: (aspect.aspectValues ?? []).map((value) => value.localizedValue).filter(Boolean),
     })).filter((aspect) => aspect.name);
     this.aspectCache.set(key, aspects);

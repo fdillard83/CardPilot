@@ -7,6 +7,28 @@ function normalized(value) {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+function ebayManufacturedYear(value) {
+  return text(value).match(/\b(?:18|19|20)\d{2}\b/)?.[0] ?? "";
+}
+
+export function sanitizeEbayAspects(aspects, definitions = []) {
+  const definitionsByName = new Map(definitions.map((definition) => [definition.name, definition]));
+  return Object.fromEntries(Object.entries(aspects ?? {}).flatMap(([name, rawValues]) => {
+    const definition = definitionsByName.get(name);
+    const aspectName = normalized(name);
+    let values = Array.isArray(rawValues) ? rawValues.map(text).filter(Boolean) : [];
+    if (["yearmanufactured", "year"].includes(aspectName)) {
+      values = values.map(ebayManufacturedYear).filter(Boolean);
+    }
+    if (definition?.selectionOnly && definition.values?.length) {
+      values = values.map((value) =>
+        definition.values.find((allowed) => normalized(allowed) === normalized(value)) ?? null,
+      ).filter(Boolean);
+    }
+    return values.length ? [[name, definition?.multiValue ? values : [values[0]]]] : [];
+  }));
+}
+
 export function mappedEbayAspects(card, definitions = []) {
   const fields = card.fields ?? {};
   const features = [
@@ -24,8 +46,9 @@ export function mappedEbayAspects(card, definitions = []) {
     team: fields.team,
     set: fields.setOrInsert ?? fields.product,
     cardname: fields.character ?? fields.player,
-    yearmanufactured: fields.year,
-    year: fields.year,
+    yearmanufactured: ebayManufacturedYear(fields.year),
+    year: ebayManufacturedYear(fields.year),
+    season: fields.year,
     cardnumber: fields.cardNumber ?? fields.collectorNumber,
     parallellvariety: fields.parallel ?? fields.finish,
     parallelvariety: fields.parallel ?? fields.finish,
@@ -48,7 +71,7 @@ export function mappedEbayAspects(card, definitions = []) {
 
 export function listingReadiness(card, draft, definitions = []) {
   const mapped = mappedEbayAspects(card, definitions);
-  const aspects = { ...mapped, ...(draft.aspects ?? {}) };
+  const aspects = sanitizeEbayAspects({ ...mapped, ...(draft.aspects ?? {}) }, definitions);
   const requiredAspects = definitions.filter((item) => item.required);
   const missingAspects = requiredAspects.filter((item) => !aspects[item.name]?.some((value) => text(value))).map((item) => item.name);
   const checks = [

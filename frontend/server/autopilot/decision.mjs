@@ -1,5 +1,9 @@
 const confidenceRank = Object.freeze({ low: 1, medium: 2, high: 3 });
 
+export function shouldPrepareAutomaticEbayDraft(preferences) {
+  return preferences?.automationMode === "autopilot";
+}
+
 export function shouldAutomaticallySaveValuation({ card, preferences, recommendation }) {
   return Boolean(
     recommendation &&

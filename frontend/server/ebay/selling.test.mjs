@@ -4,6 +4,7 @@ import {
   EbayListingDraftSchema,
   EbaySandboxSetupSchema,
   EbaySellingClient,
+  batchDraftUsingCollectionValue,
   decryptSellerToken,
   duplicateOfferId,
   editableEbayDraft,
@@ -100,6 +101,24 @@ test("listing drafts require an editable title and positive price", () => {
     scheduleStatus: "unscheduled",
     scheduleError: null,
   }).title, base.title);
+});
+
+test("batch listing starts from the current My Collection value instead of a stale draft price", () => {
+  const draft = { priceCents: 124, currency: "USD", preserveCollectionValue: false };
+  assert.deepEqual(
+    batchDraftUsingCollectionValue(draft, {
+      confirmedValuation: { amountCents: 195, currency: "USD" },
+      minimumListingPriceCents: null,
+    }),
+    { priceCents: 195, currency: "USD", preserveCollectionValue: true },
+  );
+  assert.equal(
+    batchDraftUsingCollectionValue(draft, {
+      confirmedValuation: { amountCents: 195, currency: "USD" },
+      minimumListingPriceCents: 250,
+    }).priceCents,
+    250,
+  );
 });
 
 test("Sandbox setup validates a US ZIP code and builds safe test defaults", () => {

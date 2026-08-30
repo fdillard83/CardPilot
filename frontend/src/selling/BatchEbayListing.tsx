@@ -91,7 +91,7 @@ export function BatchEbayListing({
         return body;
       }),
       Promise.all(cards.slice(0, 50).map(async (card) => {
-        const response = await fetch(`/api/collection/${encodeURIComponent(card.collectionId)}/ebay-draft?includeValuation=false`);
+        const response = await fetch(`/api/collection/${encodeURIComponent(card.collectionId)}/ebay-draft?includeValuation=false&preferCollectionValue=true`);
         const body = await response.json();
         if (!response.ok || !body.draft) throw new Error(body.error ?? "Draft could not be prepared.");
         return {
