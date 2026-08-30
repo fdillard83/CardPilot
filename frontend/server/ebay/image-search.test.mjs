@@ -304,6 +304,8 @@ test("conservative title parsing suggests reviewable card details", () => {
     suggestedYearFromTitle("2026 Topps Nolan Ryan 1991 Design"),
     "2026",
   );
+  assert.equal(suggestedYearFromTitle("2024-25 Panini Prizm Basketball"), "2024-25");
+  assert.equal(suggestedYearFromTitle("2024/2025 Panini Prizm Basketball"), "2024-25");
   assert.equal(
     suggestedSerialNumberFromTitle(
       "2026 Topps Nolan Ryan Green Crackle Foil /99",
@@ -337,6 +339,34 @@ test("visual year verification corrects a proposed year from repeated matching c
   assert.equal(result.proposedYear, "2022");
   assert.equal(result.status, "corrected");
   assert.deepEqual(result.supportingItemIds, ["correct-1", "correct-2"]);
+});
+
+test("repeated exact player, product, and card-number listings fill a missing year", () => {
+  const result = deriveVisualYearVerification(
+    { player: "Joey Ortiz", year: null, product: "Topps Chrome", cardNumber: "RA-JO" },
+    [
+      { itemId: "exact-1", title: "2024 Topps Chrome Joey Ortiz Auto #RA-JO", visualMatchStatus: "unavailable" },
+      { itemId: "exact-2", title: "2024 Topps Chrome Joey Ortiz Rookie Autograph RA-JO", visualMatchStatus: "not_evaluated" },
+      { itemId: "other-year", title: "2023 Topps Chrome Joey Ortiz #RA-JO", visualMatchStatus: "not_evaluated" },
+    ],
+  );
+
+  assert.equal(result.year, "2024");
+  assert.equal(result.proposedYear, null);
+  assert.deepEqual(result.supportingItemIds, ["exact-1", "exact-2"]);
+});
+
+test("repeated card numbers without a matching product cannot invent a year", () => {
+  assert.equal(
+    deriveVisualYearVerification(
+      { player: "Joey Ortiz", year: null, product: "Topps Chrome", cardNumber: "12" },
+      [
+        { itemId: "wrong-1", title: "2024 Bowman Joey Ortiz #12", visualMatchStatus: "unavailable" },
+        { itemId: "wrong-2", title: "2024 Heritage Joey Ortiz #12", visualMatchStatus: "unavailable" },
+      ],
+    ),
+    null,
+  );
 });
 
 test("visual year verification refuses one listing or competing card formats", () => {

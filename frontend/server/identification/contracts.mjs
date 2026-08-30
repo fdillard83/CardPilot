@@ -376,6 +376,7 @@ export const ModelVisibleMarkSchema = z
       "language_mark",
       "card_number",
       "serial_stamp",
+      "issue_year",
       "copyright_year",
       "other",
     ]),

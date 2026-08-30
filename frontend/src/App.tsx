@@ -85,9 +85,9 @@ function withVisualYearVerification(
     return identification;
   }
   const evidenceId = `ev-year-ebay-visual-${verification.year}`;
-  const observation = verification.status === "corrected"
-    ? `Repeated close image matches support ${verification.year} instead of ${currentYear ?? "the proposed year"}; the card photograph and layout agree.`
-    : `Repeated close image matches confirm the ${verification.year} card photograph and layout.`;
+  const observation = verification.status === "corrected" && currentYear
+    ? `Repeated exact card matches support ${verification.year} instead of ${currentYear}.`
+    : `Repeated exact card matches identify the issue year as ${verification.year}.`;
   return {
     ...identification,
     fields: {
@@ -1131,9 +1131,13 @@ function App() {
         fields: payload.fields
           ? {
               ...payload.fields,
-              year: current.fields.year.inferenceSource === "web"
-                ? current.fields.year
-                : payload.fields.year,
+              year:
+                current.fields.year.inferenceSource === "web" ||
+                payload.fields.year.value === null ||
+                (current.fields.year.value !== null &&
+                  current.fields.year.confidence > payload.fields.year.confidence)
+                  ? current.fields.year
+                  : payload.fields.year,
             }
           : current.fields,
         candidateMatches: [...payload.candidateMatches!, ...current.candidateMatches]
@@ -1243,7 +1247,10 @@ function App() {
       if (requestId !== identificationRequestIdRef.current) return;
       const frontImage = preparedFront.image;
       const backImage = preparedBack?.image ?? null;
-      const frontDetailImages = await createCardDetailImages(frontImage);
+      const [frontDetailImages, backDetailImages] = await Promise.all([
+        createCardDetailImages(frontImage),
+        backImage ? createCardDetailImages(backImage) : Promise.resolve([]),
+      ]);
       if (requestId !== identificationRequestIdRef.current) return;
       setPreparedFrontPreview(frontImage);
       setPreparedBackPreview(backImage);
@@ -1252,7 +1259,7 @@ function App() {
       const response = await fetch("/api/identify-card", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ frontImage, backImage, frontDetailImages }),
+        body: JSON.stringify({ frontImage, backImage, frontDetailImages, backDetailImages }),
       });
       const payload = (await response.json().catch(() => null)) as
         | { identification?: CardIdentification; error?: string }

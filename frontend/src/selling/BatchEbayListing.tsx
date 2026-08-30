@@ -16,16 +16,10 @@ type Draft = {
   promoteListing: boolean;
   promotionAdRatePercent: number;
 };
-type StrategyOption = {
-  amountCents: number;
-  minimumListingPriceCents?: number | null;
-};
-type StrategyOptions = Record<PricingStrategy, StrategyOption> | null;
 type Row = {
   card: SavedCollectionCard;
   draft: Draft | null;
   priceInput: string;
-  strategyOptions: StrategyOptions;
   action: BatchAction;
   state: "loading" | "ready" | "saving" | "publishing" | "saved" | "published" | "failed";
   error: string | null;
@@ -69,7 +63,6 @@ export function BatchEbayListing({
       card,
       draft: null,
       priceInput: "",
-      strategyOptions: null,
       action: "publish",
       state: "loading",
       error: null,
@@ -98,23 +91,21 @@ export function BatchEbayListing({
         return body;
       }),
       Promise.all(cards.slice(0, 50).map(async (card) => {
-        const response = await fetch(`/api/collection/${encodeURIComponent(card.collectionId)}/ebay-draft`);
+        const response = await fetch(`/api/collection/${encodeURIComponent(card.collectionId)}/ebay-draft?includeValuation=false`);
         const body = await response.json();
         if (!response.ok || !body.draft) throw new Error(body.error ?? "Draft could not be prepared.");
         return {
           card,
           draft: body.draft as Draft,
-          strategyOptions: (body.saleStrategyOptions ?? null) as StrategyOptions,
         };
       })),
     ]).then(([sellerSetup, prepared]) => {
       if (!current) return;
       setSetup(sellerSetup);
-      setRows(prepared.map(({ card, draft, strategyOptions }) => ({
+      setRows(prepared.map(({ card, draft }) => ({
         card,
         draft,
         priceInput: priceInputFromCents(draft.priceCents),
-        strategyOptions,
         action: "publish",
         state: "ready",
         error: null,
@@ -163,42 +154,8 @@ export function BatchEbayListing({
   );
 
   const shared = rows.find((row) => row.draft)?.draft ?? null;
-  const fulfillmentShipping = (fulfillmentPolicyId: string) =>
-    setup?.fulfillmentPolicies.find((policy) => policy.id === fulfillmentPolicyId)?.buyerShippingCostCents ?? 0;
-  const strategyItemPrice = (row: Row, strategy: PricingStrategy, shipping: number) => {
-    const option = row.strategyOptions?.[strategy];
-    if (!option) return null;
-    const proposed = option.amountCents - (strategy === "sell_faster" ? shipping : 0);
-    return Math.max(1, proposed, option.minimumListingPriceCents ?? 1);
-  };
-  const applyStrategy = (strategy: PricingStrategy) => setRows((current) => current.map((row) => {
-    if (!row.draft) return row;
-    const priceCents = strategyItemPrice(row, strategy, fulfillmentShipping(row.draft.fulfillmentPolicyId));
-    return {
-      ...row,
-      priceInput: priceCents === null ? row.priceInput : priceInputFromCents(priceCents),
-      draft: {
-        ...row.draft,
-        pricingStrategy: strategy,
-        ...(priceCents === null ? {} : { priceCents }),
-      },
-    };
-  }));
-  const applyFulfillment = (fulfillmentPolicyId: string) => setRows((current) => current.map((row) => {
-    if (!row.draft) return row;
-    const priceCents = row.draft.pricingStrategy === "sell_faster"
-      ? strategyItemPrice(row, "sell_faster", fulfillmentShipping(fulfillmentPolicyId))
-      : null;
-    return {
-      ...row,
-      priceInput: priceCents === null ? row.priceInput : priceInputFromCents(priceCents),
-      draft: {
-        ...row.draft,
-        fulfillmentPolicyId,
-        ...(priceCents === null ? {} : { priceCents }),
-      },
-    };
-  }));
+  const applyFulfillment = (fulfillmentPolicyId: string) =>
+    updateAll({ fulfillmentPolicyId });
 
   const runBatch = async () => {
     if (!actionableRows.length || busy) return;
@@ -226,7 +183,7 @@ export function BatchEbayListing({
         const save = await fetch(`/api/collection/${encodeURIComponent(id)}/ebay-draft`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(target.draft),
+          body: JSON.stringify({ ...target.draft, preserveCollectionValue: true }),
         });
         const saved = await save.json();
         if (!save.ok) throw new Error(saved.error ?? "Draft could not be saved.");
@@ -283,7 +240,6 @@ export function BatchEbayListing({
           <label>Shipping policy<select value={shared.fulfillmentPolicyId} onChange={(event) => applyFulfillment(event.target.value)}><option value="">Choose...</option>{setup.fulfillmentPolicies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           <label>Payment policy<select value={shared.paymentPolicyId} onChange={(event) => updateAll({ paymentPolicyId: event.target.value })}><option value="">Choose...</option>{setup.paymentPolicies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           <label>Return policy<select value={shared.returnPolicyId} onChange={(event) => updateAll({ returnPolicyId: event.target.value })}><option value="">Choose...</option>{setup.returnPolicies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-          <label>Pricing goal<select value={shared.pricingStrategy} onChange={(event) => applyStrategy(event.target.value as PricingStrategy)}><option value="sell_faster">Sell faster</option><option value="balanced">Balanced</option><option value="maximize_value">Maximize value</option></select></label>
           <label className="account-toggle-row"><input type="checkbox" checked={shared.promoteListing} onChange={(event) => updateAll({ promoteListing: event.target.checked })} /> Promote listings selected for eBay</label>
           {shared.promoteListing && <label>Promotion rate<select value={shared.promotionAdRatePercent} onChange={(event) => updateAll({ promotionAdRatePercent: Number(event.target.value) })}>{Array.from({ length: 50 }, (_, index) => index + 1).map((rate) => <option value={rate} key={rate}>{rate}%</option>)}</select></label>}
         </section>

@@ -14,6 +14,7 @@ export function parseImageIntake(payload) {
     frontImage,
     backImage = null,
     frontDetailImages = [],
+    backDetailImages = [],
   } = payload ?? {};
 
   if (typeof frontImage !== "string" || !supportedDataUrl.test(frontImage)) {
@@ -31,11 +32,11 @@ export function parseImageIntake(payload) {
     );
   }
 
-  if (!Array.isArray(frontDetailImages) || frontDetailImages.length > 4) {
-    throw new ImageIntakeError("Up to four front-image detail crops are supported.");
-  }
-
-  const validatedDetailImages = frontDetailImages.map((detailImage) => {
+  const validateDetailImages = (detailImages, side) => {
+    if (!Array.isArray(detailImages) || detailImages.length > 4) {
+      throw new ImageIntakeError(`Up to four ${side}-image detail crops are supported.`);
+    }
+    return detailImages.map((detailImage) => {
     if (
       !detailImage ||
       typeof detailImage.label !== "string" ||
@@ -43,17 +44,25 @@ export function parseImageIntake(payload) {
       !supportedDataUrl.test(detailImage.image)
     ) {
       throw new ImageIntakeError(
-        "Each front detail crop must be a labeled JPG, PNG, WebP, or GIF image.",
+        `Each ${side} detail crop must be a labeled JPG, PNG, WebP, or GIF image.`,
       );
     }
 
     return { label: detailImage.label.slice(0, 40), image: detailImage.image };
-  });
+    });
+  };
+
+  const validatedFrontDetailImages = validateDetailImages(frontDetailImages, "front");
+  const validatedBackDetailImages = validateDetailImages(backDetailImages, "back");
+  if (backImage === null && validatedBackDetailImages.length > 0) {
+    throw new ImageIntakeError("Back detail crops require a back card image.");
+  }
 
   return {
     frontImage,
     backImage,
-    frontDetailImages: validatedDetailImages,
+    frontDetailImages: validatedFrontDetailImages,
+    backDetailImages: validatedBackDetailImages,
     backPhotoProvided: Boolean(backImage),
   };
 }

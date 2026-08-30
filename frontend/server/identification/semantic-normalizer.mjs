@@ -329,7 +329,7 @@ export function normalizeCardSemantics(extraction, currentYear = new Date().getF
       !hasVisibleRoleSupport(
         normalized.fields.year.value,
         visibleMarks,
-        new Set(["copyright_year", "product_title"]),
+        new Set(["issue_year", "copyright_year", "product_title"]),
       ));
   const anniversaryProduct = isPromotionalAnniversaryText(
     normalized.fields.product.value,

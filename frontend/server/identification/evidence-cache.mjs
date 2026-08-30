@@ -9,6 +9,10 @@ function intakeFingerprint(intake, namespace) {
     hash.update(detail.label);
     hash.update(detail.image);
   }
+  for (const detail of intake.backDetailImages ?? []) {
+    hash.update(detail.label);
+    hash.update(detail.image);
+  }
   return hash.digest("base64url");
 }
 

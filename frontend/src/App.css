@@ -2168,6 +2168,37 @@ main {
   outline: none;
 }
 
+.editor-choice-group {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.editor-choice-group button {
+  min-width: 0;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 0 8px;
+  color: var(--soft-ink);
+  background: var(--control-bg);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.collection-editor-grid .editor-choice-group button {
+  height: 42px;
+  border-radius: 10px;
+}
+
+.editor-choice-group button.active {
+  border-color: rgba(183, 238, 79, 0.58);
+  color: var(--ink);
+  background: rgba(183, 238, 79, 0.12);
+}
+
 .editor-actions {
   display: flex;
   align-items: center;

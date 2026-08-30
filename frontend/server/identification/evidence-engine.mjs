@@ -13,7 +13,7 @@ const evidencePrompt = `Extract visible evidence from trading-card photographs, 
 
 Rules:
 - Treat pixels as the primary source of truth. Transcribe useful words and digits exactly as printed and say where each observation appears.
-- Before assigning semantic fields, list literal visibleMarks and classify each mark by its printed role. A commemorative or anniversary logo is not an issue year, product, set, insert, or card number.
+- Before assigning semantic fields, list literal visibleMarks and classify each mark by its printed role. Classify a clearly printed card year or season as issue_year, preserve a season such as 2024-25 in full, and keep it distinct from a copyright_year. A commemorative or anniversary logo is not an issue year, product, set, insert, or card number.
 - Record visualFeatures such as border color, foil pattern, frame layout, and reflective finish without naming a parallel unless the evidence supports that name.
 - Describe the dominant border/frame color, secondary accent color, and repeatable surface pattern separately. Use normalized color names such as red, blue, green, gold, silver, black, orange, purple, pink, aqua, teal, or rainbow.
 - Distinguish stable printed color from glare: a color covering symmetric borders or a repeated design is stronger evidence than a bright reflection in one area. Note uncertainty caused by sleeves, white balance, reflections, or viewing angle.
@@ -78,6 +78,19 @@ function createUserContent(intake) {
       image_url: intake.backImage,
       detail: "original",
     });
+    for (const detailImage of intake.backDetailImages) {
+      content.push(
+        {
+          type: "input_text",
+          text: `Enlarged ${detailImage.label} crop of the same card back. Carefully inspect it for the printed issue year, copyright date, product line, and card number.`,
+        },
+        {
+          type: "input_image",
+          image_url: detailImage.image,
+          detail: "original",
+        },
+      );
+    }
   }
 
   return content;

@@ -21,6 +21,7 @@ export const EbayListingDraftSchema = z.object({
   auctionStartPriceCents: z.number().int().min(1).max(100_000_000).default(99),
   auctionReservePriceCents: z.number().int().min(0).max(100_000_000).default(0),
   pricingStrategy: z.enum(["sell_faster", "balanced", "maximize_value"]).default("balanced"),
+  preserveCollectionValue: z.boolean().default(false),
   promoteListing: z.boolean().default(false),
   promotionAdRatePercent: z.number().min(1).max(100).default(2),
   promotion: z.object({
@@ -54,6 +55,10 @@ export const EbayListingDraftSchema = z.object({
     context.addIssue({ code: "custom", path: ["auctionReservePriceCents"], message: "The reserve price must be higher than the starting bid." });
   }
 });
+
+export function shouldSyncCollectionValue(draft) {
+  return draft?.preserveCollectionValue !== true;
+}
 
 const ebayDraftMetadataKeys = [
   "draftId", "collectionId", "status", "ebayOfferId", "ebayListingId", "updatedAt",

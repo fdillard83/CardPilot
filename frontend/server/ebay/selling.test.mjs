@@ -13,6 +13,7 @@ import {
   encryptSellerToken,
   inventoryConditionForCard,
   resolvedEbaySellingScopes,
+  shouldSyncCollectionValue,
 } from "./selling.mjs";
 
 test("seller refresh tokens are encrypted and authenticated", () => {
@@ -75,6 +76,10 @@ test("listing drafts require an editable title and positive price", () => {
   const promoted = EbayListingDraftSchema.parse({ ...base, promoteListing: true, promotionAdRatePercent: 3.5, pricingStrategy: "sell_faster" });
   assert.equal(promoted.promoteListing, true);
   assert.equal(promoted.promotionAdRatePercent, 3.5);
+  const preserved = EbayListingDraftSchema.parse({ ...base, preserveCollectionValue: true });
+  assert.equal(preserved.preserveCollectionValue, true);
+  assert.equal(shouldSyncCollectionValue(preserved), false);
+  assert.equal(shouldSyncCollectionValue(EbayListingDraftSchema.parse(base)), true);
   const promotionRecorded = EbayListingDraftSchema.parse({
     ...base,
     promotion: { status: "promoted", campaignId: "campaign-1", adId: "ad-1", adRatePercent: 3.5 },

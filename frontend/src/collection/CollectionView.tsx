@@ -3388,54 +3388,58 @@ export function CollectionView({
                         <label key={definition.key}>
                           <span>{definition.label}</span>
                           {definition.key === "category" ? (
-                            <select
-                              value={String(draft.category ?? "")}
-                              onChange={(event) =>
-                                setDraft({
-                                  ...draft,
-                                  category: event.target.value || null,
-                                  ...(event.target.value === "Pokémon"
-                                    ? {
-                                        player: null,
-                                        sport: null,
-                                        team: null,
-                                        rookieStatus: null,
-                                        serialNumber: null,
-                                        autograph: null,
-                                        memorabilia: null,
-                                        imageVariation: null,
-                                      }
-                                    : event.target.value === "Sports"
+                            <>
+                              <input
+                                list={`cardpilot-collection-category-options-${card.collectionId}`}
+                                value={String(draft.category ?? "")}
+                                onChange={(event) =>
+                                  setDraft({
+                                    ...draft,
+                                    category: event.target.value || null,
+                                    ...(event.target.value === "Pokémon"
                                       ? {
-                                          character: null,
-                                          language: null,
-                                          rarity: null,
-                                          raritySymbol: null,
-                                          finish: null,
-                                          promo: null,
+                                          player: null,
+                                          sport: null,
+                                          team: null,
+                                          rookieStatus: null,
+                                          serialNumber: null,
+                                          autograph: null,
+                                          memorabilia: null,
+                                          imageVariation: null,
                                         }
-                                      : {}),
-                                })
-                              }
-                            >
-                              <option value="">Unknown</option>
-                              <option value="Sports">Sports</option>
-                              <option value="Pokémon">Pokémon</option>
-                            </select>
+                                      : event.target.value === "Sports"
+                                        ? {
+                                            character: null,
+                                            language: null,
+                                            rarity: null,
+                                            raritySymbol: null,
+                                            finish: null,
+                                            promo: null,
+                                          }
+                                        : {}),
+                                  })
+                                }
+                                placeholder="Type Sports, Pokémon, or another category"
+                              />
+                              <datalist id={`cardpilot-collection-category-options-${card.collectionId}`}>
+                                <option value="Sports" />
+                                <option value="Pokémon" />
+                              </datalist>
+                            </>
                           ) : definition.kind === "boolean" ? (
-                            <select
-                              value={draft[definition.key] === null ? "unknown" : String(draft[definition.key])}
-                              onChange={(event) =>
-                                setDraft({
-                                  ...draft,
-                                  [definition.key]: event.target.value === "unknown" ? null : event.target.value === "true",
-                                })
-                              }
-                            >
-                              <option value="unknown">Unknown</option>
-                              <option value="true">Yes</option>
-                              <option value="false">No</option>
-                            </select>
+                            <div className="editor-choice-group" role="group" aria-label={definition.label}>
+                              {([null, true, false] as const).map((value) => (
+                                <button
+                                  type="button"
+                                  className={draft[definition.key] === value ? "active" : ""}
+                                  aria-pressed={draft[definition.key] === value}
+                                  onClick={() => setDraft({ ...draft, [definition.key]: value })}
+                                  key={String(value)}
+                                >
+                                  {value === null ? "Unknown" : value ? "Yes" : "No"}
+                                </button>
+                              ))}
+                            </div>
                           ) : (
                             <input
                               value={String(draft[definition.key] ?? "")}

@@ -127,6 +127,19 @@ test("a visibly printed product season remains complete", () => {
   assert.equal(normalized.fields.year.value, "2024-25");
 });
 
+test("a visibly printed issue year remains available", () => {
+  const input = extraction({ year: field("2025", 0.95) });
+  input.visibleMarks.push({
+    text: "2025",
+    kind: "issue_year",
+    imageSide: "front",
+    location: "lower front",
+    confidence: 0.97,
+  });
+  const normalized = normalizeCardSemantics(input, 2026);
+  assert.equal(normalized.fields.year.value, "2025");
+});
+
 test("a stray single letter cannot become a card number", () => {
   const normalized = normalizeCardSemantics(
     extraction({ cardNumber: field("P", 0.84) }),

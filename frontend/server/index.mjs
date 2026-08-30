@@ -33,6 +33,7 @@ import {
   encryptSellerToken,
   inventoryConditionForCard,
   resolvedEbaySellingScopes,
+  shouldSyncCollectionValue,
 } from "./ebay/selling.mjs";
 import { CatalogCandidateGenerator, RemoteCatalogCandidateGenerator } from "./identification/candidate-generator.mjs";
 import { OpenAIEvidenceEngine } from "./identification/evidence-engine.mjs";
@@ -603,7 +604,9 @@ async function runAutopilotRepricing(now = Date.now()) {
             outcomes: [],
           }),
         }, ebaySellEnvironment);
-        await syncCollectionValueToListing(userId, card, nextPriceCents, draft.currency);
+        if (shouldSyncCollectionValue(draft)) {
+          await syncCollectionValueToListing(userId, card, nextPriceCents, draft.currency);
+        }
         results.push({ userId, collectionId: card.collectionId, previousPriceCents: draft.priceCents, priceCents: nextPriceCents });
       }
     } catch (error) {
@@ -1168,11 +1171,14 @@ app.get("/api/collection/:collectionId/ebay-draft", async (request, response) =>
   if (!card) return response.status(404).json({ error: "That saved card was not found." });
   const saved = await cloudServices.ebaySelling.draft(request.cardPilotUser.id, card.collectionId);
   const preferences = await cloudServices.preferences.get(request.cardPilotUser.id);
+  const includeValuation = request.query.includeValuation !== "false";
   let saleStrategyOptions = null;
-  try {
-    saleStrategyOptions = (await valuationRecommendations.snapshot(card)).saleStrategyOptions;
-  } catch {
-    // The confirmed value remains available when live pricing providers degrade.
+  if (includeValuation) {
+    try {
+      saleStrategyOptions = (await valuationRecommendations.snapshot(card)).saleStrategyOptions;
+    } catch {
+      // The confirmed value remains available when live pricing providers degrade.
+    }
   }
   let generatedDraft = null;
   if (!saved) {
@@ -1478,8 +1484,9 @@ async function reconcileActiveEbayPrices(userId, cards, drafts, activeListingsBy
         ));
       }
       const valuation = card.confirmedValuation;
-      if (valuation?.amountCents !== livePriceCents || valuation?.currency !== currency ||
-        valuation?.method !== "active_listing" || valuation?.userAdjusted) {
+      if (shouldSyncCollectionValue(draft) &&
+        (valuation?.amountCents !== livePriceCents || valuation?.currency !== currency ||
+        valuation?.method !== "active_listing" || valuation?.userAdjusted)) {
         const updated = await syncCollectionValueToListing(userId, card, livePriceCents, currency);
         if (updated) updatedCards.set(card.collectionId, updated);
       }
@@ -1595,7 +1602,9 @@ async function publishEbayListing(userId, collectionId) {
     const result = await cloudServices.ebaySelling.markPublished(userId, card.collectionId, {
       offerId, listingId: published.listingId,
     });
-    await syncCollectionValueToListing(userId, card, draft.listingFormat === "AUCTION" ? draft.auctionStartPriceCents : draft.priceCents, draft.currency);
+    if (shouldSyncCollectionValue(draft)) {
+      await syncCollectionValueToListing(userId, card, draft.listingFormat === "AUCTION" ? draft.auctionStartPriceCents : draft.priceCents, draft.currency);
+    }
     if (!draft.promoteListing) return result;
     try {
       const promotion = await promoteEbayListing(token, published.listingId, card.collectionId, draft.promotionAdRatePercent);
@@ -2147,7 +2156,9 @@ app.post("/api/ebay/listings/apply-price-positioning", async (request, response)
             outcomes: [],
           }),
         }, ebaySellEnvironment);
-        await syncCollectionValueToListing(userId, card, exactTargetItemPriceCents, saved.currency);
+        if (shouldSyncCollectionValue(saved)) {
+          await syncCollectionValueToListing(userId, card, exactTargetItemPriceCents, saved.currency);
+        }
         results.push({ ok: true, collectionId: card.collectionId, previousPriceCents: saved.priceCents, priceCents: exactTargetItemPriceCents, shippingCostCents: nextShippingCostCents });
       } catch (error) {
         results.push({ ok: false, collectionId: requested.collectionId, error: error.message ?? "The price could not be changed." });
@@ -2335,7 +2346,9 @@ app.post("/api/collection/:collectionId/ebay-revise", async (request, response) 
     if (shippingOnly) {
       await cloudServices.ebaySelling.saveDraft(userId, card.collectionId, draft, ebaySellEnvironment);
     }
-    if (!shippingOnly) await syncCollectionValueToListing(userId, card, draft.listingFormat === "AUCTION" ? draft.auctionStartPriceCents : draft.priceCents, draft.currency);
+    if (!shippingOnly && shouldSyncCollectionValue(draft)) {
+      await syncCollectionValueToListing(userId, card, draft.listingFormat === "AUCTION" ? draft.auctionStartPriceCents : draft.priceCents, draft.currency);
+    }
     response.json({ draft: await cloudServices.ebaySelling.draft(userId, card.collectionId) });
   } catch (error) {
     response.status(error.status ?? 502).json({ error: error.message ?? "eBay could not revise this listing." });

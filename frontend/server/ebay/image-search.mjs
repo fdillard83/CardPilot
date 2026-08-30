@@ -157,6 +157,14 @@ function suggestedParallelFromTitle(title) {
 
 function suggestedYearFromTitle(title) {
   if (typeof title !== "string") return null;
+  const season = title.match(/\b((?:19|20)\d{2})\s*[-/]\s*((?:19|20)?\d{2})\b/);
+  if (season) {
+    const start = Number.parseInt(season[1], 10);
+    const end = season[2].length === 2
+      ? Number.parseInt(`${String(start).slice(0, 2)}${season[2]}`, 10)
+      : Number.parseInt(season[2], 10);
+    if (end === start + 1) return `${start}-${String(end).slice(-2)}`;
+  }
   return title.match(/\b(?:19|20)\d{2}\b/)?.[0] ?? null;
 }
 
@@ -172,6 +180,20 @@ function titleHasIdentity(title, identity) {
   return identityWords.length > 0 && identityWords.every((word) => titleWords.has(word));
 }
 
+function titleHasCardFingerprint(title, fields) {
+  const expectedCardNumber = normalizedIdentityWords(fields?.cardNumber).join("");
+  const listedCardNumber = normalizedIdentityWords(suggestedCardNumberFromTitle(title)).join("");
+  const compactTitle = typeof title === "string"
+    ? title.toLowerCase().replace(/[^a-z0-9]+/g, "")
+    : "";
+  const cardNumberMatches =
+    expectedCardNumber.length >= 3 &&
+    (expectedCardNumber === listedCardNumber || compactTitle.includes(expectedCardNumber));
+  if (!cardNumberMatches) return false;
+  const productIdentity = fields?.product ?? fields?.setOrInsert;
+  return typeof productIdentity === "string" && titleHasIdentity(title, productIdentity);
+}
+
 export function deriveVisualYearVerification(fields, candidates) {
   const identity = fields?.player ?? fields?.character;
   if (!identity || !Array.isArray(candidates)) return null;
@@ -183,19 +205,25 @@ export function deriveVisualYearVerification(fields, candidates) {
     const structureScore = Number.isFinite(match?.structureScore)
       ? match.structureScore
       : match?.score;
+    const strongVisualMatch =
+      candidate.visualMatchStatus === "matched" &&
+      Number.isFinite(match?.score) &&
+      match.score >= 0.7 &&
+      structureScore >= 0.52;
+    const exactListingFingerprint = titleHasCardFingerprint(candidate.title, fields);
     if (
-      candidate.visualMatchStatus !== "matched" ||
-      !Number.isFinite(match?.score) ||
-      match.score < 0.7 ||
-      structureScore < 0.52 ||
+      (!strongVisualMatch && !exactListingFingerprint) ||
       !titleHasIdentity(candidate.title, identity) ||
       (rookieRequired && !/\b(?:rc|rookie)\b/i.test(candidate.title))
     ) continue;
     const year = suggestedYearFromTitle(candidate.title);
     if (!year) continue;
-    const claim = claims.get(year) ?? { year, strength: 0, candidates: [] };
-    claim.strength += match.score + structureScore * 0.25;
+    const claim = claims.get(year) ?? { year, strength: 0, candidates: [], visualScores: [] };
+    claim.strength += strongVisualMatch
+      ? match.score + structureScore * 0.25
+      : 0.82;
     claim.candidates.push(candidate);
+    if (strongVisualMatch) claim.visualScores.push(match.score);
     claims.set(year, claim);
   }
 
@@ -204,13 +232,12 @@ export function deriveVisualYearVerification(fields, candidates) {
   const runnerUp = ranked[1];
   if (!best || best.candidates.length < 2) return null;
   if (runnerUp && best.strength - runnerUp.strength < 0.22) return null;
-  const averageVisualScore = best.candidates.reduce(
-    (sum, candidate) => sum + candidate.visualMatch.score,
-    0,
-  ) / best.candidates.length;
+  const averageVisualScore = best.visualScores.length
+    ? best.visualScores.reduce((sum, score) => sum + score, 0) / best.visualScores.length
+    : 0;
   const confidence = Math.min(
     0.94,
-    0.7 + Math.min(0.12, best.candidates.length * 0.04) + Math.max(0, averageVisualScore - 0.7) * 0.35,
+    0.68 + Math.min(0.12, best.candidates.length * 0.04) + Math.max(0, averageVisualScore - 0.7) * 0.35,
   );
   return {
     year: best.year,
