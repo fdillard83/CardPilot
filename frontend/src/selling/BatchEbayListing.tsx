@@ -132,7 +132,26 @@ export function BatchEbayListing({
   );
 
   const updateRowAction = (collectionId: string, action: BatchAction) => setRows((current) =>
-    current.map((row) => row.card.collectionId === collectionId ? { ...row, action } : row),
+    current.map((row) => {
+      if (row.card.collectionId !== collectionId || row.state === "published") return row;
+      return {
+        ...row,
+        action,
+        state: row.draft ? "ready" : row.state,
+        error: row.draft ? null : row.error,
+      };
+    }),
+  );
+
+  const updateAllActions = (action: BatchAction) => setRows((current) =>
+    current.map((row) => row.state === "published"
+      ? row
+      : {
+          ...row,
+          action,
+          state: row.draft ? "ready" : row.state,
+          error: row.draft ? null : row.error,
+        }),
   );
 
   const updatePriceInput = (collectionId: string, value: string) => setRows((current) =>
@@ -154,6 +173,9 @@ export function BatchEbayListing({
   );
 
   const shared = rows.find((row) => row.draft)?.draft ?? null;
+  const selectableRows = rows.filter((row) => row.state !== "published");
+  const allUseAction = (action: BatchAction) =>
+    selectableRows.length > 0 && selectableRows.every((row) => row.action === action);
   const applyFulfillment = (fulfillmentPolicyId: string) =>
     updateAll({ fulfillmentPolicyId });
 
@@ -244,9 +266,9 @@ export function BatchEbayListing({
           {shared.promoteListing && <label>Promotion rate<select value={shared.promotionAdRatePercent} onChange={(event) => updateAll({ promotionAdRatePercent: Number(event.target.value) })}>{Array.from({ length: 50 }, (_, index) => index + 1).map((rate) => <option value={rate} key={rate}>{rate}%</option>)}</select></label>}
         </section>
         <div className="batch-ebay-selection">
-          <button type="button" disabled={busy} onClick={() => setRows((current) => current.map((row) => row.state === "published" ? row : { ...row, action: "publish" }))}>List all</button>
-          <button type="button" disabled={busy} onClick={() => setRows((current) => current.map((row) => row.state === "published" ? row : { ...row, action: "save_draft" }))}>Save all as drafts</button>
-          <button type="button" disabled={busy} onClick={() => setRows((current) => current.map((row) => row.state === "published" ? row : { ...row, action: "skip" }))}>Do nothing for all</button>
+          <button className={allUseAction("publish") ? "active" : ""} type="button" aria-pressed={allUseAction("publish")} disabled={busy} onClick={() => updateAllActions("publish")}>List all</button>
+          <button className={allUseAction("save_draft") ? "active" : ""} type="button" aria-pressed={allUseAction("save_draft")} disabled={busy} onClick={() => updateAllActions("save_draft")}>Save all as drafts</button>
+          <button className={allUseAction("skip") ? "active" : ""} type="button" aria-pressed={allUseAction("skip")} disabled={busy} onClick={() => updateAllActions("skip")}>Do nothing for all</button>
           <strong>{publishRows.length} to list · {draftRows.length} to save · {rows.filter((row) => row.action === "skip").length} unchanged</strong>
         </div>
         <div className="batch-ebay-grid">{rows.map((row) => <article className={row.action === "skip" ? "" : row.action === "save_draft" ? "save-draft" : "selected"} key={row.card.collectionId}>

@@ -103,6 +103,28 @@
 .batch-ebay-rules label, .batch-ebay-grid article > label { display: grid; gap: 6px; color: var(--soft-ink); font-size: 11px; font-weight: 750; }
 .batch-ebay-rules select, .batch-ebay-grid input, .batch-ebay-grid select { width: 100%; }
 .batch-ebay-selection { margin: 16px 0 10px; }
+.batch-ebay-selection button {
+  min-height: 40px;
+  border: 1px solid rgba(183, 238, 79, 0.5);
+  border-radius: 999px;
+  padding: 0 16px;
+  color: var(--lime);
+  background: var(--control-bg);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
+}
+.batch-ebay-selection button:hover:not(:disabled) {
+  border-color: var(--lime);
+  background: rgba(183, 255, 60, 0.08);
+}
+.batch-ebay-selection button.active {
+  border-color: var(--lime);
+  color: var(--on-accent);
+  background: var(--lime);
+}
+.batch-ebay-selection button:disabled { cursor: not-allowed; opacity: .55; }
 .batch-ebay-selection strong { margin-left: auto; color: var(--lime); }
 .batch-ebay-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; max-height: 50vh; overflow-y: auto; padding-right: 4px; }
 .batch-ebay-grid article { display: grid; gap: 10px; min-width: 0; padding: 13px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); opacity: .68; }
