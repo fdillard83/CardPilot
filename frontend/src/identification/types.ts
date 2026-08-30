@@ -299,6 +299,16 @@ export type EbayImageSearchResult = {
     supportingItemIds: string[];
     averageVisualScore: number;
   } | null;
+  listingTitleConsensus?: ListingTitleConsensus | null;
+};
+
+export type ListingTitleConsensus = {
+  title: string;
+  confidence: "medium" | "high";
+  supportingItemIds: string[];
+  terms: string[];
+  averageVisualScore: number;
+  generatedAt: string;
 };
 
 export type EbayItemDetails = {
@@ -700,6 +710,7 @@ export type SavedCollectionCard = {
     title: string;
     itemWebUrl: string | null;
   } | null;
+  listingTitleConsensus?: ListingTitleConsensus | null;
   pokemonCatalogReference: {
     cardId: string;
     label: string;

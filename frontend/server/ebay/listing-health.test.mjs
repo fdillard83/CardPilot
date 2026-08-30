@@ -30,6 +30,15 @@ test("optimized titles prioritize searchable identity without duplicate brands",
   assert.doesNotMatch(title, /Topps Topps/i);
 });
 
+test("optimized titles reuse saved visual-consensus terms", () => {
+  const title = optimizedListingTitle({
+    ...card,
+    listingTitleConsensus: { terms: ["Logofractor"] },
+  });
+  assert.match(title, /Logofractor/);
+  assert.equal(title.length <= 80, true);
+});
+
 test("optimized details correct mapped aspects and include an available back image", () => {
   const optimized = optimizedListingDetails(card, {
     title: "Fernando Tatis Jr. Topps Wrecking Crew",

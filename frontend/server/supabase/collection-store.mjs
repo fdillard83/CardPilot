@@ -119,6 +119,7 @@ export class SupabaseCollectionRepository {
         overallConfidence: validated.overallConfidence,
         decision: validated.decision,
         ebayReference: validated.ebayReference,
+        listingTitleConsensus: validated.listingTitleConsensus,
         pokemonCatalogReference: validated.pokemonCatalogReference,
         grading: validated.grading,
         valuationProfile:
@@ -185,6 +186,10 @@ export class SupabaseCollectionRepository {
         validated.ebayReference === undefined
           ? record.ebayReference
           : validated.ebayReference,
+      listingTitleConsensus:
+        validated.listingTitleConsensus === undefined
+          ? record.listingTitleConsensus ?? null
+          : validated.listingTitleConsensus,
       pokemonCatalogReference:
         validated.pokemonCatalogReference === undefined
           ? record.pokemonCatalogReference ?? null

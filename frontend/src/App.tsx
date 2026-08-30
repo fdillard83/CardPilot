@@ -1055,6 +1055,7 @@ function App() {
           total: candidates.length,
           candidates,
           yearVerification: existing?.yearVerification ?? null,
+          listingTitleConsensus: existing?.listingTitleConsensus ?? null,
         };
       });
     } catch (caughtError) {
@@ -1101,6 +1102,7 @@ function App() {
           total: candidates.length,
           candidates,
           yearVerification: payload.yearVerification ?? existing?.yearVerification ?? null,
+          listingTitleConsensus: payload.listingTitleConsensus ?? existing?.listingTitleConsensus ?? null,
         };
       });
     } catch {
@@ -1578,6 +1580,7 @@ function App() {
         : null;
       let requestBody: object = {
         fields,
+        listingTitleConsensus: ebaySearch?.listingTitleConsensus ?? null,
         ...(ebayCandidateId ? { ebayReference } : {}),
         ...(pokemonCatalogCandidateId ? { pokemonCatalogReference } : {}),
       };
@@ -1608,6 +1611,7 @@ function App() {
           frontImage: preparedImages.frontImage,
           backImage: preparedImages.backImage,
           ebayReference,
+          listingTitleConsensus: ebaySearch?.listingTitleConsensus ?? null,
           pokemonCatalogReference,
         };
       }

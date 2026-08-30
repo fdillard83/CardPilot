@@ -1,4 +1,5 @@
 import { mappedEbayAspects } from "./listing-readiness.mjs";
+import { composeListingTitle } from "./title-consensus.mjs";
 
 function text(value) {
   return typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
@@ -8,71 +9,8 @@ function normalized(value) {
   return text(value).toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function distinctPhrases(values) {
-  const phrases = [];
-  for (const raw of values) {
-    const value = text(raw);
-    const key = normalized(value);
-    if (!key) continue;
-    if (phrases.some((existing) => normalized(existing) === key)) continue;
-    phrases.push(value);
-  }
-  return phrases;
-}
-
-function productPhrase(fields) {
-  const manufacturer = text(fields.manufacturer ?? fields.brand);
-  const product = text(fields.product);
-  if (!product) return manufacturer;
-  if (!manufacturer || normalized(product).includes(normalized(manufacturer))) return product;
-  return `${manufacturer} ${product}`;
-}
-
-function addWithinLimit(parts, phrase, limit = 80) {
-  if (!phrase) return;
-  const candidate = [...parts, phrase].join(" ");
-  if (candidate.length <= limit) parts.push(phrase);
-}
-
 export function optimizedListingTitle(card) {
-  const fields = card?.fields ?? {};
-  const pokemon = Boolean(text(fields.character));
-  const identity = text(fields.player ?? fields.character) || text(card?.title);
-  const serial = text(fields.serialNumber);
-  const set = text(fields.setOrInsert);
-  const product = productPhrase(fields);
-  const setPhrase = set && !normalized(product).includes(normalized(set)) ? set : "";
-  const candidates = pokemon
-    ? [
-        fields.year,
-        identity,
-        product,
-        setPhrase,
-        fields.cardNumber ? `#${text(fields.cardNumber)}` : "",
-        fields.parallel ?? fields.finish,
-        fields.rarity,
-        fields.promo ? "Promo" : "",
-        fields.language && !/^english$/i.test(text(fields.language)) ? fields.language : "",
-      ]
-    : [
-        fields.year,
-        product,
-        setPhrase,
-        identity,
-        fields.cardNumber ? `#${text(fields.cardNumber)}` : "",
-        fields.parallel,
-        serial,
-        fields.rookieStatus ? "Rookie RC" : "",
-        fields.autograph ? "Auto" : "",
-        fields.memorabilia ? "Relic" : "",
-        card?.grading?.isGraded
-          ? `${text(card.grading.company) || "Graded"} ${text(card.grading.grade)}`.trim()
-          : "",
-      ];
-  const parts = [];
-  for (const phrase of distinctPhrases(candidates)) addWithinLimit(parts, phrase);
-  if (!parts.length) return text(card?.title).slice(0, 80);
-  return parts.join(" ");
+  return composeListingTitle(card, card?.listingTitleConsensus?.terms ?? []);
 }
 
 function equalValues(left, right) {

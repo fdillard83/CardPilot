@@ -28,6 +28,17 @@ const EbayReferenceSchema = z
   })
   .strict();
 
+export const ListingTitleConsensusSchema = z
+  .object({
+    title: z.string().trim().min(1).max(80),
+    confidence: z.enum(["medium", "high"]),
+    supportingItemIds: z.array(z.string().min(1).max(200)).max(12),
+    terms: z.array(z.string().trim().min(1).max(60)).max(4),
+    averageVisualScore: z.number().min(0).max(1),
+    generatedAt: z.string().datetime(),
+  })
+  .strict();
+
 const PokemonCatalogReferenceSchema = z
   .object({
     cardId: z.string().min(1).max(200),
@@ -106,6 +117,7 @@ export const CollectionCreateSchema = z
     frontImage: imageDataUrl,
     backImage: imageDataUrl.nullable().default(null),
     ebayReference: EbayReferenceSchema.nullable().default(null),
+    listingTitleConsensus: ListingTitleConsensusSchema.nullable().default(null),
     pokemonCatalogReference: PokemonCatalogReferenceSchema.nullable().default(null),
     grading: GradingProfileSchema.default(rawGradingProfile),
     valuationProfile: ValuationProfileSchema.optional(),
@@ -118,6 +130,7 @@ export const CollectionUpdateSchema = z
     grading: GradingProfileSchema.optional(),
     valuationProfile: ValuationProfileSchema.optional(),
     ebayReference: EbayReferenceSchema.nullable().optional(),
+    listingTitleConsensus: ListingTitleConsensusSchema.nullable().optional(),
     pokemonCatalogReference: PokemonCatalogReferenceSchema.nullable().optional(),
   })
   .strict();
@@ -196,6 +209,7 @@ export function publicRecord(record) {
     overallConfidence: record.overallConfidence,
     decision: record.decision,
     ebayReference: record.ebayReference ?? null,
+    listingTitleConsensus: record.listingTitleConsensus ?? null,
     pokemonCatalogReference: record.pokemonCatalogReference ?? null,
     grading: gradingFromRecord(record),
     valuationProfile: valuationProfileFromRecord(record),
@@ -263,6 +277,7 @@ export class CollectionStore {
           overallConfidence: validated.overallConfidence,
           decision: validated.decision,
           ebayReference: validated.ebayReference,
+          listingTitleConsensus: validated.listingTitleConsensus,
           pokemonCatalogReference: validated.pokemonCatalogReference,
           grading: validated.grading,
           valuationProfile:
@@ -318,6 +333,10 @@ export class CollectionStore {
           validated.ebayReference === undefined
             ? records[index].ebayReference
             : validated.ebayReference,
+        listingTitleConsensus:
+          validated.listingTitleConsensus === undefined
+            ? records[index].listingTitleConsensus ?? null
+            : validated.listingTitleConsensus,
         pokemonCatalogReference:
           validated.pokemonCatalogReference === undefined
             ? records[index].pokemonCatalogReference ?? null

@@ -368,8 +368,14 @@ export class VisualImageMatcher {
         return { ...candidate, visualMatchStatus: "unavailable" };
       }
     }));
+    const visualRanked = ranked.sort((left, right) => {
+      const leftMeasured = left.visualMatchStatus === "matched" ? 1 : 0;
+      const rightMeasured = right.visualMatchStatus === "matched" ? 1 : 0;
+      if (leftMeasured !== rightMeasured) return rightMeasured - leftMeasured;
+      return (right.visualMatch?.score ?? -1) - (left.visualMatch?.score ?? -1);
+    });
     return [
-      ...ranked,
+      ...visualRanked,
       ...candidates.slice(limit).map((candidate) => ({
         ...candidate,
         visualMatchStatus: "not_evaluated",

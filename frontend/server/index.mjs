@@ -81,6 +81,7 @@ import {
 import { assessAutopilot, shouldAutomaticallySaveValuation, shouldPrepareAutomaticEbayDraft } from "./autopilot/decision.mjs";
 import { MarketFeedbackSubmissionSchema } from "./supabase/market-feedback.mjs";
 import { listingHealth, optimizedListingDetails } from "./ebay/listing-health.mjs";
+import { buildVisualTitleConsensus, composeListingTitle } from "./ebay/title-consensus.mjs";
 import { removeCollectionCardSafely } from "./ebay/collection-removal.mjs";
 import { collectionSpreadsheetCsv } from "./collection-spreadsheet.mjs";
 import { UsdCurrencyConverter } from "./currency/usd-converter.mjs";
@@ -1010,12 +1011,6 @@ app.post("/api/ebay/selling/setup/production", async (request, response) => {
 
 function ebayDraftFromCard(card, defaults = {}, saleStrategyOptions = null) {
   const fields = card.fields;
-  const identifying = [fields.year, fields.player ?? fields.character, fields.manufacturer, fields.setOrInsert ?? fields.product,
-    fields.parallel, fields.cardNumber ? `#${fields.cardNumber}` : null,
-    fields.serialNumber, fields.autograph ? "Auto" : null, fields.memorabilia ? "Relic" : null,
-    fields.rookieStatus ? "Rookie RC" : null,
-    card.grading?.isGraded ? `${card.grading.company ?? "Graded"} ${card.grading.grade ?? ""}` : null]
-    .filter(Boolean).join(" ");
   const referencePriceCents = saleStrategyOptions?.balanced?.amountCents ?? card.confirmedValuation?.amountCents ?? 100;
   const pricingStrategy = defaults.sellFasterBelowCents !== null &&
     referencePriceCents <= defaults.sellFasterBelowCents
@@ -1038,7 +1033,7 @@ function ebayDraftFromCard(card, defaults = {}, saleStrategyOptions = null) {
     card.grading?.isGraded && `Grade: ${card.grading.company ?? ""} ${card.grading.grade ?? ""}`.trim(),
   ].filter(Boolean);
   return {
-    title: identifying.slice(0, 80) || card.title.slice(0, 80),
+    title: composeListingTitle(card, card.listingTitleConsensus?.terms ?? []),
     description: `${detailLines.join("\n")}\n\nYou will receive the exact card shown. Please review the photographs carefully for condition and included details.`,
     priceCents,
     currency: card.confirmedValuation?.currency ?? "USD",
@@ -3499,6 +3494,7 @@ app.post("/api/ebay/identity-search", async (request, response) => {
       });
     }
     const yearVerification = deriveVisualYearVerification(fields, candidates);
+    const listingTitleConsensus = buildVisualTitleConsensus(fields, candidates);
     response.json({
       marketplaceId: results[0].marketplaceId,
       total: candidates.length,
@@ -3506,6 +3502,7 @@ app.post("/api/ebay/identity-search", async (request, response) => {
       query: specificQuery,
       queriesUsed: queries,
       yearVerification,
+      listingTitleConsensus,
     });
   } catch (error) {
     if (error instanceof ZodError) return response.status(400).json({ error: "The identity-search card details are invalid." });
