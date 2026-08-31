@@ -286,6 +286,36 @@ test("a printed Pokémon rarity symbol can normalize a basic rarity", () => {
   assert.equal(normalized.fields.raritySymbol.value, "Diamond");
 });
 
+test("a visual description cannot become a named Pokémon parallel", () => {
+  const input = extraction({
+    category: field("Pokémon", 0.99),
+    character: field("Lillie''s Clefairy ex", 0.99),
+    parallel: field(
+      "Illustration Rare-style holo/foil treatment is visible, but no named parallel text is printed.",
+      0.86,
+    ),
+    finish: field("Holo", 0.86),
+  });
+  input.candidateSuggestions = [{
+    id: "candidate-1",
+    label: "Lillie''s Clefairy ex",
+    source: "provisional",
+    catalogRecordId: null,
+    imageUrl: null,
+    values: Object.fromEntries(Object.keys(input.fields).map((key) => [key, input.fields[key].value])),
+    matchConfidence: 0.8,
+    supportingFields: [],
+    conflictingFields: [],
+    basis: "Visual candidate",
+  }];
+
+  const normalized = normalizeCardSemantics(input, 2026);
+  assert.equal(normalized.fields.parallel.value, null);
+  assert.equal(normalized.fields.finish.value, "Holo");
+  assert.equal(normalized.candidateSuggestions[0].values.parallel, null);
+  assert.match(normalized.fields.parallel.missingEvidence.join(" "), /no specific named parallel/i);
+});
+
 test("sports cards keep category and sport as separate canonical fields", () => {
   const normalized = normalizeCardSemantics(
     extraction({

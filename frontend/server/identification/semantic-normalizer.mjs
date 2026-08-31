@@ -2,6 +2,8 @@ const ANNIVERSARY_PATTERN = /\b(?:\d{1,3}(?:st|nd|rd|th)?\s+)?(?:years?|yrs?)\s+
 const SEASON_PATTERN = /^(18|19|20)\d{2}(?:\s*[-/]\s*(?:(?:18|19|20)?\d{2}))?$/;
 const GENERIC_AUTOGRAPH_SET_PATTERN =
   /^(?:topps\s+)?(?:certified\s+)?autograph(?:ed)?(?:\s+card)?(?:\s+issue)?$/i;
+const PARALLEL_NARRATIVE_PATTERN =
+  /\bno\s+(?:named|specific|printed)\s+parallel\b|\b(?:parallel|holo|foil)\s+(?:style|treatment|appearance)\b.*\b(?:visible|printed|seen)\b|\b(?:is|appears?|looks?)\s+visible\b/i;
 const POKEMON_LANGUAGES = new Map([
   ["en", "English"],
   ["eng", "English"],
@@ -215,6 +217,10 @@ function normalizePokemonRarity(extraction) {
   if (resolvedSymbol) extraction.fields.raritySymbol.value = resolvedSymbol;
 }
 
+function isParallelNarrative(value) {
+  return typeof value === "string" && PARALLEL_NARRATIVE_PATTERN.test(value);
+}
+
 function hasVisibleRoleSupport(value, visibleMarks, allowedKinds) {
   if (typeof value !== "string") return false;
   const target = normalizedText(value);
@@ -301,6 +307,7 @@ function sanitizeCandidate(candidate, visibleMarks, currentYear) {
   if (isGenericAutographCertificationText(values.setOrInsert)) {
     values.setOrInsert = null;
   }
+  if (isParallelNarrative(values.parallel)) values.parallel = null;
   if (
     /pok(?:é|e)mon/i.test(values.category ?? "") ||
     values.character !== null
@@ -359,6 +366,7 @@ export function normalizeCardSemantics(extraction, currentYear = new Date().getF
   const invalidCardNumber =
     normalized.fields.cardNumber.value !== null &&
     !isPlausibleCardNumber(normalized.fields.cardNumber.value);
+  const narrativeParallel = isParallelNarrative(normalized.fields.parallel.value);
   const pokemonLanguage = pokemon
     ? supportedPokemonLanguage(normalized)
     : normalized.fields.language.value;
@@ -409,6 +417,16 @@ export function normalizeCardSemantics(extraction, currentYear = new Date().getF
       0.15,
     );
   }
+  if (narrativeParallel) {
+    clearSemanticField(normalized, "parallel");
+    addMissingEvidence(
+      normalized,
+      "parallel",
+      "A surface treatment was visible, but no specific named parallel was confirmed.",
+      "catalog",
+      0.08,
+    );
+  }
   if (pokemon && normalized.fields.language.value !== null) {
     if (pokemonLanguage) {
       normalized.fields.language.value = pokemonLanguage;
@@ -442,7 +460,8 @@ export function normalizeCardSemantics(extraction, currentYear = new Date().getF
     genericAutographSet ||
     unsupportedProduct ||
     unsupportedSet ||
-    invalidCardNumber
+    invalidCardNumber ||
+    narrativeParallel
   ) {
     const subject = pokemon
       ? normalized.fields.character.value

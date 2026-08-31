@@ -64,3 +64,39 @@ test("unsupported selection-only eBay seasons are removed before publishing", ()
   assert.deepEqual(result.aspects, {});
   assert.deepEqual(result.missingAspects, ["Season"]);
 });
+
+test("narrative Pokémon parallel descriptions never reach eBay", () => {
+  const pokemon = {
+    fields: {
+      category: "Pokémon",
+      character: "Lillie''s Clefairy ex",
+      parallel: "Illustration Rare-style holo/foil treatment is visible, but no named parallel text is printed.",
+      finish: "Holo",
+    },
+    grading: { isGraded: false },
+    images: { frontUrl: "/front", backUrl: null },
+  };
+  const parallelDefinitions = [
+    { name: "Parallel/Variety", required: false, multiValue: false, values: [], selectionOnly: false, maxLength: 65 },
+    { name: "Finish", required: false, multiValue: false, values: [], selectionOnly: false, maxLength: 65 },
+  ];
+  assert.deepEqual(mappedEbayAspects(pokemon, parallelDefinitions), {
+    "Parallel/Variety": ["Holo"],
+    Finish: ["Holo"],
+  });
+  assert.deepEqual(sanitizeEbayAspects({
+    "Parallel/Variety": [pokemon.fields.parallel],
+    Finish: ["Holo"],
+  }, parallelDefinitions), {
+    Finish: ["Holo"],
+  });
+});
+
+test("free-text eBay aspects respect taxonomy maximum lengths", () => {
+  const definitions = [
+    { name: "Custom detail", required: false, multiValue: false, values: [], selectionOnly: false, maxLength: 10 },
+  ];
+  assert.deepEqual(sanitizeEbayAspects({ "Custom detail": ["1234567890 extra"] }, definitions), {
+    "Custom detail": ["1234567890"],
+  });
+});

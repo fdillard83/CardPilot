@@ -28,6 +28,9 @@ export class EbayTaxonomyClient {
       recommended: aspect.aspectConstraint?.aspectUsage === "RECOMMENDED",
       multiValue: aspect.aspectConstraint?.itemToAspectCardinality === "MULTI",
       selectionOnly: aspect.aspectConstraint?.aspectMode === "SELECTION_ONLY",
+      maxLength: Number.isInteger(Number(aspect.aspectConstraint?.aspectMaxLength))
+        ? Number(aspect.aspectConstraint.aspectMaxLength)
+        : null,
       values: (aspect.aspectValues ?? []).map((value) => value.localizedValue).filter(Boolean),
     })).filter((aspect) => aspect.name);
     this.aspectCache.set(key, aspects);

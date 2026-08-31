@@ -11,12 +11,22 @@ function ebayManufacturedYear(value) {
   return text(value).match(/\b(?:18|19|20)\d{2}\b/)?.[0] ?? "";
 }
 
+function isParallelNarrative(value) {
+  const candidate = text(value);
+  return /\bno\s+(?:named|specific|printed)\s+parallel\b/i.test(candidate) ||
+    /\b(?:parallel|holo|foil)\s+(?:style|treatment|appearance)\b.*\b(?:visible|printed|seen)\b/i.test(candidate) ||
+    /\b(?:is|appears?|looks?)\s+visible\b/i.test(candidate);
+}
+
 export function sanitizeEbayAspects(aspects, definitions = []) {
   const definitionsByName = new Map(definitions.map((definition) => [definition.name, definition]));
   return Object.fromEntries(Object.entries(aspects ?? {}).flatMap(([name, rawValues]) => {
     const definition = definitionsByName.get(name);
     const aspectName = normalized(name);
     let values = Array.isArray(rawValues) ? rawValues.map(text).filter(Boolean) : [];
+    if (["parallellvariety", "parallelvariety"].includes(aspectName)) {
+      values = values.filter((value) => !isParallelNarrative(value));
+    }
     if (["yearmanufactured", "year"].includes(aspectName)) {
       values = values.map(ebayManufacturedYear).filter(Boolean);
     }
@@ -25,6 +35,12 @@ export function sanitizeEbayAspects(aspects, definitions = []) {
         definition.values.find((allowed) => normalized(allowed) === normalized(value)) ?? null,
       ).filter(Boolean);
     }
+    const maxLength = Number.isInteger(definition?.maxLength)
+      ? definition.maxLength
+      : ["parallellvariety", "parallelvariety"].includes(aspectName)
+        ? 65
+        : null;
+    if (maxLength) values = values.map((value) => value.slice(0, maxLength).trim()).filter(Boolean);
     return values.length ? [[name, definition?.multiValue ? values : [values[0]]]] : [];
   }));
 }
@@ -50,8 +66,8 @@ export function mappedEbayAspects(card, definitions = []) {
     year: ebayManufacturedYear(fields.year),
     season: fields.year,
     cardnumber: fields.cardNumber ?? fields.collectorNumber,
-    parallellvariety: fields.parallel ?? fields.finish,
-    parallelvariety: fields.parallel ?? fields.finish,
+    parallellvariety: isParallelNarrative(fields.parallel) ? fields.finish : fields.parallel ?? fields.finish,
+    parallelvariety: isParallelNarrative(fields.parallel) ? fields.finish : fields.parallel ?? fields.finish,
     manufacturer: fields.manufacturer,
     autographed: fields.autograph ? "Yes" : "No",
     features,
