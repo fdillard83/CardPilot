@@ -1,4 +1,5 @@
 import { EbayApiError } from "./oauth-client.mjs";
+import { isPokemonCard } from "../card-category.mjs";
 
 const EBAY_PRODUCTION_IMAGE_SEARCH_URL =
   "https://api.ebay.com/buy/browse/v1/item_summary/search_by_image";
@@ -6,6 +7,14 @@ const EBAY_PRODUCTION_KEYWORD_SEARCH_URL =
   "https://api.ebay.com/buy/browse/v1/item_summary/search";
 const EBAY_PRODUCTION_ITEM_URL =
   "https://api.ebay.com/buy/browse/v1/item";
+const EBAY_SPORTS_TRADING_CARDS_CATEGORY_ID = "212";
+const EBAY_CCG_INDIVIDUAL_CARDS_CATEGORY_ID = "183454";
+
+export function ebayTradingCardCategoryId(fields) {
+  return isPokemonCard(fields)
+    ? EBAY_CCG_INDIVIDUAL_CARDS_CATEGORY_ID
+    : EBAY_SPORTS_TRADING_CARDS_CATEGORY_ID;
+}
 
 async function readJson(response) {
   try {
@@ -357,7 +366,11 @@ export class EbayImageSearchClient {
     };
   }
 
-  async searchByKeywords({ query, limit = 50, categoryId = "212" }) {
+  async searchByKeywords({
+    query,
+    limit = 50,
+    categoryId = EBAY_SPORTS_TRADING_CARDS_CATEGORY_ID,
+  }) {
     if (typeof query !== "string" || !query.trim()) {
       throw new TypeError("An eBay search description is required.");
     }

@@ -9,6 +9,7 @@ import {
   isPokemonCard,
 } from "../card-category.mjs";
 import { isVisualMismatch } from "../identification/visual-image-matcher.mjs";
+import { ebayTradingCardCategoryId } from "../ebay/image-search.mjs";
 
 const activeMarketDisclaimer =
   "Active Buy It Now asking prices are not completed sales, appraisals, or guaranteed sale values. Shipping is included only when eBay provides it in search results. For the U.S. marketplace, non-USD amounts are converted to USD using the latest available daily ECB reference rate.";
@@ -923,7 +924,11 @@ export class ActiveMarketService {
     const hasFreshCache = Boolean(cached && cached.expiresAt > this.now());
     const marketRequest = hasFreshCache
       ? null
-      : this.ebayClient.searchByKeywords({ query, limit: 50 });
+      : this.ebayClient.searchByKeywords({
+          query,
+          limit: 50,
+          categoryId: ebayTradingCardCategoryId(fields),
+        });
     const resolvedIdentityConsensus = identityConsensusPromise
       ? await identityConsensusPromise
       : identityConsensus;
@@ -989,6 +994,7 @@ export class ActiveMarketService {
       const discovery = await this.ebayClient.searchByKeywords({
         query: discoveryQuery,
         limit: 50,
+        categoryId: ebayTradingCardCategoryId(fields),
       });
       const discoveryCandidates = this.currencyConverter
         ? await this.currencyConverter.ebayCandidates(discovery.candidates)

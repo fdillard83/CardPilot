@@ -154,8 +154,8 @@ test("Pokémon market searches retry without generic manufacturer and product wo
   const calls = [];
   const service = new ActiveMarketService({
     ebayClient: {
-      async searchByKeywords({ query }) {
-        calls.push(query);
+      async searchByKeywords({ query, categoryId }) {
+        calls.push({ query, categoryId });
         return {
           marketplaceId: "EBAY_US",
           candidates:
@@ -173,9 +173,67 @@ test("Pokémon market searches retry without generic manufacturer and product wo
 
   const snapshot = await service.snapshot(pokemonFields);
   assert.equal(calls.length, 2);
-  assert.equal(calls[1], "Pokemon Charmander 038 Promo");
+  assert.deepEqual(calls[0], {
+    query: buildActiveMarketQuery(pokemonFields),
+    categoryId: "183454",
+  });
+  assert.deepEqual(calls[1], {
+    query: "Pokemon Charmander 038 Promo",
+    categoryId: "183454",
+  });
   assert.equal(snapshot.exactMatchedCount, 3);
   assert.equal(snapshot.groups[0].medianAmountCents, 1000);
+});
+
+test("Electrode active-market searches use eBay''s CCG card category", async () => {
+  const electrodeFields = {
+    category: "Pokémon",
+    player: null,
+    character: "Electrode",
+    sport: null,
+    team: null,
+    year: "2023",
+    manufacturer: "Nintendo / Creatures / GAME FREAK",
+    product: "Scarlet & Violet 151",
+    brand: "Pokémon",
+    setOrInsert: "101/165",
+    cardNumber: "101/165",
+    language: "English",
+    rarity: "Rare",
+    raritySymbol: "Black Star",
+    finish: "Holofoil",
+    promo: null,
+    rookieStatus: null,
+    parallel: null,
+    serialNumber: null,
+    autograph: null,
+    memorabilia: null,
+    imageVariation: null,
+  };
+  const calls = [];
+  const service = new ActiveMarketService({
+    ebayClient: {
+      async searchByKeywords(input) {
+        calls.push(input);
+        return {
+          marketplaceId: "EBAY_US",
+          candidates: input.query === "Pokemon Electrode 101/165 Holofoil"
+            ? [
+                candidate({ id: "electrode-1", title: "Electrode 101/165 Rare 151 Pokemon Holo Near Mint", price: 0.99 }),
+                candidate({ id: "electrode-2", title: "Pokemon TCG Electrode 101/165 Scarlet Violet 151 Holo NM", price: 1.5 }),
+                candidate({ id: "electrode-3", title: "2023 Electrode 101/165 Pokemon 151 Holo Rare", price: 1.99 }),
+              ]
+            : [],
+        };
+      },
+    },
+  });
+
+  const snapshot = await service.snapshot(electrodeFields);
+  assert.ok(calls.length >= 2);
+  assert.equal(calls.every((call) => call.categoryId === "183454"), true);
+  assert.equal(snapshot.matchedCount, 3);
+  assert.equal(snapshot.groups[0].listings.length, 3);
 });
 
 test("active snapshots reject mismatches, separate grades, and trim outliers", () => {

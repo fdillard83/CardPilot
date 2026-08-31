@@ -2,12 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   deriveVisualYearVerification,
+  ebayTradingCardCategoryId,
   EbayImageSearchClient,
   suggestedCardNumberFromTitle,
   suggestedParallelFromTitle,
   suggestedSerialNumberFromTitle,
   suggestedYearFromTitle,
 } from "./image-search.mjs";
+
+test("eBay keyword searches select the card category by collection type", () => {
+  assert.equal(ebayTradingCardCategoryId({ category: "Sports", player: "Nolan Ryan" }), "212");
+  assert.equal(ebayTradingCardCategoryId({ category: "Pokémon", character: "Electrode" }), "183454");
+});
 
 function visualCandidate(id, title, score, structureScore = score) {
   return {

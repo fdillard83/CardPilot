@@ -9,6 +9,7 @@ import OpenAI from "openai";
 import { z, ZodError } from "zod";
 import {
   deriveVisualYearVerification,
+  ebayTradingCardCategoryId,
   EbayImageSearchClient,
 } from "./ebay/image-search.mjs";
 import { EbayApiError, EbayOAuthClient } from "./ebay/oauth-client.mjs";
@@ -3478,7 +3479,11 @@ app.post("/api/ebay/identity-search", async (request, response) => {
     ].filter(Boolean).join(" ");
     const queries = [...new Set([specificQuery, discoveryQuery])];
     const results = await Promise.all(
-      queries.map((query) => ebayImageSearch.searchByKeywords({ query, limit: 12 })),
+      queries.map((query) => ebayImageSearch.searchByKeywords({
+        query,
+        limit: 12,
+        categoryId: ebayTradingCardCategoryId(fields),
+      })),
     );
     const uniqueCandidates = new Map(
       results.flatMap((result) => result.candidates).map((candidate) => [candidate.itemId, candidate]),
