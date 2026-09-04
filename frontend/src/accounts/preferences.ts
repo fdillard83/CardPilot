@@ -24,6 +24,9 @@ export type AccountPreferences = {
   listingTransactionFixedFeeCents: number;
   listingMailingCostCents: number;
   estimatedBuyerSalesTaxPercent: number;
+  priceFloorCents: number | null;
+  preventValuationBelowFloor: boolean;
+  preventListingBelowFloor: boolean;
   autoValueEnabled: boolean;
   autoValueMaxCents: number | null;
   ebayConnectPromptDismissed: boolean;
@@ -61,6 +64,9 @@ export const defaultAccountPreferences: AccountPreferences = {
   listingTransactionFixedFeeCents: 30,
   listingMailingCostCents: 78,
   estimatedBuyerSalesTaxPercent: 7,
+  priceFloorCents: null,
+  preventValuationBelowFloor: false,
+  preventListingBelowFloor: false,
   autoValueEnabled: false,
   autoValueMaxCents: null,
   ebayConnectPromptDismissed: false,

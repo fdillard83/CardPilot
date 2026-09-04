@@ -405,6 +405,10 @@ export type ActiveMarketGroup = {
     lowAmountCents: number;
     highAmountCents: number;
   };
+  rangeSaleDates: {
+    low: string | null;
+    high: string | null;
+  };
   outlierCount: number;
   confidence: "low" | "medium" | "high";
   listings: ActiveMarketListing[];
@@ -649,6 +653,16 @@ export type ValuationRecommendationSnapshot = {
       completedSalesWeight: number;
       activeAmountCents: number;
       completedSalesAmountCents: number;
+      activeRange: {
+        lowAmountCents: number;
+        highAmountCents: number;
+      };
+      completedSalesRange: {
+        lowAmountCents: number;
+        highAmountCents: number;
+      };
+      completedSalesLowSoldAt: string | null;
+      completedSalesHighSoldAt: string | null;
       activeCount: number;
       completedSalesCount: number;
     } | null;

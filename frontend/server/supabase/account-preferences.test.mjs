@@ -28,6 +28,9 @@ test("automatic card values are off by default", () => {
     listingTransactionFixedFeeCents: 30,
     listingMailingCostCents: 78,
     estimatedBuyerSalesTaxPercent: 7,
+    priceFloorCents: null,
+    preventValuationBelowFloor: false,
+    preventListingBelowFloor: false,
     autoValueEnabled: false,
     autoValueMaxCents: null,
     ebayConnectPromptDismissed: false,
@@ -93,4 +96,22 @@ test("valuation strategy accepts the three supported goals", () => {
     }).success,
     false,
   );
+});
+
+test("valuation and listing floors can be enabled independently", () => {
+  for (const enabled of [
+    { preventValuationBelowFloor: true, preventListingBelowFloor: false },
+    { preventValuationBelowFloor: false, preventListingBelowFloor: true },
+    { preventValuationBelowFloor: true, preventListingBelowFloor: true },
+  ]) {
+    assert.equal(AccountPreferencesSchema.safeParse({
+      ...DEFAULT_ACCOUNT_PREFERENCES,
+      priceFloorCents: 500,
+      ...enabled,
+    }).success, true);
+  }
+  assert.equal(AccountPreferencesSchema.safeParse({
+    ...DEFAULT_ACCOUNT_PREFERENCES,
+    preventValuationBelowFloor: true,
+  }).success, false);
 });

@@ -65,6 +65,13 @@ export function AccountSettings({
   const [listingTransactionFixedFee, setListingTransactionFixedFee] = useState((preferences.listingTransactionFixedFeeCents / 100).toFixed(2));
   const [listingMailingCost, setListingMailingCost] = useState((preferences.listingMailingCostCents / 100).toFixed(2));
   const [estimatedBuyerSalesTaxPercent, setEstimatedBuyerSalesTaxPercent] = useState(String(preferences.estimatedBuyerSalesTaxPercent));
+  const [priceFloor, setPriceFloor] = useState(
+    preferences.priceFloorCents === null
+      ? ""
+      : (preferences.priceFloorCents / 100).toFixed(2),
+  );
+  const [preventValuationBelowFloor, setPreventValuationBelowFloor] = useState(preferences.preventValuationBelowFloor);
+  const [preventListingBelowFloor, setPreventListingBelowFloor] = useState(preferences.preventListingBelowFloor);
   const [autoValueEnabled, setAutoValueEnabled] = useState(
     preferences.autoValueEnabled,
   );
@@ -175,6 +182,7 @@ export function AccountSettings({
     const transactionFixedFeeDollars = Number(listingTransactionFixedFee);
     const mailingCostDollars = Number(listingMailingCost);
     const buyerSalesTaxPercent = Number(estimatedBuyerSalesTaxPercent);
+    const priceFloorDollars = priceFloor.trim() ? Number(priceFloor) : null;
     const fasterBelowDollars = sellFasterBelow.trim() ? Number(sellFasterBelow) : null;
     const adRate = Number(promotionAdRate);
     if (autoValueEnabled && (!Number.isFinite(dollars) || dollars <= 0)) {
@@ -183,6 +191,20 @@ export function AccountSettings({
     }
     if (fasterBelowDollars !== null && (!Number.isFinite(fasterBelowDollars) || fasterBelowDollars <= 0)) {
       setPreferenceError("Enter a valid low-value quick-sale limit or leave it blank.");
+      return;
+    }
+    if (
+      priceFloorDollars !== null &&
+      (!Number.isFinite(priceFloorDollars) || priceFloorDollars <= 0)
+    ) {
+      setPreferenceError("Enter a valid account price floor or leave it blank.");
+      return;
+    }
+    if (
+      (preventValuationBelowFloor || preventListingBelowFloor) &&
+      priceFloorDollars === null
+    ) {
+      setPreferenceError("Enter a price floor before enabling a floor safeguard.");
       return;
     }
     if (promoteListings && (!Number.isInteger(adRate) || adRate < 1 || adRate > 50)) {
@@ -258,6 +280,9 @@ export function AccountSettings({
           listingTransactionFixedFeeCents: Math.round(transactionFixedFeeDollars * 100),
           listingMailingCostCents: Math.round(mailingCostDollars * 100),
           estimatedBuyerSalesTaxPercent: buyerSalesTaxPercent,
+          priceFloorCents: priceFloorDollars === null ? null : Math.round(priceFloorDollars * 100),
+          preventValuationBelowFloor,
+          preventListingBelowFloor,
           autoValueEnabled,
           autoValueMaxCents: autoValueEnabled ? Math.round(dollars * 100) : null,
           ebayConnectPromptDismissed: preferences.ebayConnectPromptDismissed,
@@ -652,6 +677,41 @@ export function AccountSettings({
                 you can revise any automatically saved value later.
               </p>
               <div className="account-settings-form">
+                <div className="account-rule-heading">
+                  <strong>Account price floor</strong>
+                  <small>Set one threshold, then choose independently where CardPilot must enforce it.</small>
+                </div>
+                <label>
+                  Price floor
+                  <div className="account-inline-unit">
+                    <span>$</span>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      inputMode="decimal"
+                      placeholder="5.00"
+                      value={priceFloor}
+                      onChange={(event) => setPriceFloor(event.target.value)}
+                    />
+                  </div>
+                </label>
+                <label className="account-toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={preventValuationBelowFloor}
+                    onChange={(event) => setPreventValuationBelowFloor(event.target.checked)}
+                  />
+                  Never value a card below this floor
+                </label>
+                <label className="account-toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={preventListingBelowFloor}
+                    onChange={(event) => setPreventListingBelowFloor(event.target.checked)}
+                  />
+                  Never list a card below this floor
+                </label>
                 <div className="account-rule-heading">
                   <strong>Do not sell at a loss</strong>
                   <small>Optional safety check for new listings, live price changes, and automatic repricing.</small>

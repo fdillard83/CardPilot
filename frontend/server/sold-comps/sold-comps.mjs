@@ -38,6 +38,19 @@ function quantile(sorted, percentile) {
   );
 }
 
+function closestSaleDate(sales, targetAmountCents) {
+  const sale = [...sales].sort((left, right) => {
+    const distanceDifference =
+      Math.abs(left.salePriceCents - targetAmountCents) -
+      Math.abs(right.salePriceCents - targetAmountCents);
+    if (distanceDifference !== 0) return distanceDifference;
+    return (right.soldAt ?? right.saleDate ?? "").localeCompare(
+      left.soldAt ?? left.saleDate ?? "",
+    );
+  })[0];
+  return sale?.soldAt ?? sale?.saleDate ?? null;
+}
+
 function statistics(sales) {
   const sorted = [...sales].sort(
     (left, right) => left.salePriceCents - right.salePriceCents,
@@ -55,12 +68,17 @@ function statistics(sales) {
     );
   }
   const prices = included.map((sale) => sale.salePriceCents);
+  const typicalRange = {
+    lowAmountCents: quantile(prices, included.length >= 4 ? 0.25 : 0),
+    highAmountCents: quantile(prices, included.length >= 4 ? 0.75 : 1),
+  };
   return {
     included,
     medianSalePriceCents: quantile(prices, 0.5),
-    typicalRange: {
-      lowAmountCents: quantile(prices, included.length >= 4 ? 0.25 : 0),
-      highAmountCents: quantile(prices, included.length >= 4 ? 0.75 : 1),
+    typicalRange,
+    rangeSaleDates: {
+      low: closestSaleDate(included, typicalRange.lowAmountCents),
+      high: closestSaleDate(included, typicalRange.highAmountCents),
     },
     outlierCount: sorted.length - included.length,
     confidence:
@@ -237,6 +255,7 @@ export function buildSoldCompsSnapshot({
         saleCount: summary.included.length,
         medianSalePriceCents: summary.medianSalePriceCents,
         typicalRange: summary.typicalRange,
+        rangeSaleDates: summary.rangeSaleDates,
         outlierCount: summary.outlierCount,
         confidence: matchTier === "broader" ? "low" : summary.confidence,
         sales: summary.included

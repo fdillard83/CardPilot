@@ -156,6 +156,29 @@ test("a card listing floor overrides a lower Sell Faster amount", () => {
   assert.match(options.sell_faster.rationale, /below your floor limit/i);
 });
 
+test("an account valuation floor protects every valuation strategy", () => {
+  const snapshot = buildValuationRecommendation({
+    grading: raw,
+    minimumValuationCents: 500,
+    activeSnapshot: activeSnapshot([{
+      matchTier: "exact",
+      classification: "raw",
+      label: "Raw / ungraded",
+      currency: "USD",
+      listingCount: 3,
+      medianAmountCents: 225,
+      typicalRange: { lowAmountCents: 195, highAmountCents: 295 },
+      confidence: "medium",
+      listings: [{ totalPriceCents: 195 }],
+    }]),
+  });
+
+  assert.equal(snapshot.recommendation.amountCents, 500);
+  assert.equal(snapshot.saleStrategyOptions.sell_faster.amountCents, 500);
+  assert.equal(snapshot.saleStrategyOptions.balanced.amountCents, 500);
+  assert.equal(snapshot.saleStrategyOptions.maximize_value.amountCents, 525);
+});
+
 test("exact sold and active evidence are blended with more weight on active listings", () => {
   const snapshot = buildValuationRecommendation({
     grading: raw,
@@ -168,6 +191,10 @@ test("exact sold and active evidence are blended with more weight on active list
         medianSalePriceCents: 4200,
         typicalRange: { lowAmountCents: 3800, highAmountCents: 4600 },
         confidence: "medium",
+        sales: [
+          { salePriceCents: 3800, soldAt: "2026-07-10T12:00:00.000Z" },
+          { salePriceCents: 4600, saleDate: "2026-08-02" },
+        ],
       },
       {
         matchTier: "broader",
@@ -207,6 +234,10 @@ test("exact sold and active evidence are blended with more weight on active list
     completedSalesWeight: 0.4,
     activeAmountCents: 6000,
     completedSalesAmountCents: 4200,
+    activeRange: { lowAmountCents: 5500, highAmountCents: 6500 },
+    completedSalesRange: { lowAmountCents: 3800, highAmountCents: 4600 },
+    completedSalesLowSoldAt: "2026-07-10T12:00:00.000Z",
+    completedSalesHighSoldAt: "2026-08-02",
     activeCount: 10,
     completedSalesCount: 4,
   });
@@ -362,6 +393,10 @@ test("a one-sale variant estimate warns when active variant evidence materially 
     completedSalesWeight: 0.4,
     activeAmountCents: 10668,
     completedSalesAmountCents: 4269,
+    activeRange: { lowAmountCents: 2160, highAmountCents: 8438 },
+    completedSalesRange: { lowAmountCents: 2160, highAmountCents: 8438 },
+    completedSalesLowSoldAt: null,
+    completedSalesHighSoldAt: null,
     activeCount: 2,
     completedSalesCount: 1,
   });

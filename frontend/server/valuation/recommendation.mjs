@@ -197,11 +197,34 @@ function recommendationFromBlend({
       completedSalesWeight,
       activeAmountCents: activeEvidence.amountCents,
       completedSalesAmountCents: soldEvidence.amountCents,
+      activeRange: activeEvidence.typicalRange,
+      completedSalesRange: soldEvidence.typicalRange,
+      completedSalesLowSoldAt: soldEvidence.lowSoldAt,
+      completedSalesHighSoldAt: soldEvidence.highSoldAt,
       activeCount: activeEvidence.count,
       completedSalesCount: soldEvidence.count,
     },
     rationale: `CardPilot combined current active asking evidence at ${activeMarketWeight * 100}% with completed-sale evidence at ${completedSalesWeight * 100}%. Active listings receive more weight because they reflect the current market, while completed sales keep the recommendation grounded in observed transactions.`,
   };
+}
+
+function closestSaleDate(sales, targetAmountCents) {
+  const candidates = (sales ?? []).filter(
+    (sale) =>
+      Number.isInteger(sale.salePriceCents) &&
+      (sale.soldAt || sale.saleDate),
+  );
+  if (!candidates.length) return null;
+  const closest = [...candidates].sort((left, right) => {
+    const distanceDifference =
+      Math.abs(left.salePriceCents - targetAmountCents) -
+      Math.abs(right.salePriceCents - targetAmountCents);
+    if (distanceDifference !== 0) return distanceDifference;
+    return (right.soldAt ?? right.saleDate ?? "").localeCompare(
+      left.soldAt ?? left.saleDate ?? "",
+    );
+  })[0];
+  return closest.soldAt ?? closest.saleDate ?? null;
 }
 
 function soldGroupEvidence(group) {
@@ -212,6 +235,12 @@ function soldGroupEvidence(group) {
         typicalRange: group.typicalRange,
         count: group.saleCount,
         confidence: group.confidence,
+        lowSoldAt:
+          group.rangeSaleDates?.low ??
+          closestSaleDate(group.sales, group.typicalRange.lowAmountCents),
+        highSoldAt:
+          group.rangeSaleDates?.high ??
+          closestSaleDate(group.sales, group.typicalRange.highAmountCents),
       }
     : null;
 }
@@ -236,6 +265,8 @@ function variantEvidence(estimate) {
         typicalRange: estimate.estimatedRange,
         count: estimate.sourceCount,
         confidence: estimate.confidence,
+        lowSoldAt: null,
+        highSoldAt: null,
       }
     : null;
 }
@@ -372,6 +403,7 @@ export function buildSaleStrategyOptions(
   activeSnapshot = null,
   grading = null,
   minimumListingPriceCents = null,
+  minimumValuationCents = null,
 ) {
   if (!recommendation) return null;
   const activeFloor = activeMarketFloor(activeSnapshot, grading);
@@ -386,9 +418,15 @@ export function buildSaleStrategyOptions(
     minimumListingPriceCents > 0
     ? minimumListingPriceCents
     : null;
-  const fasterAmount = validMinimumListingPriceCents === null
-    ? unconstrainedFasterAmount
-    : Math.max(unconstrainedFasterAmount, validMinimumListingPriceCents);
+  const validMinimumValuationCents = Number.isInteger(minimumValuationCents) &&
+    minimumValuationCents > 0
+    ? minimumValuationCents
+    : null;
+  const strategyFloor = Math.max(
+    validMinimumListingPriceCents ?? 1,
+    validMinimumValuationCents ?? 1,
+  );
+  const fasterAmount = Math.max(unconstrainedFasterAmount, strategyFloor);
   const limitedByFloor = fasterAmount > unconstrainedFasterAmount;
   const maximizeAmount = roundRecommendedValueCents(
     Math.max(recommendation.amountCents, recommendation.typicalRange.highAmountCents),
@@ -426,6 +464,7 @@ export function buildValuationRecommendation({
   soldStatus = soldSnapshot ? "available" : "not_configured",
   activeStatus = activeSnapshot ? "available" : "not_configured",
   minimumListingPriceCents = null,
+  minimumValuationCents = null,
   generatedAt = new Date().toISOString(),
 }) {
   const exactSold = soldSnapshot
@@ -505,11 +544,23 @@ export function buildValuationRecommendation({
   }
 
   recommendation = applyRecommendedPricePoint(recommendation);
+  if (
+    recommendation &&
+    Number.isInteger(minimumValuationCents) &&
+    minimumValuationCents > 0 &&
+    recommendation.amountCents < minimumValuationCents
+  ) {
+    recommendation = {
+      ...recommendation,
+      amountCents: minimumValuationCents,
+    };
+  }
   const saleStrategyOptions = buildSaleStrategyOptions(
     recommendation,
     activeSnapshot,
     grading,
     minimumListingPriceCents,
+    minimumValuationCents,
   );
 
   return {
@@ -556,6 +607,7 @@ export class ValuationRecommendationService {
     {
       soldExcludedObservationIds = [],
       activeExcludedObservationIds = [],
+      minimumValuationCents = null,
     } = {},
   ) {
     const soldPromise = this.soldComps
@@ -586,6 +638,7 @@ export class ValuationRecommendationService {
         activeResult.status === "fulfilled" ? activeResult.value : null,
       grading: card.grading,
       minimumListingPriceCents: card.minimumListingPriceCents,
+      minimumValuationCents,
       soldStatus: resultStatus(soldResult, Boolean(this.soldComps)),
       activeStatus: resultStatus(activeResult, Boolean(this.activeMarket)),
       generatedAt: new Date(this.now()).toISOString(),

@@ -117,6 +117,10 @@ test("sold snapshots use only confirmed prices and trim outliers", () => {
     lowAmountCents: 4150,
     highAmountCents: 4575,
   });
+  assert.deepEqual(snapshot.groups[0].rangeSaleDates, {
+    low: "2026-08-01T12:00:00.000Z",
+    high: "2026-08-01T12:00:00.000Z",
+  });
   assert.deepEqual(snapshot.groups[0].sales[0].suggestions, {
     character: null,
     setOrInsert: null,

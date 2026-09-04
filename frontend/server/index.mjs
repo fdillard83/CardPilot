@@ -566,7 +566,12 @@ async function runAutopilotRepricing(now = Date.now()) {
         if (!position.safeToReprice || position.limitedByMinimum || !position.shouldLower) continue;
         const originalPriceCents = draft.automationOriginalPriceCents ?? draft.priceCents;
         const originalPriceFloorCents = Math.ceil(originalPriceCents * preferences.autoRepriceFloorPercent / 100);
-        const nextPriceCents = Math.max(position.proposedItemPriceCents, originalPriceFloorCents, preferences.autopilotMinimumPriceCents);
+        const nextPriceCents = Math.max(
+          position.proposedItemPriceCents,
+          originalPriceFloorCents,
+          preferences.autopilotMinimumPriceCents,
+          effectiveListingFloor(card, preferences),
+        );
         if (nextPriceCents >= draft.priceCents) continue;
         await assertListingCostSafety(userId, { ...draft, priceCents: nextPriceCents }, token, position.ownShippingCostCents);
         const sku = `cardpilot-${card.collectionId}`;
@@ -969,7 +974,7 @@ app.get("/api/collection/:collectionId/ebay-readiness", async (request, response
     const definitions = await ebayTaxonomy.itemAspects(categoryId);
     const saved = await cloudServices.ebaySelling.draft(request.cardPilotUser.id, card.collectionId);
     const preferences = await cloudServices.preferences.get(request.cardPilotUser.id);
-    const draft = saved ?? ebayDraftFromCard(card, preferences.ebaySellingDefaults);
+    const draft = saved ?? ebayDraftFromCard(card, sellingDefaultsForPreferences(preferences));
     response.json({ definitions, ...listingReadiness(card, { ...draft, categoryId }, definitions) });
   } catch (error) {
     response.status(error instanceof TypeError ? 400 : 502).json({ error: error.message ?? "CardPilot could not load eBay listing requirements." });
@@ -1010,6 +1015,35 @@ app.post("/api/ebay/selling/setup/production", async (request, response) => {
   }
 });
 
+function accountValuationFloor(preferences) {
+  return preferences?.preventValuationBelowFloor &&
+    Number.isInteger(preferences.priceFloorCents)
+    ? preferences.priceFloorCents
+    : null;
+}
+
+function accountListingFloor(preferences) {
+  return preferences?.preventListingBelowFloor &&
+    Number.isInteger(preferences.priceFloorCents)
+    ? preferences.priceFloorCents
+    : null;
+}
+
+function sellingDefaultsForPreferences(preferences) {
+  return {
+    ...preferences.ebaySellingDefaults,
+    accountMinimumListingPriceCents: accountListingFloor(preferences),
+  };
+}
+
+function effectiveListingFloor(card, preferences) {
+  return Math.max(
+    1,
+    card.minimumListingPriceCents ?? 1,
+    accountListingFloor(preferences) ?? 1,
+  );
+}
+
 function ebayDraftFromCard(card, defaults = {}, saleStrategyOptions = null) {
   const fields = card.fields;
   const referencePriceCents = saleStrategyOptions?.balanced?.amountCents ?? card.confirmedValuation?.amountCents ?? 100;
@@ -1020,6 +1054,7 @@ function ebayDraftFromCard(card, defaults = {}, saleStrategyOptions = null) {
   const priceCents = Math.max(
     saleStrategyOptions?.[pricingStrategy]?.amountCents ?? referencePriceCents,
     card.minimumListingPriceCents ?? 1,
+    defaults.accountMinimumListingPriceCents ?? 1,
   );
   const detailLines = [
     `Card: ${fields.player ?? fields.character ?? card.title}`,
@@ -1089,7 +1124,9 @@ async function runCardAutopilot(userId, originalCard) {
   let card = originalCard;
   let snapshot = null;
   try {
-    snapshot = await valuationRecommendations.snapshot(card);
+    snapshot = await valuationRecommendations.snapshot(card, {
+      minimumValuationCents: accountValuationFloor(preferences),
+    });
     if (shouldAutomaticallySaveValuation({ card, preferences, recommendation: snapshot.recommendation })) {
       card = await collectionStore.updateConfirmedValuation(userId, card.collectionId, {
         amountCents: snapshot.recommendation.amountCents,
@@ -1113,9 +1150,9 @@ async function runCardAutopilot(userId, originalCard) {
 
   let draft;
   try {
-    draft = await prepareAutomaticEbayDraft(card, preferences.ebaySellingDefaults, snapshot?.saleStrategyOptions ?? null);
+    draft = await prepareAutomaticEbayDraft(card, sellingDefaultsForPreferences(preferences), snapshot?.saleStrategyOptions ?? null);
   } catch {
-    draft = ebayDraftFromCard(card, preferences.ebaySellingDefaults, snapshot?.saleStrategyOptions ?? null);
+    draft = ebayDraftFromCard(card, sellingDefaultsForPreferences(preferences), snapshot?.saleStrategyOptions ?? null);
   }
   const now = new Date().toISOString();
   draft = await cloudServices.ebaySelling.saveDraft(userId, card.collectionId, {
@@ -1187,8 +1224,8 @@ app.get("/api/collection/:collectionId/ebay-draft", async (request, response) =>
   }
   let generatedDraft = null;
   if (!saved) {
-    try { generatedDraft = await prepareAutomaticEbayDraft(card, preferences.ebaySellingDefaults, saleStrategyOptions); }
-    catch { generatedDraft = ebayDraftFromCard(card, preferences.ebaySellingDefaults, saleStrategyOptions); }
+    try { generatedDraft = await prepareAutomaticEbayDraft(card, sellingDefaultsForPreferences(preferences), saleStrategyOptions); }
+    catch { generatedDraft = ebayDraftFromCard(card, sellingDefaultsForPreferences(preferences), saleStrategyOptions); }
   }
   const draft = saved ?? generatedDraft;
   response.json({
@@ -1530,16 +1567,17 @@ async function publishEbayListing(userId, collectionId) {
     const card = await collectionStore.get(userId, collectionId);
     const saved = card && await cloudServices.ebaySelling.draft(userId, card.collectionId);
     if (!card || !saved) throw new Error("Save the listing draft first.");
+    const preferences = await cloudServices.preferences.get(userId);
     if (saved.status === "sold") throw new Error("This card is marked sold. Create a separate collection record before intentionally listing another copy.");
     if (saved.status === "ended") throw new Error("This listing has ended. Create a new eBay draft before relisting the card.");
     let draft = editableEbayDraft(saved);
+    const minimumListingPriceCents = effectiveListingFloor(card, preferences);
     if (
       draft.listingFormat === "FIXED_PRICE" &&
-      Number.isInteger(card.minimumListingPriceCents) &&
-      draft.priceCents < card.minimumListingPriceCents
+      draft.priceCents < minimumListingPriceCents
     ) {
       throw new Error(
-        `This card's minimum listing price is $${(card.minimumListingPriceCents / 100).toFixed(2)}. Raise the Buy It Now price before publishing.`,
+        `The minimum allowed listing price is $${(minimumListingPriceCents / 100).toFixed(2)}. Raise the Buy It Now price before publishing.`,
       );
     }
     if ([draft.categoryId, draft.merchantLocationKey, draft.fulfillmentPolicyId, draft.paymentPolicyId, draft.returnPolicyId].some((value) => !value)) {
@@ -1997,7 +2035,10 @@ async function positioningForActiveListing(userId, card, draft, preferences, tok
     ownListingId: draft.ebayListingId,
     currentItemPriceCents: draft.priceCents,
     ownShippingCostCents,
-    minimumPriceCents: preferences.autopilotMinimumPriceCents,
+    minimumPriceCents: Math.max(
+      preferences.autopilotMinimumPriceCents,
+      effectiveListingFloor(card, preferences),
+    ),
     undercutCents: preferences.exactPriceUndercutCents,
     currency: draft.currency,
   });
@@ -2046,7 +2087,10 @@ app.post("/api/ebay/listings/price-positioning", async (request, response) => {
     }
     response.json({
       undercutCents: preferences.exactPriceUndercutCents,
-      minimumPriceCents: preferences.autopilotMinimumPriceCents,
+      minimumPriceCents: Math.max(
+        preferences.autopilotMinimumPriceCents,
+        accountListingFloor(preferences) ?? 1,
+      ),
       results,
     });
   } catch (error) {
@@ -2792,6 +2836,9 @@ app.get(
         response.status(404).json({ error: "That saved card was not found." });
         return;
       }
+      const preferences = await cloudServices.preferences.get(
+        request.cardPilotUser.id,
+      );
       response.json(
         await valuationRecommendations.snapshot(card, {
           soldExcludedObservationIds: excludedObservationIds(
@@ -2802,6 +2849,7 @@ app.get(
             request,
             "excludeActive",
           ),
+          minimumValuationCents: accountValuationFloor(preferences),
         }),
       );
     } catch (error) {
@@ -2817,6 +2865,19 @@ app.put(
   "/api/collection/:collectionId/valuation",
   async (request, response) => {
     try {
+      const preferences = await cloudServices.preferences.get(
+        request.cardPilotUser.id,
+      );
+      const valuationFloorCents = accountValuationFloor(preferences);
+      if (
+        valuationFloorCents !== null &&
+        Number(request.body?.amountCents) < valuationFloorCents
+      ) {
+        response.status(400).json({
+          error: `Your account valuation floor is $${(valuationFloorCents / 100).toFixed(2)}.`,
+        });
+        return;
+      }
       const card = await collectionStore.updateConfirmedValuation(
         collectionUserId(request),
         request.params.collectionId,

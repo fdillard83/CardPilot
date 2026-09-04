@@ -22,6 +22,9 @@ export const DEFAULT_ACCOUNT_PREFERENCES = Object.freeze({
   listingTransactionFixedFeeCents: 30,
   listingMailingCostCents: 78,
   estimatedBuyerSalesTaxPercent: 7,
+  priceFloorCents: null,
+  preventValuationBelowFloor: false,
+  preventListingBelowFloor: false,
   autoValueEnabled: false,
   autoValueMaxCents: null,
   ebayConnectPromptDismissed: false,
@@ -60,6 +63,9 @@ export const AccountPreferencesSchema = z
     listingTransactionFixedFeeCents: z.number().int().min(0).max(10_000),
     listingMailingCostCents: z.number().int().min(0).max(100_000),
     estimatedBuyerSalesTaxPercent: z.number().min(0).max(20),
+    priceFloorCents: z.number().int().min(1).max(100_000_000).nullable(),
+    preventValuationBelowFloor: z.boolean(),
+    preventListingBelowFloor: z.boolean(),
     autoValueEnabled: z.boolean(),
     autoValueMaxCents: z.number().int().min(1).max(100_000_000).nullable(),
     ebayConnectPromptDismissed: z.boolean(),
@@ -78,6 +84,12 @@ export const AccountPreferencesSchema = z
   .refine(
     (value) => !value.autoValueEnabled || value.autoValueMaxCents !== null,
     { message: "An automatic-value limit is required when the rule is enabled." },
+  )
+  .refine(
+    (value) =>
+      (!value.preventValuationBelowFloor && !value.preventListingBelowFloor) ||
+      value.priceFloorCents !== null,
+    { message: "A price floor is required when a floor safeguard is enabled." },
   );
 
 function databaseError(operation, error) {
@@ -109,6 +121,9 @@ function sellingDefaultsFromData(data) {
     listingTransactionFixedFeeCents: _listingTransactionFixedFeeCents,
     listingMailingCostCents: _listingMailingCostCents,
     estimatedBuyerSalesTaxPercent: _estimatedBuyerSalesTaxPercent,
+    priceFloorCents: _priceFloorCents,
+    preventValuationBelowFloor: _preventValuationBelowFloor,
+    preventListingBelowFloor: _preventListingBelowFloor,
     ...sellingDefaults
   } = data ?? {};
   return { ...DEFAULT_ACCOUNT_PREFERENCES.ebaySellingDefaults, ...sellingDefaults };
@@ -149,6 +164,9 @@ export class SupabaseAccountPreferencesRepository {
       listingTransactionFixedFeeCents: Number(data.ebay_selling_defaults?.listingTransactionFixedFeeCents ?? DEFAULT_ACCOUNT_PREFERENCES.listingTransactionFixedFeeCents),
       listingMailingCostCents: Number(data.ebay_selling_defaults?.listingMailingCostCents ?? DEFAULT_ACCOUNT_PREFERENCES.listingMailingCostCents),
       estimatedBuyerSalesTaxPercent: Number(data.ebay_selling_defaults?.estimatedBuyerSalesTaxPercent ?? DEFAULT_ACCOUNT_PREFERENCES.estimatedBuyerSalesTaxPercent),
+      priceFloorCents: data.ebay_selling_defaults?.priceFloorCents ?? DEFAULT_ACCOUNT_PREFERENCES.priceFloorCents,
+      preventValuationBelowFloor: data.ebay_selling_defaults?.preventValuationBelowFloor ?? DEFAULT_ACCOUNT_PREFERENCES.preventValuationBelowFloor,
+      preventListingBelowFloor: data.ebay_selling_defaults?.preventListingBelowFloor ?? DEFAULT_ACCOUNT_PREFERENCES.preventListingBelowFloor,
       autoValueEnabled: data.auto_value_enabled === true,
       autoValueMaxCents:
         data.auto_value_max_cents === null
@@ -192,6 +210,9 @@ export class SupabaseAccountPreferencesRepository {
             listingTransactionFixedFeeCents: preferences.listingTransactionFixedFeeCents,
             listingMailingCostCents: preferences.listingMailingCostCents,
             estimatedBuyerSalesTaxPercent: preferences.estimatedBuyerSalesTaxPercent,
+            priceFloorCents: preferences.priceFloorCents,
+            preventValuationBelowFloor: preferences.preventValuationBelowFloor,
+            preventListingBelowFloor: preferences.preventListingBelowFloor,
           },
           updated_at: new Date().toISOString(),
         },
@@ -222,6 +243,9 @@ export class SupabaseAccountPreferencesRepository {
       listingTransactionFixedFeeCents: Number(data.ebay_selling_defaults?.listingTransactionFixedFeeCents ?? DEFAULT_ACCOUNT_PREFERENCES.listingTransactionFixedFeeCents),
       listingMailingCostCents: Number(data.ebay_selling_defaults?.listingMailingCostCents ?? DEFAULT_ACCOUNT_PREFERENCES.listingMailingCostCents),
       estimatedBuyerSalesTaxPercent: Number(data.ebay_selling_defaults?.estimatedBuyerSalesTaxPercent ?? DEFAULT_ACCOUNT_PREFERENCES.estimatedBuyerSalesTaxPercent),
+      priceFloorCents: data.ebay_selling_defaults?.priceFloorCents ?? DEFAULT_ACCOUNT_PREFERENCES.priceFloorCents,
+      preventValuationBelowFloor: data.ebay_selling_defaults?.preventValuationBelowFloor ?? DEFAULT_ACCOUNT_PREFERENCES.preventValuationBelowFloor,
+      preventListingBelowFloor: data.ebay_selling_defaults?.preventListingBelowFloor ?? DEFAULT_ACCOUNT_PREFERENCES.preventListingBelowFloor,
       autoValueEnabled: data.auto_value_enabled === true,
       autoValueMaxCents:
         data.auto_value_max_cents === null

@@ -11,6 +11,19 @@ function formatPrice(amountCents: number, currency: string) {
   }).format(amountCents / 100);
 }
 
+function formatPriceRange(
+  range: { lowAmountCents: number; highAmountCents: number },
+  currency: string,
+) {
+  return `${formatPrice(range.lowAmountCents, currency)} – ${formatPrice(range.highAmountCents, currency)}`;
+}
+
+function formatSaleDate(value: string | null) {
+  if (!value) return "Date not provided";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+}
+
 function sourceStatusLabel(
   status: ValuationRecommendationSnapshot["evidence"]["sold"]["status"],
 ) {
@@ -153,7 +166,7 @@ export function CardValuationPanel({
                 </strong>
                 <div className="card-value-range" aria-label="Estimated value range">
                   <div>
-                    <span>Low</span>
+                    <span>Estimated low</span>
                     <strong>{formatPrice(recommendation.typicalRange.lowAmountCents, recommendation.currency)}</strong>
                   </div>
                   <div>
@@ -174,6 +187,14 @@ export function CardValuationPanel({
                     or .95.
                   </small>
                 )}
+                {strategy === "sell_faster" &&
+                  selectedStrategyOption &&
+                  selectedStrategyOption.amountCents < recommendation.typicalRange.lowAmountCents && (
+                    <small>
+                      Sell faster can fall below the estimated range because it
+                      targets 5¢ below the cheapest compatible active listing.
+                    </small>
+                  )}
               </div>
               <div className="card-value-basis">
                 <span
@@ -190,8 +211,8 @@ export function CardValuationPanel({
                     <span>Current active listings</span>
                     <strong>
                       {Math.round(recommendation.blend.activeWeight * 100)}% ·{" "}
-                      {formatPrice(
-                        recommendation.blend.activeAmountCents,
+                      {formatPriceRange(
+                        recommendation.blend.activeRange,
                         recommendation.currency,
                       )}
                     </strong>
@@ -207,11 +228,16 @@ export function CardValuationPanel({
                       {Math.round(
                         recommendation.blend.completedSalesWeight * 100,
                       )}% ·{" "}
-                      {formatPrice(
-                        recommendation.blend.completedSalesAmountCents,
+                      {formatPriceRange(
+                        recommendation.blend.completedSalesRange,
                         recommendation.currency,
                       )}
                     </strong>
+                    <small>
+                      Low sold {formatSaleDate(recommendation.blend.completedSalesLowSoldAt)}
+                      {" · "}
+                      High sold {formatSaleDate(recommendation.blend.completedSalesHighSoldAt)}
+                    </small>
                     <small>
                       {recommendation.blend.completedSalesCount} completed sale
                       {recommendation.blend.completedSalesCount === 1 ? "" : "s"}
