@@ -14,7 +14,7 @@ jobs:
           SCHEDULER_SECRET: ${{ secrets.EBAY_SCHEDULER_SECRET }}
         run: |
           test -n "$SCHEDULER_SECRET"
-          curl --fail-with-body --retry 3 --retry-delay 10 \
+          curl --fail-with-body --retry 3 --retry-all-errors --retry-delay 10 \
             --request POST \
             --header "Authorization: Bearer $SCHEDULER_SECRET" \
             https://cardpilot-aizd.onrender.com/api/internal/ebay/run-schedules
@@ -23,7 +23,7 @@ jobs:
           SCHEDULER_SECRET: ${{ secrets.EBAY_SCHEDULER_SECRET }}
         run: |
           test -n "$SCHEDULER_SECRET"
-          curl --fail-with-body --retry 3 --retry-delay 10 \
+          curl --fail-with-body --retry 3 --retry-all-errors --retry-delay 10 \
             --request POST \
             --header "Authorization: Bearer $SCHEDULER_SECRET" \
             https://cardpilot-aizd.onrender.com/api/internal/ebay/sync-sales
