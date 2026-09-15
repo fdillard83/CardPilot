@@ -21,6 +21,15 @@ feedback loop. Strong catalog evidence may correct a tentative model-derived
 value, but it cannot overwrite high-confidence visible text. A later eBay year
 consensus also triggers catalog re-verification in the browser.
 
+Google Vision Web Detection is an independent evidence family in both
+directions. Its cached result first corroborates or cautiously corrects the
+normalized image extraction before catalog retrieval. After bounded candidate
+refinement, a final reconciliation compares the untouched original extraction,
+the forward Google-assisted fields, and the backward candidate fields. A late
+field earns higher confidence only when independent Google and catalog evidence
+agree. Repeated Google matching-card evidence can restore a year that a later
+candidate changed, while near-certain visible text remains authoritative.
+
 The public route remains `POST /api/identify-card`. Its response is validated with `CardIdentificationResultSchema` and versioned as schema `1.0`.
 
 ## Modules

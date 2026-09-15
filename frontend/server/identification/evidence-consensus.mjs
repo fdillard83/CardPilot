@@ -34,6 +34,39 @@ function signalSupportsValue(signal, value) {
   return expected.every((token) => observed.has(token));
 }
 
+function valuesEquivalent(left, right) {
+  if (typeof left === "boolean" || typeof right === "boolean" || left === null || right === null) {
+    return left === right;
+  }
+  const normalizedLeft = tokens(left).join("");
+  const normalizedRight = tokens(right).join("");
+  if (!normalizedLeft || !normalizedRight) return false;
+  if (normalizedLeft === normalizedRight) return true;
+  if (normalizedLeft.length < 4 || normalizedRight.length < 4) return false;
+  return normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft);
+}
+
+function valuesExactlyEquivalent(left, right) {
+  if (typeof left === "boolean" || typeof right === "boolean" || left === null || right === null) {
+    return left === right;
+  }
+  return tokens(left).join("") === tokens(right).join("");
+}
+
+function plainFieldValues(fields) {
+  return Object.fromEntries(
+    Object.entries(fields).map(([field, result]) => [field, result?.value ?? null]),
+  );
+}
+
+function catalogSupportsValue(candidateMatches, field, value) {
+  return candidateMatches.some((candidate) =>
+    candidate.source === "catalog" &&
+    candidate.matchConfidence >= 0.65 &&
+    valuesEquivalent(candidate.values[field], value),
+  );
+}
+
 function evidenceDescription(provider, signal, count) {
   const kind = signal.type.replaceAll("_", " ");
   return `${provider} returned ${kind}${count > 1 ? ` plus ${count - 1} corroborating result${count === 2 ? "" : "s"}` : ""} that agrees with this value.`;
@@ -198,9 +231,127 @@ export function buildMarketConsensusProfile(fields, providerResults) {
   return profile;
 }
 
+export function reconcileBackwardEvidence({
+  originalExtraction,
+  forwardExtraction,
+  verification,
+  providerResults,
+}) {
+  const fields = structuredClone(verification.fields);
+  const evidence = structuredClone(forwardExtraction.evidence);
+  const changedFields = Object.keys(fields).filter((field) =>
+    !valuesExactlyEquivalent(fields[field]?.value, forwardExtraction.fields[field]?.value),
+  );
+  if (!changedFields.length || !providerResults.some((result) => result.status === "completed")) {
+    return { ...verification, fields, evidence };
+  }
+
+  // Recheck only the late-changing fields against the same cached Google
+  // evidence. This gives web evidence a backward vote without making a second
+  // Vision request or allowing a candidate to verify itself.
+  const checked = applyEvidenceConsensus(
+    { fields: structuredClone(fields), evidence: [] },
+    providerResults,
+  );
+  const forwardProfile = buildMarketConsensusProfile(
+    plainFieldValues(forwardExtraction.fields),
+    providerResults,
+  );
+  const finalProfile = buildMarketConsensusProfile(
+    plainFieldValues(fields),
+    providerResults,
+  );
+
+  const adoptCheckedField = (field) => {
+    const previousIds = new Set(fields[field].evidenceIds);
+    fields[field] = structuredClone(checked.fields[field]);
+    const addedIds = fields[field].evidenceIds.filter((id) => !previousIds.has(id));
+    for (const item of checked.evidence) {
+      if (item.field === field && addedIds.includes(item.id) && !evidence.some((existing) => existing.id === item.id)) {
+        evidence.push(structuredClone(item));
+      }
+    }
+  };
+
+  for (const field of changedFields) {
+    const original = originalExtraction.fields[field];
+    const forward = forwardExtraction.fields[field];
+    const backward = fields[field];
+    if (!original || !forward || !backward) continue;
+
+    const originalIsStrongVisible =
+      original.inferenceSource === "visible" &&
+      original.confidence >= 0.9 &&
+      original.value !== null;
+    if (originalIsStrongVisible && !valuesExactlyEquivalent(original.value, backward.value)) {
+      fields[field] = structuredClone(original);
+      fields[field].missingEvidence = [
+        ...new Set([
+          ...fields[field].missingEvidence,
+          "Late search evidence conflicted with a near-certain visible reading, so the original image evidence was retained.",
+        ]),
+      ];
+      continue;
+    }
+
+    // A repeated Google year consensus may correct a late catalog/model change.
+    if (!valuesExactlyEquivalent(checked.fields[field].value, backward.value)) {
+      adoptCheckedField(field);
+      continue;
+    }
+
+    const googleSupportsBackward = Boolean(finalProfile[field]);
+    const googleSupportsForward = Boolean(forwardProfile[field]);
+    const catalogSupportsBackward = catalogSupportsValue(
+      verification.candidateMatches,
+      field,
+      backward.value,
+    );
+
+    if (googleSupportsBackward) {
+      adoptCheckedField(field);
+      if (catalogSupportsBackward) {
+        fields[field].confidence = Number(
+          Math.min(0.94, Math.max(fields[field].confidence, 0.82)).toFixed(3),
+        );
+        fields[field].inferenceSource = "mixed";
+      }
+      continue;
+    }
+
+    // If Google produced the forward value and the late candidate cannot earn
+    // an independent Google vote, retain the forward result. This is especially
+    // important for a year corrected by repeated full-image page matches.
+    if (forward.inferenceSource === "web" && googleSupportsForward) {
+      fields[field] = structuredClone(forward);
+      fields[field].missingEvidence = [
+        ...new Set([
+          ...fields[field].missingEvidence,
+          "A late candidate conflicted with repeated Google matching-card evidence; the Google-supported value was retained.",
+        ]),
+      ];
+      continue;
+    }
+
+    if (googleSupportsForward && !catalogSupportsBackward) {
+      fields[field].confidence = Number((fields[field].confidence * 0.75).toFixed(3));
+      fields[field].missingEvidence = [
+        ...new Set([
+          ...fields[field].missingEvidence,
+          "The backward candidate conflicts with Google evidence supporting the earlier reading.",
+        ]),
+      ];
+    }
+  }
+
+  return { ...verification, fields, evidence };
+}
+
 export const evidenceConsensusInternals = {
   tokens,
   signalSupportsValue,
+  valuesEquivalent,
+  valuesExactlyEquivalent,
   yearsInSignal,
   yearConsensus,
   normalizedSeason,

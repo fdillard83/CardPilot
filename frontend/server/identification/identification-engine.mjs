@@ -10,7 +10,10 @@ import {
   getBackPhotoGuidance,
 } from "./trust-engine.mjs";
 import { verifyCandidates } from "./verification-engine.mjs";
-import { applyEvidenceConsensus } from "./evidence-consensus.mjs";
+import {
+  applyEvidenceConsensus,
+  reconcileBackwardEvidence,
+} from "./evidence-consensus.mjs";
 
 async function runStage(stages, name, operation) {
   const startedAt = performance.now();
@@ -87,13 +90,15 @@ export class IdentificationEngine {
       "evidence_extraction",
       () => this.evidenceEngine.extract(intake),
     );
-    let extraction = await runStage(
+    const originalExtraction = await runStage(
       stages,
       "semantic_normalization",
       () => normalizeCardSemantics(rawExtraction),
     );
+    let extraction = originalExtraction;
+    let providerResults = [];
     if (webEvidencePending) {
-      const providerResults = await webEvidencePending;
+      providerResults = await webEvidencePending;
       const webDurationMs = providerResults.reduce(
         (duration, provider) => Math.max(duration, provider.durationMs),
         0,
@@ -199,6 +204,24 @@ export class IdentificationEngine {
         });
       }
     }
+    let resultEvidence = extraction.evidence;
+    if (providerResults.length) {
+      const reconciliation = await runStage(
+        stages,
+        "consensus_reconciliation",
+        () => reconcileBackwardEvidence({
+          originalExtraction,
+          forwardExtraction: extraction,
+          verification,
+          providerResults,
+        }),
+      );
+      verification = {
+        fields: reconciliation.fields,
+        candidateMatches: reconciliation.candidateMatches,
+      };
+      resultEvidence = reconciliation.evidence;
+    }
     const overallConfidence = await runStage(
       stages,
       "confidence_scoring",
@@ -241,7 +264,7 @@ export class IdentificationEngine {
       identificationId: this.idFactory(),
       status: extraction.status,
       fields: verification.fields,
-      evidence: extraction.evidence,
+      evidence: resultEvidence,
       missingEvidence: extraction.missingEvidence,
       candidateMatches: verification.candidateMatches,
       overallConfidence,

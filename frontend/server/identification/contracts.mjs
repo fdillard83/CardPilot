@@ -203,6 +203,7 @@ export const PipelineStageSchema = z
       "candidate_refinement",
       "verification",
       "verification_refinement",
+      "consensus_reconciliation",
       "confidence_scoring",
       "overall_decision",
     ]),

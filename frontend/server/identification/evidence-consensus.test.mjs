@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   applyEvidenceConsensus,
   buildMarketConsensusProfile,
+  reconcileBackwardEvidence,
 } from "./evidence-consensus.mjs";
 
 function visible(value, confidence = 0.7) {
@@ -218,4 +219,143 @@ test("market consensus profiles retain only web-supported saved identity fields"
   assert.deepEqual(profile.year, { strength: 0.94, resultCount: 1 });
   assert.equal(profile.parallel, undefined);
   assert.equal(profile.rookieStatus, undefined);
+});
+
+test("backward reconciliation restores a repeated Google year consensus", () => {
+  const originalExtraction = {
+    fields: { year: visible("2026", 0.62) },
+    evidence: [],
+  };
+  const forwardExtraction = {
+    fields: {
+      year: {
+        ...visible("2025", 0.84),
+        inferenceSource: "web",
+        evidenceIds: ["ev-forward-year"],
+      },
+    },
+    evidence: [{
+      id: "ev-forward-year",
+      field: "year",
+      source: "web",
+      observation: "Repeated Google matches support 2025.",
+      location: null,
+      strength: 0.95,
+    }],
+  };
+  const verification = {
+    fields: {
+      year: {
+        ...visible("2026", 0.7),
+        inferenceSource: "catalog",
+      },
+    },
+    candidateMatches: [],
+  };
+  const providerResults = [{
+    provider: "google_web_detection",
+    status: "completed",
+    signals: [
+      {
+        type: "full_matching_page",
+        text: "2025 card",
+        url: "https://example.com/2025-card-one",
+        imageUrl: null,
+        strength: 0.96,
+      },
+      {
+        type: "full_matching_page",
+        text: "2025 trading card",
+        url: "https://example.org/2025-card-two",
+        imageUrl: null,
+        strength: 0.94,
+      },
+    ],
+  }];
+
+  const result = reconcileBackwardEvidence({
+    originalExtraction,
+    forwardExtraction,
+    verification,
+    providerResults,
+  });
+
+  assert.equal(result.fields.year.value, "2025");
+  assert.equal(result.fields.year.inferenceSource, "web");
+  assert.ok(result.evidence.length > forwardExtraction.evidence.length);
+});
+
+test("independent Google and catalog support strengthen a late field", () => {
+  const originalExtraction = {
+    fields: { product: visible("Topps", 0.55) },
+    evidence: [],
+  };
+  const forwardExtraction = structuredClone(originalExtraction);
+  const verification = {
+    fields: {
+      product: {
+        ...visible("Topps Chrome", 0.68),
+        inferenceSource: "catalog",
+      },
+    },
+    candidateMatches: [{
+      source: "catalog",
+      matchConfidence: 0.82,
+      values: { product: "Topps Chrome" },
+    }],
+  };
+  const providerResults = [{
+    provider: "google_web_detection",
+    status: "completed",
+    signals: [{
+      type: "full_matching_page",
+      text: "Topps Chrome baseball card",
+      url: "https://example.com/topps-chrome",
+      imageUrl: null,
+      strength: 0.94,
+    }],
+  }];
+
+  const result = reconcileBackwardEvidence({
+    originalExtraction,
+    forwardExtraction,
+    verification,
+    providerResults,
+  });
+
+  assert.equal(result.fields.product.value, "Topps Chrome");
+  assert.equal(result.fields.product.inferenceSource, "mixed");
+  assert.ok(result.fields.product.confidence >= 0.82);
+  assert.equal(result.evidence.some((item) => item.field === "product"), true);
+});
+
+test("near-certain original visible text remains the final anchor", () => {
+  const originalExtraction = {
+    fields: { cardNumber: visible("PP-30", 0.96) },
+    evidence: [],
+  };
+  const forwardExtraction = structuredClone(originalExtraction);
+  const verification = {
+    fields: {
+      cardNumber: {
+        ...visible("PP-80", 0.71),
+        inferenceSource: "catalog",
+      },
+    },
+    candidateMatches: [],
+  };
+
+  const result = reconcileBackwardEvidence({
+    originalExtraction,
+    forwardExtraction,
+    verification,
+    providerResults: [{
+      provider: "google_web_detection",
+      status: "completed",
+      signals: [],
+    }],
+  });
+
+  assert.equal(result.fields.cardNumber.value, "PP-30");
+  assert.match(result.fields.cardNumber.missingEvidence.at(-1), /original image evidence/);
 });
