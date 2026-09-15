@@ -151,7 +151,7 @@ function suggestedParallelFromTitle(title) {
   if (typeof title !== "string") return null;
   const descriptor =
     "green|blue|red|gold|orange|purple|black|pink|aqua|teal|silver|rainbow|crackle|wave|raywave|shimmer|speckle|mosaic|atomic|lava";
-  const finish = "foil|refractor|prizm|parallel";
+  const finish = "foil|refractor|prizm|parallel|wave|raywave|cracked[ -]?ice|shimmer|speckle|mosaic|atomic|lava|pulsar|mojo|checkerboard|x-fractor";
   const describedFinish = title.match(
     new RegExp(`\\b((?:${descriptor})(?:\\s+(?:${descriptor}))?\\s+(?:${finish}))\\b`, "i"),
   )?.[1];

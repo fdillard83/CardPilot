@@ -117,6 +117,67 @@ function withVisualYearVerification(
   };
 }
 
+function withCrossPlayerDesignConsensus(
+  identification: CardIdentification,
+  consensus: NonNullable<EbayImageSearchResult["designConsensus"]>,
+): CardIdentification {
+  let changed = false;
+  const fields = { ...identification.fields };
+  const evidence = [...identification.evidence];
+  for (const [field, value] of [
+    ["setOrInsert", consensus.setOrInsert],
+    ["parallel", consensus.parallel],
+  ] as const) {
+    if (!value) continue;
+    const current = fields[field];
+    const mayRefine =
+      current.value === null ||
+      (["candidate", "unknown"].includes(current.inferenceSource) &&
+        current.confidence < consensus.confidence);
+    if (!mayRefine) continue;
+    const evidenceId = `ev-${field}-cross-player-design-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+    if (current.evidenceIds.includes(evidenceId)) continue;
+    fields[field] = {
+      ...current,
+      value,
+      confidence: consensus.confidence,
+      evidenceIds: [...current.evidenceIds, evidenceId],
+      inferenceSource: "web",
+      missingEvidence: [
+        ...new Set([
+          ...current.missingEvidence,
+          "Confirm this design classification because it was transferred from matching cards of other players.",
+        ]),
+      ],
+    };
+    evidence.push({
+      id: evidenceId,
+      field,
+      source: "web",
+      observation: `Repeated cards of other players in the same product use the same border, layout, and foil pattern for “${value}.”`,
+      location: null,
+      strength: consensus.confidence,
+    });
+    changed = true;
+  }
+  if (!changed) return identification;
+  const reviewReason = "A cross-player design match proposed an insert or parallel that needs confirmation.";
+  return {
+    ...identification,
+    fields,
+    evidence,
+    overallConfidence: Math.min(identification.overallConfidence, 0.79),
+    decision: {
+      ...identification.decision,
+      action: "review",
+      reviewRequired: true,
+      reviewRequirement: "full_review",
+      reasons: [...new Set([...identification.decision.reasons, reviewReason])],
+      blockers: [...new Set([...identification.decision.blockers, reviewReason])],
+    },
+  };
+}
+
 function CameraIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1056,6 +1117,7 @@ function App() {
           candidates,
           yearVerification: existing?.yearVerification ?? null,
           listingTitleConsensus: existing?.listingTitleConsensus ?? null,
+          designConsensus: existing?.designConsensus ?? null,
         };
       });
     } catch (caughtError) {
@@ -1086,14 +1148,29 @@ function App() {
       const payload = (await response.json().catch(() => null)) as (Partial<EbayImageSearchResult> & { error?: string }) | null;
       if (!response.ok || !Array.isArray(payload?.candidates)) throw new Error(payload?.error ?? "Identity search was unavailable.");
       if (requestId !== ebayIdentityRequestIdRef.current) return;
-      if (payload.yearVerification) {
-        const catalogFeedback = withVisualYearVerification(
-          cardIdentification,
-          payload.yearVerification,
-        );
+      if (payload.yearVerification || payload.designConsensus) {
+        let catalogFeedback = cardIdentification;
+        if (payload.yearVerification) {
+          catalogFeedback = withVisualYearVerification(
+            catalogFeedback,
+            payload.yearVerification,
+          );
+        }
+        if (payload.designConsensus) {
+          catalogFeedback = withCrossPlayerDesignConsensus(
+            catalogFeedback,
+            payload.designConsensus,
+          );
+        }
         setIdentification((current) => {
           if (!current) return current;
-          const updated = withVisualYearVerification(current, payload.yearVerification!);
+          let updated = current;
+          if (payload.yearVerification) {
+            updated = withVisualYearVerification(updated, payload.yearVerification);
+          }
+          if (payload.designConsensus) {
+            updated = withCrossPlayerDesignConsensus(updated, payload.designConsensus);
+          }
           originalIdentificationRef.current = updated;
           return updated;
         });
@@ -1110,6 +1187,7 @@ function App() {
           candidates,
           yearVerification: payload.yearVerification ?? existing?.yearVerification ?? null,
           listingTitleConsensus: payload.listingTitleConsensus ?? existing?.listingTitleConsensus ?? null,
+          designConsensus: payload.designConsensus ?? existing?.designConsensus ?? null,
         };
       });
     } catch {

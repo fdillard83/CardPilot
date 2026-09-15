@@ -39,6 +39,15 @@ separate inserts and parallels, but appearance alone cannot invent a named
 parallel; printed text, serial numbering, Google evidence, or catalog agreement
 must independently support the name.
 
+The identity search also performs a design-only cross-player pass. It searches
+the same year and product family without the scanned player's name, then
+compares border, frame layout, and foil geometry while deliberately excluding
+the other player's pose from the design score. A repeated label may be proposed
+as an insert or parallel only when at least two different card numbers support
+the same design; listings without usable card numbers require three examples.
+Only the design classification can transfer back—the other player, team, year,
+and card number never can—and the proposed field remains review-required.
+
 The public route remains `POST /api/identify-card`. Its response is validated with `CardIdentificationResultSchema` and versioned as schema `1.0`.
 
 ## Modules

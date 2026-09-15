@@ -82,7 +82,11 @@ import {
 import { assessAutopilot, shouldAutomaticallySaveValuation, shouldPrepareAutomaticEbayDraft } from "./autopilot/decision.mjs";
 import { MarketFeedbackSubmissionSchema } from "./supabase/market-feedback.mjs";
 import { listingHealth, optimizedListingDetails } from "./ebay/listing-health.mjs";
-import { buildVisualTitleConsensus, composeListingTitle } from "./ebay/title-consensus.mjs";
+import {
+  buildCrossPlayerDesignConsensus,
+  buildVisualTitleConsensus,
+  composeListingTitle,
+} from "./ebay/title-consensus.mjs";
 import { removeCollectionCardSafely } from "./ebay/collection-removal.mjs";
 import { collectionSpreadsheetCsv } from "./collection-spreadsheet.mjs";
 import { UsdCurrencyConverter } from "./currency/usd-converter.mjs";
@@ -3541,7 +3545,15 @@ app.post("/api/ebay/identity-search", async (request, response) => {
       fields.rookieStatus === true ? "rookie" : null,
       "trading card",
     ].filter(Boolean).join(" ");
-    const queries = [...new Set([specificQuery, discoveryQuery])];
+    const designQuery = [
+      fields.year,
+      fields.manufacturer ?? fields.brand,
+      fields.product,
+      fields.setOrInsert,
+      fields.parallel ?? fields.finish ?? "parallel insert",
+      "trading card",
+    ].filter(Boolean).join(" ");
+    const queries = [...new Set([specificQuery, discoveryQuery, designQuery])];
     const results = await Promise.all(
       queries.map((query) => ebayImageSearch.searchByKeywords({
         query,
@@ -3559,11 +3571,12 @@ app.post("/api/ebay/identity-search", async (request, response) => {
       candidates = await visualImageMatcher.rank({
         sourceImageDataUrl: intake.frontImage,
         candidates,
-        limit: 30,
+        limit: 45,
       });
     }
     const yearVerification = deriveVisualYearVerification(fields, candidates);
     const listingTitleConsensus = buildVisualTitleConsensus(fields, candidates);
+    const designConsensus = buildCrossPlayerDesignConsensus(fields, candidates);
     response.json({
       marketplaceId: results[0].marketplaceId,
       total: candidates.length,
@@ -3572,6 +3585,7 @@ app.post("/api/ebay/identity-search", async (request, response) => {
       queriesUsed: queries,
       yearVerification,
       listingTitleConsensus,
+      designConsensus,
     });
   } catch (error) {
     if (error instanceof ZodError) return response.status(400).json({ error: "The identity-search card details are invalid." });

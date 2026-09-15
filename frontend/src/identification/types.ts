@@ -282,6 +282,8 @@ export type EbayImageSearchCandidate = {
     layoutScore: number;
     structureScore?: number;
     poseScore?: number;
+    patternScore?: number;
+    designScore?: number;
     normalization?: string;
     cropCoverage?: number;
   };
@@ -301,6 +303,15 @@ export type EbayImageSearchResult = {
     averageVisualScore: number;
   } | null;
   listingTitleConsensus?: ListingTitleConsensus | null;
+  designConsensus?: CrossPlayerDesignConsensus | null;
+};
+
+export type CrossPlayerDesignConsensus = {
+  setOrInsert: string | null;
+  parallel: string | null;
+  confidence: number;
+  supportingItemIds: string[];
+  averageDesignScore: number;
 };
 
 export type ListingTitleConsensus = {

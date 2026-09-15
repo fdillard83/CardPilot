@@ -1,3 +1,8 @@
+import {
+  suggestedCardNumberFromTitle,
+  suggestedParallelFromTitle,
+} from "./image-search.mjs";
+
 function text(value) {
   return typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
 }
@@ -123,6 +128,130 @@ function visualWeight(candidate) {
   return (
     score * 0.45 + structureValue * 0.2 + poseValue * 0.2 + patternValue * 0.15
   ) ** 2;
+}
+
+function designWeight(candidate) {
+  if (candidate?.visualMatchStatus !== "matched") return 0;
+  const design = Number(candidate.visualMatch?.designScore);
+  const pattern = Number(candidate.visualMatch?.patternScore);
+  const border = Number(candidate.visualMatch?.borderScore);
+  const layout = Number(candidate.visualMatch?.layoutScore);
+  if (!Number.isFinite(design) || design < 0.64) return 0;
+  if (Number.isFinite(pattern) && pattern < 0.48) return 0;
+  const patternValue = Number.isFinite(pattern) ? pattern : design;
+  const borderValue = Number.isFinite(border) ? border : design;
+  const layoutValue = Number.isFinite(layout) ? layout : design;
+  return (design * 0.55 + patternValue * 0.25 + borderValue * 0.1 + layoutValue * 0.1) ** 2;
+}
+
+function hasDesignContext(title, fields) {
+  const expectedYear = text(fields.year).match(/(?:19|20)\d{2}/)?.[0];
+  const titleYears = words(title).flatMap((word) => word.match(/(?:19|20)\d{2}/g) ?? []);
+  if (expectedYear && titleYears.length && titleYears.every((year) => year !== expectedYear)) return false;
+  const productWords = words(productPhrase(fields)).map(normalized).filter((word) => word.length > 2);
+  if (!productWords.length) return false;
+  const titleWords = new Set(words(title).map(normalized));
+  return productWords.every((word) => titleWords.has(word));
+}
+
+function consensusParallel(eligible, totalWeight) {
+  const support = new Map();
+  for (const { candidate, weight } of eligible) {
+    const value = suggestedParallelFromTitle(candidate.title);
+    const key = normalized(value);
+    if (!key) continue;
+    const current = support.get(key) ?? { value, count: 0, weight: 0 };
+    current.count += 1;
+    current.weight += weight;
+    support.set(key, current);
+  }
+  const best = [...support.values()].sort((left, right) => right.weight - left.weight)[0];
+  return best && best.count >= 2 && best.weight / totalWeight >= 0.55 ? best.value : null;
+}
+
+function consensusInsert(fields, eligible, totalWeight, parallel) {
+  const ignored = new Set([
+    ...ignoredConsensusWords,
+    ...words([
+      fields.year, fields.player, fields.character, fields.manufacturer,
+      fields.brand, fields.product, fields.cardNumber, fields.parallel,
+      fields.finish, parallel,
+    ].filter(Boolean).join(" ")).map(normalized),
+  ]);
+  const support = new Map();
+  for (const { candidate, weight } of eligible) {
+    const titleWords = words(candidate.title);
+    const phrases = new Map();
+    for (let start = 0; start < titleWords.length; start += 1) {
+      if (ignored.has(normalized(titleWords[start])) || /^#?\d/.test(titleWords[start])) continue;
+      const phraseWords = [];
+      for (let end = start; end < Math.min(titleWords.length, start + 3); end += 1) {
+        const key = normalized(titleWords[end]);
+        if (ignored.has(key) || /^#?\d/.test(titleWords[end])) break;
+        phraseWords.push(titleWords[end]);
+        const phrase = phraseWords.join(" ");
+        phrases.set(normalized(phrase), phrase);
+      }
+    }
+    for (const [key, value] of phrases) {
+      const current = support.get(key) ?? { value, count: 0, weight: 0, wordCount: words(value).length };
+      current.count += 1;
+      current.weight += weight;
+      support.set(key, current);
+    }
+  }
+  const best = [...support.values()]
+    .filter((entry) => entry.count >= 2 && entry.weight / totalWeight >= 0.58)
+    .sort((left, right) =>
+      right.weight / totalWeight - left.weight / totalWeight ||
+      right.wordCount - left.wordCount ||
+      right.weight - left.weight,
+    )[0];
+  return best?.value ?? null;
+}
+
+export function buildCrossPlayerDesignConsensus(fields, candidates) {
+  const identity = text(fields?.player ?? fields?.character);
+  if (!identity) return null;
+  let eligible = (Array.isArray(candidates) ? candidates : [])
+    .map((candidate) => ({ candidate, weight: designWeight(candidate) }))
+    .filter(({ candidate, weight }) =>
+      weight > 0 &&
+      !identityMatches(candidate.title, identity) &&
+      hasDesignContext(candidate.title, fields),
+    );
+  const numbered = eligible.filter(({ candidate }) => suggestedCardNumberFromTitle(candidate.title));
+  if (numbered.length >= 2) {
+    const uniqueNumbers = new Map();
+    for (const entry of numbered) {
+      const key = normalized(suggestedCardNumberFromTitle(entry.candidate.title));
+      const existing = uniqueNumbers.get(key);
+      if (!existing || entry.weight > existing.weight) uniqueNumbers.set(key, entry);
+    }
+    eligible = [...uniqueNumbers.values()];
+    if (eligible.length < 2) return null;
+  } else if (eligible.length < 3) {
+    return null;
+  }
+  const totalWeight = eligible.reduce((sum, entry) => sum + entry.weight, 0);
+  const parallel = consensusParallel(eligible, totalWeight);
+  const setOrInsert = consensusInsert(fields, eligible, totalWeight, parallel);
+  if (!parallel && !setOrInsert) return null;
+  const averageDesignScore = eligible.reduce(
+    (sum, { candidate }) => sum + candidate.visualMatch.designScore,
+    0,
+  ) / eligible.length;
+  const confidence = Math.min(
+    0.84,
+    0.66 + Math.min(0.1, eligible.length * 0.025) + Math.max(0, averageDesignScore - 0.64) * 0.35,
+  );
+  return {
+    setOrInsert,
+    parallel,
+    confidence: Number(confidence.toFixed(3)),
+    supportingItemIds: eligible.slice(0, 12).map(({ candidate }) => candidate.itemId),
+    averageDesignScore: Number(averageDesignScore.toFixed(3)),
+  };
 }
 
 export function buildVisualTitleConsensus(fields, candidates, { generatedAt = new Date().toISOString() } = {}) {

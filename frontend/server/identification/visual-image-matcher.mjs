@@ -377,6 +377,9 @@ function compare(source, candidate) {
   const structureScore = cosineSimilarity(source.structure, candidate.structure);
   const poseScore = cosineSimilarity(source.pose, candidate.pose);
   const patternScore = cosineSimilarity(source.pattern, candidate.pattern);
+  // Design score intentionally excludes the central player/character pose so
+  // cards of different subjects can corroborate a shared insert or parallel.
+  const designScore = borderScore * 0.3 + layoutScore * 0.25 + patternScore * 0.45;
   // Printed border color and full-color pixels carry the finish/parallel
   // signal. The earlier structure-heavy blend was good at finding the same
   // photograph but could rank a different color parallel almost identically.
@@ -390,6 +393,7 @@ function compare(source, candidate) {
     structureScore: Number(structureScore.toFixed(3)),
     poseScore: Number(poseScore.toFixed(3)),
     patternScore: Number(patternScore.toFixed(3)),
+    designScore: Number(designScore.toFixed(3)),
   };
 }
 
