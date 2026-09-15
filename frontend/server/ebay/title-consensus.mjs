@@ -113,12 +113,16 @@ function visualWeight(candidate) {
   const score = Number(candidate.visualMatch?.score);
   const structure = Number(candidate.visualMatch?.structureScore);
   const pose = Number(candidate.visualMatch?.poseScore);
+  const pattern = Number(candidate.visualMatch?.patternScore);
   if (!Number.isFinite(score) || score < 0.62) return 0;
   if (Number.isFinite(structure) && structure < 0.42) return 0;
   if (Number.isFinite(pose) && pose < 0.38) return 0;
   const structureValue = Number.isFinite(structure) ? structure : score;
   const poseValue = Number.isFinite(pose) ? pose : structureValue;
-  return (score * 0.6 + structureValue * 0.2 + poseValue * 0.2) ** 2;
+  const patternValue = Number.isFinite(pattern) ? pattern : score;
+  return (
+    score * 0.45 + structureValue * 0.2 + poseValue * 0.2 + patternValue * 0.15
+  ) ** 2;
 }
 
 export function buildVisualTitleConsensus(fields, candidates, { generatedAt = new Date().toISOString() } = {}) {

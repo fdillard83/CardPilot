@@ -30,6 +30,15 @@ field earns higher confidence only when independent Google and catalog evidence
 agree. Repeated Google matching-card evidence can restore a year that a later
 candidate changed, while near-certain visible text remains authoritative.
 
+Shine is also treated as structured evidence rather than a generic color.
+Evidence extraction records reflective finish separately from repeatable foil
+geometry such as waves, rays, dots, sparkle, cracked ice, checkerboard, and
+rainbow refraction. Independent image matching carries a surface-pattern score
+alongside color, layout, structure, and player pose. These attributes help
+separate inserts and parallels, but appearance alone cannot invent a named
+parallel; printed text, serial numbering, Google evidence, or catalog agreement
+must independently support the name.
+
 The public route remains `POST /api/identify-card`. Its response is validated with `CardIdentificationResultSchema` and versioned as schema `1.0`.
 
 ## Modules

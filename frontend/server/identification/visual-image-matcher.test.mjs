@@ -13,6 +13,31 @@ async function cardImage({ border, panel, stripe, subjectX = 240 }) {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
+async function foilPatternCard(pattern) {
+  const overlay = pattern === "wave"
+    ? `<g fill="none" stroke="#f5fbff" stroke-width="7" opacity="0.72">
+        <path d="M20 110 Q120 35 220 110 T460 110"/>
+        <path d="M20 210 Q120 135 220 210 T460 210"/>
+        <path d="M20 310 Q120 235 220 310 T460 310"/>
+        <path d="M20 410 Q120 335 220 410 T460 410"/>
+        <path d="M20 510 Q120 435 220 510 T460 510"/>
+      </g>`
+    : `<g fill="none" stroke="#f5fbff" stroke-width="6" opacity="0.72">
+        <path d="M30 70 L180 20 L250 160 L90 245 Z"/>
+        <path d="M250 160 L450 65 L420 270 L265 335 Z"/>
+        <path d="M90 245 L265 335 L155 510 L25 410 Z"/>
+        <path d="M265 335 L420 270 L465 510 L300 625 L155 510 Z"/>
+      </g>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="680">
+    <rect width="480" height="680" fill="#2866a8"/>
+    <rect x="42" y="48" width="396" height="584" rx="12" fill="#4f92ba"/>
+    <circle cx="240" cy="340" r="115" fill="#334455"/>
+    ${overlay}
+    <rect x="70" y="560" width="340" height="42" fill="white"/>
+  </svg>`;
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
 function dataUrl(buffer) {
   return `data:image/png;base64,${buffer.toString("base64")}`;
 }
@@ -94,6 +119,29 @@ test("player pose contributes independently when card colors and layout match", 
 
   assert.equal(candidates[0].itemId, "same-pose");
   assert.ok(candidates[0].visualMatch.poseScore > candidates[1].visualMatch.poseScore);
+  assert.ok(candidates[0].visualMatch.score > candidates[1].visualMatch.score);
+});
+
+test("foil geometry contributes independently when color, layout, and pose match", async () => {
+  const source = await foilPatternCard("wave");
+  const samePattern = await foilPatternCard("wave");
+  const differentPattern = await foilPatternCard("cracked");
+  const matcher = new VisualImageMatcher({
+    fetchImpl: async (url) => new Response(
+      String(url).includes("same-pattern") ? samePattern : differentPattern,
+      { status: 200 },
+    ),
+  });
+  const candidates = await matcher.rank({
+    sourceImageDataUrl: dataUrl(source),
+    candidates: [
+      { itemId: "same-pattern", imageUrl: "https://i.ebayimg.com/same-pattern.jpg" },
+      { itemId: "different-pattern", imageUrl: "https://i.ebayimg.com/different-pattern.jpg" },
+    ],
+  });
+
+  assert.equal(candidates[0].itemId, "same-pattern");
+  assert.ok(candidates[0].visualMatch.patternScore > candidates[1].visualMatch.patternScore);
   assert.ok(candidates[0].visualMatch.score > candidates[1].visualMatch.score);
 });
 

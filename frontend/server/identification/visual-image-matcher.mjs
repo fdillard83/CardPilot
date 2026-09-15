@@ -273,6 +273,50 @@ function poseSignature(data, target) {
   return values;
 }
 
+function surfacePatternSignature(data, target) {
+  // Spatial gradient directions distinguish repeated foil geometry such as
+  // waves, rays, dots, and cracked-ice facets. Chroma and highlight density
+  // preserve refractor behavior while keeping this signal modest because a
+  // single photograph can hide foil at an unfavorable angle.
+  const columns = 4;
+  const rows = 6;
+  const featuresPerCell = 6;
+  const values = new Float64Array(columns * rows * featuresPerCell);
+  const counts = new Uint32Array(columns * rows);
+  for (let y = 1; y < target.height - 1; y += 1) {
+    for (let x = 1; x < target.width - 1; x += 1) {
+      const cellX = Math.min(columns - 1, Math.floor(x / target.width * columns));
+      const cellY = Math.min(rows - 1, Math.floor(y / target.height * rows));
+      const cell = cellY * columns + cellX;
+      const offset = cell * featuresPerCell;
+      const pixelIndex = y * target.width + x;
+      const horizontal = luminance(data, pixelIndex + 1) - luminance(data, pixelIndex - 1);
+      const vertical = luminance(data, pixelIndex + target.width) - luminance(data, pixelIndex - target.width);
+      const magnitude = Math.sqrt(horizontal ** 2 + vertical ** 2) / 255;
+      if (magnitude >= 0.035) {
+        const direction = (Math.atan2(vertical, horizontal) + Math.PI) % Math.PI;
+        const directionBin = Math.min(3, Math.floor(direction / Math.PI * 4));
+        values[offset + directionBin] += magnitude;
+      }
+      const red = data[pixelIndex * channels];
+      const green = data[pixelIndex * channels + 1];
+      const blue = data[pixelIndex * channels + 2];
+      const maximum = Math.max(red, green, blue);
+      const minimum = Math.min(red, green, blue);
+      values[offset + 4] += (maximum - minimum) / 255;
+      values[offset + 5] += maximum >= 220 ? 1 : 0;
+      counts[cell] += 1;
+    }
+  }
+  for (let cell = 0; cell < counts.length; cell += 1) {
+    const count = counts[cell] || 1;
+    for (let feature = 0; feature < featuresPerCell; feature += 1) {
+      values[cell * featuresPerCell + feature] /= count;
+    }
+  }
+  return values;
+}
+
 async function signature(image, crop, target) {
   const pixels = await normalizedPixels(image, crop, target);
   return {
@@ -281,6 +325,7 @@ async function signature(image, crop, target) {
     layout: layoutSignature(pixels, target),
     structure: structureSignature(pixels, target),
     pose: poseSignature(pixels, target),
+    pattern: surfacePatternSignature(pixels, target),
   };
 }
 
@@ -331,11 +376,12 @@ function compare(source, candidate) {
   const layoutScore = cosineSimilarity(source.layout, candidate.layout);
   const structureScore = cosineSimilarity(source.structure, candidate.structure);
   const poseScore = cosineSimilarity(source.pose, candidate.pose);
+  const patternScore = cosineSimilarity(source.pattern, candidate.pattern);
   // Printed border color and full-color pixels carry the finish/parallel
   // signal. The earlier structure-heavy blend was good at finding the same
   // photograph but could rank a different color parallel almost identically.
-  const score = pixelScore * 0.25 + borderScore * 0.25 + layoutScore * 0.1 +
-    structureScore * 0.2 + poseScore * 0.2;
+  const score = pixelScore * 0.2 + borderScore * 0.2 + layoutScore * 0.1 +
+    structureScore * 0.175 + poseScore * 0.175 + patternScore * 0.15;
   return {
     score: Number(score.toFixed(3)),
     pixelScore: Number(pixelScore.toFixed(3)),
@@ -343,6 +389,7 @@ function compare(source, candidate) {
     layoutScore: Number(layoutScore.toFixed(3)),
     structureScore: Number(structureScore.toFixed(3)),
     poseScore: Number(poseScore.toFixed(3)),
+    patternScore: Number(patternScore.toFixed(3)),
   };
 }
 

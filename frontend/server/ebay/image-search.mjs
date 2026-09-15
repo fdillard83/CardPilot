@@ -217,6 +217,9 @@ export function deriveVisualYearVerification(fields, candidates) {
     const poseScore = Number.isFinite(match?.poseScore)
       ? match.poseScore
       : structureScore;
+    const patternScore = Number.isFinite(match?.patternScore)
+      ? match.patternScore
+      : match?.score;
     const strongVisualMatch =
       candidate.visualMatchStatus === "matched" &&
       Number.isFinite(match?.score) &&
@@ -233,7 +236,7 @@ export function deriveVisualYearVerification(fields, candidates) {
     if (!year) continue;
     const claim = claims.get(year) ?? { year, strength: 0, candidates: [], visualScores: [] };
     claim.strength += strongVisualMatch
-      ? match.score + structureScore * 0.15 + poseScore * 0.15
+      ? match.score + structureScore * 0.12 + poseScore * 0.12 + patternScore * 0.1
       : 0.82;
     claim.candidates.push(candidate);
     if (strongVisualMatch) claim.visualScores.push(match.score);
