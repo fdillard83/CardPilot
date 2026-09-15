@@ -281,6 +281,7 @@ export type EbayImageSearchCandidate = {
     borderScore: number;
     layoutScore: number;
     structureScore?: number;
+    poseScore?: number;
     normalization?: string;
     cropCoverage?: number;
   };
@@ -387,6 +388,7 @@ export type ActiveMarketListing = {
     borderScore?: number;
     layoutScore?: number;
     structureScore?: number;
+    poseScore?: number;
   } | null;
   visualMatchStatus?: "matched" | "unavailable" | "not_evaluated" | null;
   matchTier: "confirmed" | "strict" | "broader";
@@ -467,6 +469,7 @@ export type SoldComparable = {
     borderScore?: number;
     layoutScore?: number;
     structureScore?: number;
+    poseScore?: number;
   } | null;
   visualMatchStatus?: "matched" | "unavailable" | "not_evaluated" | null;
   suggestions: {

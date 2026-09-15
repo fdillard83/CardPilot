@@ -214,11 +214,15 @@ export function deriveVisualYearVerification(fields, candidates) {
     const structureScore = Number.isFinite(match?.structureScore)
       ? match.structureScore
       : match?.score;
+    const poseScore = Number.isFinite(match?.poseScore)
+      ? match.poseScore
+      : structureScore;
     const strongVisualMatch =
       candidate.visualMatchStatus === "matched" &&
       Number.isFinite(match?.score) &&
       match.score >= 0.7 &&
-      structureScore >= 0.52;
+      structureScore >= 0.52 &&
+      poseScore >= 0.48;
     const exactListingFingerprint = titleHasCardFingerprint(candidate.title, fields);
     if (
       (!strongVisualMatch && !exactListingFingerprint) ||
@@ -229,7 +233,7 @@ export function deriveVisualYearVerification(fields, candidates) {
     if (!year) continue;
     const claim = claims.get(year) ?? { year, strength: 0, candidates: [], visualScores: [] };
     claim.strength += strongVisualMatch
-      ? match.score + structureScore * 0.25
+      ? match.score + structureScore * 0.15 + poseScore * 0.15
       : 0.82;
     claim.candidates.push(candidate);
     if (strongVisualMatch) claim.visualScores.push(match.score);

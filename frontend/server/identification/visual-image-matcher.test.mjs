@@ -68,9 +68,33 @@ test("independent visual matcher separates matching borders and layouts", async 
   assert.ok(candidates[0].visualMatch.borderScore > candidates[1].visualMatch.borderScore);
   assert.ok(candidates[0].visualMatch.layoutScore > candidates[1].visualMatch.layoutScore);
   assert.ok(candidates[0].visualMatch.structureScore > candidates[1].visualMatch.structureScore);
+  assert.ok(candidates[0].visualMatch.poseScore > candidates[1].visualMatch.poseScore);
   assert.ok(candidates[0].visualMatch.score > 0.95);
   assert.equal(isVisualMismatch(candidates[0].visualMatch), false);
   assert.equal(isVisualMismatch(candidates[1].visualMatch), true);
+});
+
+test("player pose contributes independently when card colors and layout match", async () => {
+  const source = await cardImage({ border: "#c61f35", panel: "#e4c98c", stripe: 90, subjectX: 240 });
+  const samePose = await cardImage({ border: "#c61f35", panel: "#e4c98c", stripe: 90, subjectX: 240 });
+  const differentPose = await cardImage({ border: "#c61f35", panel: "#e4c98c", stripe: 90, subjectX: 105 });
+  const matcher = new VisualImageMatcher({
+    fetchImpl: async (url) => new Response(
+      String(url).includes("same-pose") ? samePose : differentPose,
+      { status: 200 },
+    ),
+  });
+  const candidates = await matcher.rank({
+    sourceImageDataUrl: dataUrl(source),
+    candidates: [
+      { itemId: "same-pose", imageUrl: "https://i.ebayimg.com/same-pose.jpg" },
+      { itemId: "different-pose", imageUrl: "https://i.ebayimg.com/different-pose.jpg" },
+    ],
+  });
+
+  assert.equal(candidates[0].itemId, "same-pose");
+  assert.ok(candidates[0].visualMatch.poseScore > candidates[1].visualMatch.poseScore);
+  assert.ok(candidates[0].visualMatch.score > candidates[1].visualMatch.score);
 });
 
 test("visual matcher finds the same card inside marketplace framing and a slab", async () => {

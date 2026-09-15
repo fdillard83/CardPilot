@@ -251,6 +251,28 @@ function structureSignature(data, target) {
   return values;
 }
 
+function poseSignature(data, target) {
+  // Edge magnitude in the central artwork area captures bat, arm, leg, and
+  // torso placement while discarding most border color and printed text.
+  const left = Math.max(1, Math.round(target.width * 0.12));
+  const right = Math.min(target.width - 1, Math.round(target.width * 0.88));
+  const top = Math.max(1, Math.round(target.height * 0.12));
+  const bottom = Math.min(target.height - 1, Math.round(target.height * 0.86));
+  const values = new Float64Array((right - left) * (bottom - top));
+  let output = 0;
+  for (let y = top; y < bottom; y += 1) {
+    for (let x = left; x < right; x += 1) {
+      const horizontal = luminance(data, y * target.width + x + 1) -
+        luminance(data, y * target.width + x - 1);
+      const vertical = luminance(data, (y + 1) * target.width + x) -
+        luminance(data, (y - 1) * target.width + x);
+      values[output] = Math.sqrt(horizontal ** 2 + vertical ** 2) / 255;
+      output += 1;
+    }
+  }
+  return values;
+}
+
 async function signature(image, crop, target) {
   const pixels = await normalizedPixels(image, crop, target);
   return {
@@ -258,6 +280,7 @@ async function signature(image, crop, target) {
     border: borderHistogram(pixels, target),
     layout: layoutSignature(pixels, target),
     structure: structureSignature(pixels, target),
+    pose: poseSignature(pixels, target),
   };
 }
 
@@ -307,16 +330,19 @@ function compare(source, candidate) {
   const borderScore = histogramIntersection(source.border, candidate.border);
   const layoutScore = cosineSimilarity(source.layout, candidate.layout);
   const structureScore = cosineSimilarity(source.structure, candidate.structure);
+  const poseScore = cosineSimilarity(source.pose, candidate.pose);
   // Printed border color and full-color pixels carry the finish/parallel
   // signal. The earlier structure-heavy blend was good at finding the same
   // photograph but could rank a different color parallel almost identically.
-  const score = pixelScore * 0.3 + borderScore * 0.25 + layoutScore * 0.15 + structureScore * 0.3;
+  const score = pixelScore * 0.25 + borderScore * 0.25 + layoutScore * 0.1 +
+    structureScore * 0.2 + poseScore * 0.2;
   return {
     score: Number(score.toFixed(3)),
     pixelScore: Number(pixelScore.toFixed(3)),
     borderScore: Number(borderScore.toFixed(3)),
     layoutScore: Number(layoutScore.toFixed(3)),
     structureScore: Number(structureScore.toFixed(3)),
+    poseScore: Number(poseScore.toFixed(3)),
   };
 }
 
@@ -329,8 +355,12 @@ export function isVisualMismatch(visualMatch, visualMatchStatus = null) {
     ? visualMatch.structureScore
     : null;
   if (structureScore === null) return visualMatch.score < 0.5;
+  const poseScore = Number.isFinite(visualMatch.poseScore)
+    ? visualMatch.poseScore
+    : null;
   return visualMatch.score < 0.4 ||
     structureScore < 0.25 ||
+    (poseScore !== null && poseScore < 0.2) ||
     (visualMatch.score < 0.58 && structureScore < 0.38);
 }
 
