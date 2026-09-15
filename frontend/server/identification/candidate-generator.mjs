@@ -176,28 +176,38 @@ export class RemoteCatalogCandidateGenerator {
     const cached = this.cache.get(key);
     if (cached && cached.expiresAt > this.now()) return structuredClone(cached.candidates);
     try {
-      let result = await this.client.searchCards(search);
-      if (!result.cards.length) {
-        result = await this.client.searchCards({
-          ...search,
-          query: [
-            extraction.fields.player.value,
-            extraction.fields.manufacturer.value,
-            extraction.fields.product.value,
-            extraction.fields.setOrInsert.value,
-          ].filter(Boolean).join(" "),
-          year: null,
-        });
-      }
-      if (!result.cards.length && extraction.fields.player.value) {
-        result = await this.client.searchCards({
+      const broadSearch = {
+        ...search,
+        query: [
+          extraction.fields.player.value,
+          extraction.fields.manufacturer.value,
+          extraction.fields.product.value,
+          extraction.fields.setOrInsert.value,
+        ].filter(Boolean).join(" "),
+        year: null,
+      };
+      // Never let an extracted year become a retrieval filter with no escape
+      // hatch. Search the observed year and the same identity without a year in
+      // parallel, then let independent field verification rank the union.
+      const results = search.year === null
+        ? [await this.client.searchCards(search)]
+        : await Promise.all([
+            this.client.searchCards(search),
+            this.client.searchCards(broadSearch),
+          ]);
+      let cards = [...new Map(
+        results.flatMap((result) => result.cards).map((card) => [card.ucid, card]),
+      ).values()];
+      if (!cards.length && extraction.fields.player.value) {
+        const result = await this.client.searchCards({
           ...search,
           query: extraction.fields.player.value,
           year: null,
           cardNumber: extraction.fields.cardNumber.value,
         });
+        cards = result.cards;
       }
-      const candidates = result.cards.map(remoteCandidate);
+      const candidates = cards.map(remoteCandidate);
       if (!candidates.length) return this.fallback.generate(extraction);
       this.cache.set(key, { candidates: structuredClone(candidates), expiresAt: this.now() + this.cacheDurationMs });
       return candidates;

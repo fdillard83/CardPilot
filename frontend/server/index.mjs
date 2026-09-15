@@ -94,7 +94,10 @@ dotenv.config({ path: path.resolve(currentDirectory, "../.env") });
 const app = express();
 const port = Number(process.env.PORT) || 8787;
 const accuracyModel = process.env.OPENAI_MODEL || "gpt-5.6-sol";
-const fastModel = process.env.OPENAI_FAST_MODEL || "gpt-5.4-mini";
+// Identification accuracy is the product's primary constraint. Front-only scans
+// therefore use the accuracy model unless an operator explicitly opts into a
+// different latency/cost tradeoff with OPENAI_FAST_MODEL.
+const fastModel = process.env.OPENAI_FAST_MODEL || accuracyModel;
 const ebayClientId = process.env.EBAY_CLIENT_ID?.trim();
 const ebayClientSecret = process.env.EBAY_CLIENT_SECRET?.trim();
 const ebayConfigured = Boolean(ebayClientId && ebayClientSecret);
@@ -3201,7 +3204,7 @@ app.post("/api/identify-card", async (request, response) => {
   try {
     const identificationEngine = new IdentificationEngine({
       evidenceEngine: openaiEvidence,
-      candidateGenerator: new CatalogCandidateGenerator(),
+      candidateGenerator: remoteCatalogCandidates,
       model: accuracyModel,
       webEvidence,
     });

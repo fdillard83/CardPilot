@@ -307,7 +307,10 @@ function compare(source, candidate) {
   const borderScore = histogramIntersection(source.border, candidate.border);
   const layoutScore = cosineSimilarity(source.layout, candidate.layout);
   const structureScore = cosineSimilarity(source.structure, candidate.structure);
-  const score = pixelScore * 0.25 + borderScore * 0.15 + layoutScore * 0.2 + structureScore * 0.4;
+  // Printed border color and full-color pixels carry the finish/parallel
+  // signal. The earlier structure-heavy blend was good at finding the same
+  // photograph but could rank a different color parallel almost identically.
+  const score = pixelScore * 0.3 + borderScore * 0.25 + layoutScore * 0.15 + structureScore * 0.3;
   return {
     score: Number(score.toFixed(3)),
     pixelScore: Number(pixelScore.toFixed(3)),

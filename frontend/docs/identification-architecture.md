@@ -54,7 +54,7 @@ A back photo is never required. It is suggested only when the result is not alre
 
 ## Latency controls
 
-The normal front-only path makes one request to the configured fast vision model with reasoning disabled. The browser adds four compressed corner crops so small printed details receive focused attention inside that same request. A supplied back photo routes to the configured accuracy model at medium reasoning effort because the user has explicitly chosen deeper verification.
+The normal front-only path makes one request to the configured accuracy vision model at low reasoning effort. An operator can explicitly set `OPENAI_FAST_MODEL` to choose a different latency/cost tradeoff. The browser adds enlarged top and bottom detail bands so small printed details receive focused attention inside that same request. A supplied back photo routes to the configured accuracy model at medium reasoning effort because the user has explicitly chosen deeper verification.
 
 The API client uses a 60-second timeout and no automatic retry. A transient failure therefore returns control to the collector instead of silently repeating a long identification. Each result records total pipeline duration and stage duration, and the server logs those values for regression monitoring.
 

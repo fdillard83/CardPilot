@@ -112,8 +112,8 @@ export class OpenAIEvidenceEngine {
     const response = await this.openai.responses.parse({
       model: selectedModel,
       store: false,
-      reasoning: { effort: intake.backImage ? "medium" : "none" },
-      max_output_tokens: intake.backImage ? 4_800 : 2_800,
+      reasoning: { effort: intake.backImage ? "medium" : "low" },
+      max_output_tokens: intake.backImage ? 4_800 : 4_000,
       input: [
         { role: "system", content: evidencePrompt },
         { role: "user", content: createUserContent(intake) },

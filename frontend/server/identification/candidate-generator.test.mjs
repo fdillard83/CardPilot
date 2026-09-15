@@ -96,3 +96,24 @@ test("remote catalog retries without an uncertain year before falling back", asy
   assert.equal(searches[1].year, null);
   assert.equal(candidates[0].catalogRecordId, "UC-EDGAR-BROAD");
 });
+
+test("remote catalog keeps year-agnostic candidates even when the guessed year returned results", async () => {
+  const observed = extraction("Edgar Martinez");
+  observed.fields.year = field("2026");
+  observed.fields.product = field("Topps Tribute");
+  const searches = [];
+  const generator = new RemoteCatalogCandidateGenerator({
+    client: {
+      searchCards: async (search) => {
+        searches.push(search);
+        return search.year === 2026
+          ? { cards: [{ ucid: "WRONG-YEAR", subject: "Edgar Martinez", sport: "Baseball", year: 2026, manufacturer: "Topps", setName: "Topps Tribute", parentSetName: null, cardNumber: "1", parallel: null, isRookie: false, isAuto: false, isRelic: false, printRun: null }] }
+          : { cards: [{ ucid: "RIGHT-YEAR", subject: "Edgar Martinez", sport: "Baseball", year: 2025, manufacturer: "Topps", setName: "Topps Tribute", parentSetName: null, cardNumber: "2", parallel: "Orange", isRookie: false, isAuto: false, isRelic: false, printRun: 25 }] };
+      },
+    },
+  });
+
+  const candidates = await generator.generate(observed);
+  assert.equal(searches.length, 2);
+  assert.deepEqual(candidates.map((candidate) => candidate.catalogRecordId), ["WRONG-YEAR", "RIGHT-YEAR"]);
+});

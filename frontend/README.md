@@ -329,6 +329,6 @@ API usage.
 - The Card API completed-sales searches run through the Express server. `THE_CARD_API_KEY` is never returned to browser code, and free-tier results remain in memory only.
 - User corrections are stored locally in `.data/corrections.jsonl`; that directory is ignored by Git.
 - Saved collection records and card photos are stored under `.data`; that directory is ignored by Git.
-- Front-only scans use `gpt-5.4-mini` by default for lower latency and reliable visual extraction. Override it with `OPENAI_FAST_MODEL`.
+- Front-only scans use the configured accuracy model by default. Set `OPENAI_FAST_MODEL` only when you intentionally prefer a different latency/cost tradeoff.
 - Scans with an optional back photo use `gpt-5.6-sol` by default for deeper verification. Override it with `OPENAI_MODEL`.
 - AI identification is a first-pass assistant, not a guarantee. Verify the printed card number, set, parallel, and serial numbering before a purchase, sale, or grading submission.
