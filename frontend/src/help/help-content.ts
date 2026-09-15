@@ -56,7 +56,7 @@ export const helpArticles: HelpArticle[] = [
   ] },
   { id: "price-comparison", category: "Selling", title: "Compare active listing prices", summary: "Understand exact-card comparisons and buyer totals.", sections: [
     { heading: "Buyer total", paragraphs: ["CardPilot compares the amount a buyer pays: item price plus buyer-paid shipping. The normal positioning target is 5¢ below the lowest compatible exact-card buyer total."] },
-    { heading: "Choose the workload", bullets: ["Compare selected listings for the smallest review.", "Use priority or attention-based groups when available.", "Compare all listings for an occasional full review.", "No eBay price changes until you explicitly apply selected results."] },
+    { heading: "Choose the workload", bullets: ["Set a minimum current item price before Compare all; less expensive listings are skipped before any pricing-provider requests are made.", "Compare selected listings for a smaller explicit review, including an individual inexpensive card when needed.", "Use priority or attention-based groups when available.", "Leave the threshold blank or at $0 for an occasional full review.", "No eBay price changes until you explicitly apply selected results."] },
   ] },
   { id: "profitability", category: "Selling", title: "Profit, fees, promotions, and market-minimum warnings", summary: "How CardPilot estimates proceeds and flags an unprofitable market floor.", sections: [
     { heading: "What is included", bullets: ["Configured transaction percentage and fixed fee.", "Estimated fee effect from buyer sales tax.", "Applicable promoted-listing rate.", "Configured mailing or fulfillment cost."] },

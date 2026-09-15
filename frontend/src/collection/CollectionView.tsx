@@ -1569,6 +1569,7 @@ export function CollectionView({
   const [pricePositionCurrentTitle, setPricePositionCurrentTitle] = useState<string | null>(null);
   const [priceApplyBusy, setPriceApplyBusy] = useState(false);
   const [pricePositionMessage, setPricePositionMessage] = useState<string | null>(null);
+  const [pricePositionMinimumInput, setPricePositionMinimumInput] = useState("");
 
   useEffect(() => {
     if (!focusCollectionCardId) return;
@@ -1753,6 +1754,24 @@ export function CollectionView({
     () => cards.filter((card) => card.selling?.status === "published"),
     [cards],
   );
+  const pricePositionMinimumCents = useMemo(() => {
+    const value = pricePositionMinimumInput.trim();
+    if (!value) return 0;
+    const amount = Number(value);
+    return Number.isFinite(amount) && amount >= 0
+      ? Math.round(amount * 100)
+      : null;
+  }, [pricePositionMinimumInput]);
+  const activeListingsAboveMinimum = useMemo(
+    () => pricePositionMinimumCents === null
+      ? []
+      : activeListingCards.filter(
+          (card) => (card.selling?.priceCents ?? 0) >= pricePositionMinimumCents,
+        ),
+    [activeListingCards, pricePositionMinimumCents],
+  );
+  const activeListingsBelowMinimumCount =
+    activeListingCards.length - activeListingsAboveMinimum.length;
 
   const collectionValuation = useMemo(() => {
     const collectionCards = cards.filter((card) => card.selling?.status !== "sold");
@@ -3191,8 +3210,19 @@ export function CollectionView({
           <strong id="delivered-price-title">Set selected buyer totals below the closest exact match</strong>
           <small>CardPilot compares the full amount a buyer pays: item price plus shipping. The default target is 5¢ below; your saved Account setting controls the exact amount. By default CardPilot changes only the item price, but you can explicitly choose a different shipping charge for an individual card during review.</small>
         </div>
+        <label className="collection-price-threshold">
+          <span>Only compare current item prices at or above</span>
+          <div><span>$</span><input type="number" min="0" step="0.01" inputMode="decimal" value={pricePositionMinimumInput} disabled={pricePositionBusy || priceApplyBusy} placeholder="0.00" onChange={(event) => setPricePositionMinimumInput(event.target.value)} /></div>
+          <small>
+            This filter is applied before CardPilot contacts pricing providers. Leave blank or enter $0 to compare every active listing.
+            {pricePositionMinimumCents !== null && pricePositionMinimumCents > 0
+              ? ` ${activeListingsBelowMinimumCount} inexpensive listing${activeListingsBelowMinimumCount === 1 ? " will" : "s will"} be skipped.`
+              : ""}
+          </small>
+          {pricePositionMinimumCents === null && <strong>Enter a valid amount of $0 or more.</strong>}
+        </label>
         <div className="collection-price-positioning-actions">
-          <button className="secondary-button" type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions(activeListingCards.map((card) => card.collectionId))}>{pricePositionBusy ? `Finding exact matches ${pricePositionCompletedCount} of ${pricePositionTotalCount}...` : `Compare all ${activeListingCards.length} active listing${activeListingCards.length === 1 ? "" : "s"}`}</button>
+          <button className="secondary-button" type="button" disabled={pricePositionBusy || priceApplyBusy || pricePositionMinimumCents === null || activeListingsAboveMinimum.length === 0} onClick={() => void checkDeliveredPricePositions(activeListingsAboveMinimum.map((card) => card.collectionId))}>{pricePositionBusy ? `Finding exact matches ${pricePositionCompletedCount} of ${pricePositionTotalCount}...` : `Compare ${activeListingsAboveMinimum.length} eligible active listing${activeListingsAboveMinimum.length === 1 ? "" : "s"}`}</button>
           {selectedPricePositionIds.length > 0 && <button type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => void checkDeliveredPricePositions()}>{`Compare only ${selectedPricePositionIds.length} selected below`}</button>}
           {selectedPricePositionIds.length > 0 && <button type="button" disabled={pricePositionBusy || priceApplyBusy} onClick={() => { setSelectedPricePositionIds([]); setPricePositions([]); setSelectedPriceApplyIds([]); setPriceShippingChoices({}); }}>Clear selected subset</button>}
           <a className="collection-action-outline" href="https://www.ebay.com/sh/lst/active" target="_blank" rel="noreferrer">Open eBay eligible offers</a>

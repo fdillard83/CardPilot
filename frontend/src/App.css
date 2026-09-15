@@ -2817,6 +2817,14 @@ main {
 .collection-price-positioning > div:first-child { display: grid; gap: 4px; }
 .collection-price-positioning > div:first-child > span { color: var(--info-soft); font-size: 10px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
 .collection-price-positioning small, .collection-price-positioning p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.collection-price-threshold { display: grid; grid-template-columns: minmax(190px, .7fr) minmax(130px, .3fr); align-items: center; gap: 6px 12px; max-width: 620px; padding: 11px 12px; border: 1px solid rgba(121, 201, 255, .24); border-radius: 11px; background: var(--field-bg); }
+.collection-price-threshold > span { color: var(--soft-ink); font-size: 11px; font-weight: 800; }
+.collection-price-threshold > div { display: flex; align-items: center; min-height: 40px; border: 1px solid var(--line); border-radius: 9px; background: var(--control-bg); overflow: hidden; }
+.collection-price-threshold > div > span { padding-left: 11px; color: var(--muted); font-size: 12px; font-weight: 800; }
+.collection-price-threshold input { width: 100%; min-width: 0; height: 38px; border: 0; padding: 0 10px 0 4px; color: var(--ink); background: transparent; font: inherit; }
+.collection-price-threshold input:focus { outline: none; }
+.collection-price-threshold small, .collection-price-threshold > strong { grid-column: 1 / -1; }
+.collection-price-threshold > strong { color: var(--danger); font-size: 10px; }
 .collection-price-positioning-actions, .collection-price-review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
 .collection-price-positioning-actions > strong { font-size: 12px; }
 .collection-price-progress { display: grid; gap: 7px; padding: 11px 12px; border: 1px solid rgba(121, 201, 255, .3); border-radius: 11px; background: rgba(121, 201, 255, .065); }
@@ -4987,6 +4995,8 @@ select:focus-visible {
   .collection-heading { align-items: flex-start; flex-direction: column; gap: 22px; }
   .collection-heading h1 { font-size: 42px; }
   .collection-heading-actions { justify-content: flex-start; }
+  .collection-price-threshold { grid-template-columns: 1fr; width: 100%; }
+  .collection-price-threshold small, .collection-price-threshold > strong { grid-column: 1; }
   .collection-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .collection-summary-value { grid-column: 1 / -1; }
   .bulk-valuation-heading { flex-direction: column; }
