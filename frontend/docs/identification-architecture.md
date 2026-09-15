@@ -12,6 +12,15 @@ CardPilot identifies a card through a staged pipeline instead of treating one vi
 6. **Confidence scoring** calculates overall confidence from weighted identity fields. Missing evidence, candidate-only values, and conflicts cap the score.
 7. **Overall decision** applies configurable trust thresholds and high-impact feature rules.
 
+When first-pass verification materially adds or changes a retrieval field such
+as year, product, insert, card number, parallel, or serial number, the engine
+feeds those fields backward through candidate retrieval once, merges the new
+leads with the first pass, and verifies again. This bounded refinement pass
+allows later evidence to improve earlier search without creating an unbounded
+feedback loop. Strong catalog evidence may correct a tentative model-derived
+value, but it cannot overwrite high-confidence visible text. A later eBay year
+consensus also triggers catalog re-verification in the browser.
+
 The public route remains `POST /api/identify-card`. Its response is validated with `CardIdentificationResultSchema` and versioned as schema `1.0`.
 
 ## Modules

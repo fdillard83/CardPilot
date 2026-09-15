@@ -1087,12 +1087,19 @@ function App() {
       if (!response.ok || !Array.isArray(payload?.candidates)) throw new Error(payload?.error ?? "Identity search was unavailable.");
       if (requestId !== ebayIdentityRequestIdRef.current) return;
       if (payload.yearVerification) {
+        const catalogFeedback = withVisualYearVerification(
+          cardIdentification,
+          payload.yearVerification,
+        );
         setIdentification((current) => {
           if (!current) return current;
           const updated = withVisualYearVerification(current, payload.yearVerification!);
           originalIdentificationRef.current = updated;
           return updated;
         });
+        if (catalogFeedback !== cardIdentification) {
+          void loadCardCatalogCandidates(catalogFeedback);
+        }
       }
       setEbaySearch((existing) => {
         const candidates = [...(existing?.candidates ?? []), ...payload.candidates!]

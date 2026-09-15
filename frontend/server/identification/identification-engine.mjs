@@ -32,6 +32,26 @@ function unsupportedStatus(status) {
   return status === "not_sports_card" || status === "not_trading_card";
 }
 
+const retrievalFeedbackFields = [
+  "player", "character", "sport", "year", "manufacturer", "product",
+  "brand", "setOrInsert", "cardNumber", "parallel", "serialNumber",
+  "rookieStatus", "autograph", "memorabilia",
+];
+
+function retrievalEvidenceChanged(before, after) {
+  return retrievalFeedbackFields.some((field) =>
+    !Object.is(before[field]?.value, after[field]?.value),
+  );
+}
+
+function mergeCandidates(refined, initial) {
+  const merged = new Map();
+  for (const candidate of [...refined, ...initial]) {
+    if (!merged.has(candidate.id)) merged.set(candidate.id, candidate);
+  }
+  return [...merged.values()];
+}
+
 export class IdentificationEngine {
   constructor({
     evidenceEngine,
@@ -134,9 +154,51 @@ export class IdentificationEngine {
       });
     }
 
-    const verification = await runStage(stages, "verification", () =>
+    let verification = await runStage(stages, "verification", () =>
       verifyCandidates(extraction, candidates),
     );
+    if (
+      !unsupportedStatus(extraction.status) &&
+      retrievalEvidenceChanged(extraction.fields, verification.fields)
+    ) {
+      const refinementStartedAt = performance.now();
+      try {
+        const feedbackExtraction = {
+          ...extraction,
+          fields: verification.fields,
+        };
+        const refinedCandidates = await this.candidateGenerator.generate(
+          feedbackExtraction,
+        );
+        candidates = mergeCandidates(refinedCandidates, candidates);
+        stages.push({
+          name: "candidate_refinement",
+          status: "completed",
+          durationMs: Math.max(
+            0,
+            Math.round(performance.now() - refinementStartedAt),
+          ),
+        });
+        verification = await runStage(
+          stages,
+          "verification_refinement",
+          () => verifyCandidates(feedbackExtraction, candidates),
+        );
+      } catch (error) {
+        console.warn(
+          "Candidate refinement degraded; keeping first-pass verification.",
+          error?.message ?? error,
+        );
+        stages.push({
+          name: "candidate_refinement",
+          status: "degraded",
+          durationMs: Math.max(
+            0,
+            Math.round(performance.now() - refinementStartedAt),
+          ),
+        });
+      }
+    }
     const overallConfidence = await runStage(
       stages,
       "confidence_scoring",
@@ -198,3 +260,8 @@ export class IdentificationEngine {
     });
   }
 }
+
+export const identificationInternals = {
+  mergeCandidates,
+  retrievalEvidenceChanged,
+};

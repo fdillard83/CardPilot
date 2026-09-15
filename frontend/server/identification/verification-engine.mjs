@@ -199,6 +199,26 @@ function mergeVerifiedCandidates(extraction, candidates) {
       );
       if (boost > 0) result.inferenceSource = "mixed";
     } else {
+      const catalogCanCorrectCandidate =
+        candidate.source === "catalog" &&
+        result.inferenceSource === "candidate" &&
+        result.confidence <= 0.55 &&
+        candidate.matchConfidence >= 0.65 &&
+        ["year", "product", "setOrInsert", "cardNumber", "parallel", "serialNumber"].includes(field);
+      if (catalogCanCorrectCandidate) {
+        result.value = proposed;
+        result.confidence = Number(
+          Math.min(0.72, candidate.matchConfidence * 0.74).toFixed(3),
+        );
+        result.inferenceSource = "catalog";
+        result.missingEvidence = [
+          ...new Set([
+            ...result.missingEvidence,
+            "Independent catalog evidence corrected a tentative card-design candidate.",
+          ]),
+        ];
+        continue;
+      }
       result.confidence = Number((result.confidence * 0.85).toFixed(3));
       result.missingEvidence = [
         ...new Set([

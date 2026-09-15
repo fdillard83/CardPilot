@@ -124,3 +124,27 @@ test("consistent model candidates may provide a review-required year", () => {
   assert.ok(verified.fields.year.confidence <= 0.52);
   assert.match(verified.fields.year.missingEvidence[0], /consistent card-design candidates/i);
 });
+
+test("strong catalog evidence corrects a tentative model-derived year", () => {
+  const fields = Object.fromEntries(fieldKeys.map((key) => [key, field(null)]));
+  fields.player = field("Nolan Ryan");
+  fields.cardNumber = field("CN-14");
+  fields.year = {
+    ...field("2025"),
+    confidence: 0.5,
+    inferenceSource: "candidate",
+  };
+  const catalog = candidate(
+    "catalog-correction",
+    "Topps Series 2",
+    "Crooked Numbers",
+    "CN-14",
+    0.95,
+  );
+
+  const verified = verifyCandidates({ fields }, [catalog]);
+
+  assert.equal(verified.fields.year.value, "2026");
+  assert.equal(verified.fields.year.inferenceSource, "catalog");
+  assert.match(verified.fields.year.missingEvidence[0], /corrected a tentative/i);
+});
