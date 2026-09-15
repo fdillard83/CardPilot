@@ -1034,7 +1034,7 @@ function App() {
       const response = await fetch("/api/ebay/image-search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ frontImage, limit: 12 }),
+        body: JSON.stringify({ frontImage, limit: 30 }),
       });
       const payload = (await response.json().catch(() => null)) as
         | (Partial<EbayImageSearchResult> & { error?: string })

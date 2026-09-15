@@ -84,6 +84,13 @@ separate from the current `CatalogCandidateGenerator` and OpenAI evidence flow.
 Future candidate fusion can rank them against the versioned visible extraction
 without allowing seller titles to overwrite pixel-supported evidence.
 
+The scanner requests up to 30 eBay image-search leads and independently compares
+the first 24 listing images. Same-player keyword corroboration retrieves up to
+20 results per query and visually checks up to 30 unique listings. Structured
+card-catalog retrieval requests up to 10 records per query; final verification
+still exposes only the five strongest candidates so broader recall does not
+become unbounded UI noise.
+
 Pricing, Grading, Market Intelligence, Inventory, and Automation should take the versioned identification result as input and honor `decision.reviewRequired` before performing high-impact actions.
 
 ## Ludex-inspired product path

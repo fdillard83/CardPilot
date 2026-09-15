@@ -93,6 +93,7 @@ test("remote catalog retries without an uncertain year before falling back", asy
   const candidates = await generator.generate(observed);
   assert.equal(searches.length, 2);
   assert.equal(searches[0].year, 2026);
+  assert.equal(searches[0].limit, 10);
   assert.equal(searches[1].year, null);
   assert.equal(candidates[0].catalogRecordId, "UC-EDGAR-BROAD");
 });

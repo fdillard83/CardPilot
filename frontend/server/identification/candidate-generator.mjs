@@ -170,7 +170,7 @@ export class RemoteCatalogCandidateGenerator {
       cardNumber: extraction.fields.cardNumber.value,
       isAuto: extraction.fields.autograph.value === true ? true : null,
       isRookie: extraction.fields.rookieStatus.value === true ? true : null,
-      limit: 5,
+      limit: 10,
     };
     const key = JSON.stringify(search);
     const cached = this.cache.get(key);

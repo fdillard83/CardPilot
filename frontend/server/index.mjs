@@ -3444,7 +3444,7 @@ app.post("/api/ebay/image-search", async (request, response) => {
     const candidates = await visualImageMatcher.rank({
       sourceImageDataUrl: intake.frontImage,
       candidates: result.candidates,
-      limit: Math.min(6, limit),
+      limit: Math.min(24, limit),
     });
     recordProviderUsage({
       provider: "ebay",
@@ -3545,7 +3545,7 @@ app.post("/api/ebay/identity-search", async (request, response) => {
     const results = await Promise.all(
       queries.map((query) => ebayImageSearch.searchByKeywords({
         query,
-        limit: 12,
+        limit: 20,
         categoryId: ebayTradingCardCategoryId(fields),
       })),
     );
@@ -3559,7 +3559,7 @@ app.post("/api/ebay/identity-search", async (request, response) => {
       candidates = await visualImageMatcher.rank({
         sourceImageDataUrl: intake.frontImage,
         candidates,
-        limit: 24,
+        limit: 30,
       });
     }
     const yearVerification = deriveVisualYearVerification(fields, candidates);
