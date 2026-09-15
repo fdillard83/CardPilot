@@ -279,11 +279,17 @@ export type EbayImageSearchCandidate = {
     score: number;
     pixelScore: number;
     borderScore: number;
+    grayscaleScore?: number;
+    grayscaleBorderScore?: number;
     layoutScore: number;
     structureScore?: number;
     poseScore?: number;
     patternScore?: number;
+    patternGeometryScore?: number;
     designScore?: number;
+    reflectiveScore?: number;
+    reflectiveDesignScore?: number;
+    scoreMode?: "balanced_color_grayscale" | "reflective_grayscale";
     normalization?: string;
     cropCoverage?: number;
   };

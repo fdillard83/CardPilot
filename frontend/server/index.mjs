@@ -41,7 +41,10 @@ import { CatalogCandidateGenerator, RemoteCatalogCandidateGenerator } from "./id
 import { OpenAIEvidenceEngine } from "./identification/evidence-engine.mjs";
 import { CachedEvidenceEngine } from "./identification/evidence-cache.mjs";
 import { IdentificationEngine } from "./identification/identification-engine.mjs";
-import { VisualImageMatcher } from "./identification/visual-image-matcher.mjs";
+import {
+  isReflectiveFinish,
+  VisualImageMatcher,
+} from "./identification/visual-image-matcher.mjs";
 import {
   GoogleWebEvidenceProvider,
   googleVisionConfiguration,
@@ -3572,6 +3575,7 @@ app.post("/api/ebay/identity-search", async (request, response) => {
         sourceImageDataUrl: intake.frontImage,
         candidates,
         limit: 45,
+        reflectiveFinish: isReflectiveFinish(fields),
       });
     }
     const yearVerification = deriveVisualYearVerification(fields, candidates);

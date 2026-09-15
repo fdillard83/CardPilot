@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import sharp from "sharp";
-import { isVisualMismatch, VisualImageMatcher, visualImageInternals } from "./visual-image-matcher.mjs";
+import {
+  isReflectiveFinish,
+  isVisualMismatch,
+  VisualImageMatcher,
+  visualImageInternals,
+} from "./visual-image-matcher.mjs";
 
 async function cardImage({ border, panel, stripe, subjectX = 240 }) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="680">
@@ -143,6 +148,43 @@ test("foil geometry contributes independently when color, layout, and pose match
   assert.equal(candidates[0].itemId, "same-pattern");
   assert.ok(candidates[0].visualMatch.patternScore > candidates[1].visualMatch.patternScore);
   assert.ok(candidates[0].visualMatch.score > candidates[1].visualMatch.score);
+});
+
+test("reflective cards favor grayscale geometry when lighting changes hue", async () => {
+  const source = await foilPatternCard("wave");
+  const hueShifted = await sharp(source).modulate({ hue: 135 }).png().toBuffer();
+  const colorMatchWrongDesign = await cardImage({
+    border: "#2866a8",
+    panel: "#4f92ba",
+    stripe: 90,
+    subjectX: 95,
+  });
+  const matcher = new VisualImageMatcher({
+    fetchImpl: async (url) => new Response(
+      String(url).includes("hue-shifted") ? hueShifted : colorMatchWrongDesign,
+      { status: 200 },
+    ),
+  });
+  const candidates = await matcher.rank({
+    sourceImageDataUrl: dataUrl(source),
+    candidates: [
+      { itemId: "hue-shifted", imageUrl: "https://i.ebayimg.com/hue-shifted.jpg" },
+      { itemId: "wrong-design", imageUrl: "https://i.ebayimg.com/wrong-design.jpg" },
+    ],
+    reflectiveFinish: true,
+  });
+
+  assert.equal(candidates[0].itemId, "hue-shifted");
+  assert.equal(candidates[0].visualMatch.scoreMode, "reflective_grayscale");
+  assert.equal(candidates[0].visualMatch.score, candidates[0].visualMatch.reflectiveScore);
+  assert.ok(candidates[0].visualMatch.grayscaleScore > candidates[1].visualMatch.grayscaleScore);
+});
+
+test("reflective finish detection is limited to foil and refraction terms", () => {
+  assert.equal(isReflectiveFinish({ finish: "Holofoil", parallel: null }), true);
+  assert.equal(isReflectiveFinish({ finish: null, parallel: "Green RayWave" }), true);
+  assert.equal(isReflectiveFinish({ finish: null, parallel: "Gold" }), false);
+  assert.equal(isReflectiveFinish({ finish: null, parallel: null, product: "Topps Chrome" }), false);
 });
 
 test("visual matcher finds the same card inside marketplace framing and a slab", async () => {

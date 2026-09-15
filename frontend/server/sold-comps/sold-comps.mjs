@@ -11,7 +11,10 @@ import {
 } from "../valuation/variant-adjustment.mjs";
 import { isPokemonCard } from "../card-category.mjs";
 import { suggestionsFromListingTitle } from "../ebay/image-search.mjs";
-import { isVisualMismatch } from "../identification/visual-image-matcher.mjs";
+import {
+  isReflectiveFinish,
+  isVisualMismatch,
+} from "../identification/visual-image-matcher.mjs";
 
 const soldCompsDisclaimer =
   "Completed-sale records are supplied by a third-party market-data provider and are informational comparisons, not an appraisal or guaranteed value. Exact and broader title matches remain separate, and marketplace fee or buyer-premium treatment can differ by platform. For U.S. valuations, non-USD amounts are converted to USD using the latest available daily ECB reference rate.";
@@ -496,6 +499,7 @@ export class SoldCompsService {
       sourceImageDataUrl,
       candidates: prioritized,
       limit: 30,
+      reflectiveFinish: isReflectiveFinish(fields),
     });
     return { ...result, sales: ranked };
   }

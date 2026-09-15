@@ -8,7 +8,10 @@ import {
   cardIdentity,
   isPokemonCard,
 } from "../card-category.mjs";
-import { isVisualMismatch } from "../identification/visual-image-matcher.mjs";
+import {
+  isReflectiveFinish,
+  isVisualMismatch,
+} from "../identification/visual-image-matcher.mjs";
 import { ebayTradingCardCategoryId } from "../ebay/image-search.mjs";
 
 const activeMarketDisclaimer =
@@ -970,7 +973,12 @@ export class ActiveMarketService {
       ? await this.currencyConverter.ebayCandidates(result.candidates)
       : result.candidates;
     let candidates = sourceImageDataUrl && this.visualMatcher
-      ? await this.visualMatcher.rank({ sourceImageDataUrl, candidates: prioritize(primaryCandidates), limit: 20 })
+      ? await this.visualMatcher.rank({
+          sourceImageDataUrl,
+          candidates: prioritize(primaryCandidates),
+          limit: 20,
+          reflectiveFinish: isReflectiveFinish(fields),
+        })
       : primaryCandidates;
     const queriesUsed = [query];
     const searchedAt = new Date(this.now()).toISOString();
@@ -1007,7 +1015,12 @@ export class ActiveMarketService {
       );
       candidates = [...unique.values()];
       if (sourceImageDataUrl && this.visualMatcher) {
-        candidates = await this.visualMatcher.rank({ sourceImageDataUrl, candidates: prioritize(candidates), limit: 20 });
+        candidates = await this.visualMatcher.rank({
+          sourceImageDataUrl,
+          candidates: prioritize(candidates),
+          limit: 20,
+          reflectiveFinish: isReflectiveFinish(fields),
+        });
       }
       queriesUsed.push(discoveryQuery);
       snapshot = buildActiveMarketSnapshot({

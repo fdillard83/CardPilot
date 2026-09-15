@@ -251,6 +251,37 @@ function structureSignature(data, target) {
   return values;
 }
 
+function grayscaleSignature(data, target) {
+  const values = new Float64Array(target.width * target.height);
+  let mean = 0;
+  for (let index = 0; index < values.length; index += 1) {
+    values[index] = luminance(data, index);
+    mean += values[index];
+  }
+  mean /= values.length;
+  for (let index = 0; index < values.length; index += 1) {
+    values[index] = (values[index] - mean) / 128;
+  }
+  return values;
+}
+
+function grayscaleBorderHistogram(data, target) {
+  const histogram = new Float64Array(16);
+  const borderX = Math.max(2, Math.round(target.width * 0.12));
+  const borderY = Math.max(2, Math.round(target.height * 0.09));
+  let count = 0;
+  for (let y = 0; y < target.height; y += 1) {
+    for (let x = 0; x < target.width; x += 1) {
+      if (x >= borderX && x < target.width - borderX && y >= borderY && y < target.height - borderY) continue;
+      const bin = Math.min(15, Math.floor(luminance(data, y * target.width + x) / 16));
+      histogram[bin] += 1;
+      count += 1;
+    }
+  }
+  if (count) for (let index = 0; index < histogram.length; index += 1) histogram[index] /= count;
+  return histogram;
+}
+
 function poseSignature(data, target) {
   // Edge magnitude in the central artwork area captures bat, arm, leg, and
   // torso placement while discarding most border color and printed text.
@@ -317,15 +348,31 @@ function surfacePatternSignature(data, target) {
   return values;
 }
 
+function patternGeometrySignature(surfacePattern) {
+  const values = new Float64Array(surfacePattern.length / 6 * 4);
+  let output = 0;
+  for (let input = 0; input < surfacePattern.length; input += 6) {
+    for (let direction = 0; direction < 4; direction += 1) {
+      values[output] = surfacePattern[input + direction];
+      output += 1;
+    }
+  }
+  return values;
+}
+
 async function signature(image, crop, target) {
   const pixels = await normalizedPixels(image, crop, target);
+  const pattern = surfacePatternSignature(pixels, target);
   return {
     pixels: pixelSignature(pixels, target),
     border: borderHistogram(pixels, target),
+    grayscale: grayscaleSignature(pixels, target),
+    grayscaleBorder: grayscaleBorderHistogram(pixels, target),
     layout: layoutSignature(pixels, target),
     structure: structureSignature(pixels, target),
     pose: poseSignature(pixels, target),
-    pattern: surfacePatternSignature(pixels, target),
+    pattern,
+    patternGeometry: patternGeometrySignature(pattern),
   };
 }
 
@@ -373,28 +420,50 @@ async function candidateSignatures(buffer, target) {
 function compare(source, candidate) {
   const pixelScore = cosineSimilarity(source.pixels, candidate.pixels);
   const borderScore = histogramIntersection(source.border, candidate.border);
+  const grayscaleScore = cosineSimilarity(source.grayscale, candidate.grayscale);
+  const grayscaleBorderScore = histogramIntersection(source.grayscaleBorder, candidate.grayscaleBorder);
   const layoutScore = cosineSimilarity(source.layout, candidate.layout);
   const structureScore = cosineSimilarity(source.structure, candidate.structure);
   const poseScore = cosineSimilarity(source.pose, candidate.pose);
   const patternScore = cosineSimilarity(source.pattern, candidate.pattern);
+  const patternGeometryScore = cosineSimilarity(source.patternGeometry, candidate.patternGeometry);
   // Design score intentionally excludes the central player/character pose so
   // cards of different subjects can corroborate a shared insert or parallel.
-  const designScore = borderScore * 0.3 + layoutScore * 0.25 + patternScore * 0.45;
+  const designScore = borderScore * 0.2 + grayscaleBorderScore * 0.1 +
+    layoutScore * 0.25 + patternScore * 0.45;
+  const reflectiveDesignScore = grayscaleBorderScore * 0.3 + layoutScore * 0.25 +
+    patternGeometryScore * 0.45;
   // Printed border color and full-color pixels carry the finish/parallel
   // signal. The earlier structure-heavy blend was good at finding the same
   // photograph but could rank a different color parallel almost identically.
-  const score = pixelScore * 0.2 + borderScore * 0.2 + layoutScore * 0.1 +
-    structureScore * 0.175 + poseScore * 0.175 + patternScore * 0.15;
+  const score = pixelScore * 0.15 + borderScore * 0.15 + grayscaleScore * 0.1 +
+    grayscaleBorderScore * 0.1 + layoutScore * 0.1 + structureScore * 0.15 +
+    poseScore * 0.15 + patternScore * 0.1;
+  const reflectiveScore = grayscaleScore * 0.2 + grayscaleBorderScore * 0.15 +
+    layoutScore * 0.1 + structureScore * 0.15 + poseScore * 0.15 +
+    patternGeometryScore * 0.25;
   return {
     score: Number(score.toFixed(3)),
     pixelScore: Number(pixelScore.toFixed(3)),
     borderScore: Number(borderScore.toFixed(3)),
+    grayscaleScore: Number(grayscaleScore.toFixed(3)),
+    grayscaleBorderScore: Number(grayscaleBorderScore.toFixed(3)),
     layoutScore: Number(layoutScore.toFixed(3)),
     structureScore: Number(structureScore.toFixed(3)),
     poseScore: Number(poseScore.toFixed(3)),
     patternScore: Number(patternScore.toFixed(3)),
+    patternGeometryScore: Number(patternGeometryScore.toFixed(3)),
     designScore: Number(designScore.toFixed(3)),
+    reflectiveScore: Number(reflectiveScore.toFixed(3)),
+    reflectiveDesignScore: Number(reflectiveDesignScore.toFixed(3)),
   };
+}
+
+export function isReflectiveFinish(fields = {}) {
+  const description = [fields.finish, fields.parallel]
+    .filter((value) => typeof value === "string")
+    .join(" ");
+  return /\b(?:holo(?:graphic|foil)?|foil|refract(?:or|ive)?|prism|prizm|iridescent|rainbow|shimmer|sparkle|wave|raywave|cracked[ -]?ice|shattered|mojo|x-fractor|superfractor|pulsar|atomic|lava|mosaic|speckle)\b/i.test(description);
 }
 
 export function isVisualMismatch(visualMatch, visualMatchStatus = null) {
@@ -421,7 +490,7 @@ export class VisualImageMatcher {
     this.timeoutMs = timeoutMs;
   }
 
-  async rank({ sourceImageDataUrl, candidates, limit = 6 }) {
+  async rank({ sourceImageDataUrl, candidates, limit = 6, reflectiveFinish = false }) {
     const source = await sourceSignature(dataUrlBuffer(sourceImageDataUrl));
     const ranked = await Promise.all(candidates.slice(0, limit).map(async (candidate) => {
       const url = safeCandidateUrl(candidate.imageUrl);
@@ -438,6 +507,13 @@ export class VisualImageMatcher {
         if (!buffer.length || buffer.length > maxImageBytes) return { ...candidate, visualMatchStatus: "unavailable" };
         const comparisons = (await candidateSignatures(buffer, source.target)).map((variant) => {
           const visualMatch = compare(source.signature, variant.signature);
+          if (reflectiveFinish) {
+            visualMatch.score = visualMatch.reflectiveScore;
+            visualMatch.designScore = visualMatch.reflectiveDesignScore;
+            visualMatch.scoreMode = "reflective_grayscale";
+          } else {
+            visualMatch.scoreMode = "balanced_color_grayscale";
+          }
           const cropPenalty = Math.max(0, 0.32 - variant.cropCoverage) * 0.08;
           return {
             ...visualMatch,

@@ -39,6 +39,14 @@ separate inserts and parallels, but appearance alone cannot invent a named
 parallel; printed text, serial numbering, Google evidence, or catalog agreement
 must independently support the name.
 
+Every visual comparison now evaluates both full-color and grayscale versions of
+the card. Ordinary cards use a balanced score so stable border color remains a
+useful parallel clue. When the extracted finish or parallel indicates foil,
+holographic, prism, wave, cracked-ice, or refractor behavior, the matcher switches
+to a reflective-card score: photographed hue and color-border similarity lose
+their vote, while grayscale border shape, layout, pose, and foil-pattern geometry
+carry the consensus. Both component scores remain recorded for review.
+
 The identity search also performs a design-only cross-player pass. It searches
 the same year and product family without the scanned player's name, then
 compares border, frame layout, and foil geometry while deliberately excluding
