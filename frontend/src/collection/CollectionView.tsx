@@ -31,6 +31,7 @@ import {
   type BulkValuationResult,
 } from "./ValuationWorkflow";
 import {
+  recommendationForStrategy,
   valuationIsStale,
   valuationMethodLabel,
 } from "./valuation-utils";
@@ -1546,6 +1547,7 @@ export function CollectionView({
   const [missingYearBusy, setMissingYearBusy] = useState(false);
   const [missingYearCompleted, setMissingYearCompleted] = useState(0);
   const valuationRequestIdRef = useRef(0);
+
   const [bulkValuationResults, setBulkValuationResults] = useState<
     BulkValuationResult[]
   >([]);
@@ -2769,7 +2771,10 @@ export function CollectionView({
             snapshot,
           );
           let resultCard = card;
-          const recommendation = snapshot.recommendation;
+          const recommendation = recommendationForStrategy(
+            snapshot,
+            accountPreferences.valuationStrategy,
+          );
           const limit = accountPreferences.autoValueMaxCents;
           if (
             recommendation &&
@@ -2858,7 +2863,12 @@ export function CollectionView({
     const failedIds = new Set<string>();
     try {
       for (const result of bulkValuationResults) {
-        const recommendation = result.snapshot?.recommendation;
+        const recommendation = result.snapshot
+          ? recommendationForStrategy(
+              result.snapshot,
+              accountPreferences.valuationStrategy,
+            )
+          : null;
         if (!recommendation || !bulkSelectedIds.includes(result.card.collectionId)) {
           continue;
         }

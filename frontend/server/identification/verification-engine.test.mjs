@@ -106,3 +106,21 @@ test("a model candidate cannot invent a missing year", () => {
   assert.equal(verified.fields.year.value, null);
   assert.match(verified.fields.year.missingEvidence[0], /not independent evidence/i);
 });
+
+test("consistent model candidates may provide a review-required year", () => {
+  const fields = Object.fromEntries(fieldKeys.map((key) => [key, field(null)]));
+  fields.player = field("Nolan Ryan");
+  const first = candidate("model-one", "Topps Series 2", "Crooked Numbers", "CN-14", 0.92);
+  const second = candidate("model-two", "Topps Series 2", "Crooked Numbers", "CN-14", 0.88);
+  first.source = "model_knowledge";
+  first.catalogRecordId = null;
+  second.source = "model_knowledge";
+  second.catalogRecordId = null;
+
+  const verified = verifyCandidates({ fields }, [first, second]);
+
+  assert.equal(verified.fields.year.value, "2026");
+  assert.equal(verified.fields.year.inferenceSource, "candidate");
+  assert.ok(verified.fields.year.confidence <= 0.52);
+  assert.match(verified.fields.year.missingEvidence[0], /consistent card-design candidates/i);
+});

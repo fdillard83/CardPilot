@@ -102,6 +102,17 @@ function nearbyCatalogCandidates(candidates) {
   );
 }
 
+function nearbyModelCandidates(candidates) {
+  const best = candidates[0];
+  if (!best || best.source !== "model_knowledge") return [];
+  return candidates.filter(
+    (candidate) =>
+      candidate.source === "model_knowledge" &&
+      candidate.matchConfidence >= 0.45 &&
+      best.matchConfidence - candidate.matchConfidence <= 0.12,
+  );
+}
+
 function consensusValue(candidates, field) {
   const proposed = candidates
     .map((candidate) => candidate.values[field])
@@ -117,22 +128,34 @@ function mergeVerifiedCandidates(extraction, candidates) {
   const candidate = candidates[0];
   if (!candidate) return fields;
   const catalogPeers = nearbyCatalogCandidates(candidates);
+  const modelPeers = nearbyModelCandidates(candidates);
 
   for (const [field, result] of Object.entries(fields)) {
     const proposed =
       catalogPeers.length > 1
         ? consensusValue(catalogPeers, field)
+        : modelPeers.length > 1
+          ? consensusValue(modelPeers, field)
         : candidate.values[field];
     if (proposed === null) continue;
 
     if (result.value === null) {
+      const yearDiscriminators = candidate.supportingFields.filter((supportingField) =>
+        ["cardNumber", "product", "setOrInsert", "parallel", "serialNumber"].includes(supportingField),
+      );
+      const modelYearConsensus =
+        candidate.source === "model_knowledge" &&
+        modelPeers.length > 1 &&
+        consensusValue(modelPeers, "year") !== null;
+      const modelYearHasStrongVisibleFingerprint =
+        candidate.source === "model_knowledge" &&
+        yearDiscriminators.length >= 2;
       if (
         field === "year" &&
-        (
-          candidate.source !== "catalog" ||
-          !candidate.supportingFields.some((supportingField) =>
-            ["cardNumber", "product", "setOrInsert", "parallel", "serialNumber"].includes(supportingField),
-          )
+        !(
+          (candidate.source === "catalog" && yearDiscriminators.length > 0) ||
+          modelYearConsensus ||
+          modelYearHasStrongVisibleFingerprint
         )
       ) {
         result.missingEvidence = [
@@ -148,11 +171,19 @@ function mergeVerifiedCandidates(extraction, candidates) {
       result.value = proposed;
       result.confidence = Number(
         Math.min(
-          candidate.source === "catalog" ? 0.68 : 0.55,
-          candidate.matchConfidence * 0.72,
+          candidate.source === "catalog" ? 0.68 : field === "year" ? 0.52 : 0.55,
+          candidate.matchConfidence * (candidate.source === "catalog" ? 0.72 : 0.58),
         ).toFixed(3),
       );
       result.inferenceSource = candidate.source === "catalog" ? "catalog" : "candidate";
+      if (field === "year" && candidate.source === "model_knowledge") {
+        result.missingEvidence = [
+          ...new Set([
+            ...result.missingEvidence,
+            "Confirm the issue year because it comes from consistent card-design candidates rather than printed year text or an independent catalog.",
+          ]),
+        ];
+      }
       continue;
     }
 

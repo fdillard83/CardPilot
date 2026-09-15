@@ -1,6 +1,10 @@
 import type {
+  AccountPreferences,
+} from "../accounts/preferences";
+import type {
   SavedCollectionCard,
   ValuationMethod,
+  ValuationRecommendationSnapshot,
 } from "../identification/types";
 
 const valuationMethodLabels: Record<ValuationMethod, string> = {
@@ -36,4 +40,18 @@ export function valuationIsStale(
     now - valuedAt > staleAfterMs ||
     (Number.isFinite(updatedAt) && updatedAt > valuedAt)
   );
+}
+
+export function recommendationForStrategy(
+  snapshot: ValuationRecommendationSnapshot,
+  strategy: AccountPreferences["valuationStrategy"],
+) {
+  const recommendation = snapshot.recommendation;
+  if (!recommendation) return null;
+  return {
+    ...recommendation,
+    amountCents:
+      snapshot.saleStrategyOptions?.[strategy]?.amountCents ??
+      recommendation.amountCents,
+  };
 }
