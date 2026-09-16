@@ -4,6 +4,7 @@ import {
   ValuationRecommendationService,
   buildSaleStrategyOptions,
   buildValuationRecommendation,
+  recommendationForStrategy,
   roundDownToNickelCents,
   roundRecommendedValueCents,
 } from "./recommendation.mjs";
@@ -75,6 +76,18 @@ test("selling strategies separate the market floor from midpoint and upper value
   assert.equal(snapshot.saleStrategyOptions.sell_faster.amountCents, 190);
   assert.equal(snapshot.saleStrategyOptions.balanced.amountCents, 225);
   assert.equal(snapshot.saleStrategyOptions.maximize_value.amountCents, 295);
+  assert.equal(
+    recommendationForStrategy(snapshot, "sell_faster").amountCents,
+    190,
+  );
+  assert.equal(
+    recommendationForStrategy(snapshot, "balanced").amountCents,
+    225,
+  );
+  assert.equal(
+    recommendationForStrategy(snapshot, "maximize_value").amountCents,
+    295,
+  );
 });
 
 test("Sell Faster cannot be inflated by active listings above the grounded recommendation", () => {

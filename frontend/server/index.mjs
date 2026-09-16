@@ -58,7 +58,11 @@ import { createCorrectionLogger } from "./correction-log.mjs";
 import { CollectionStore } from "./collection-store.mjs";
 import { LocalCollectionRepository } from "./collection-repository.mjs";
 import { ActiveMarketService } from "./valuation/active-market.mjs";
-import { buildValuationRecommendation, ValuationRecommendationService } from "./valuation/recommendation.mjs";
+import {
+  buildValuationRecommendation,
+  recommendationForStrategy,
+  ValuationRecommendationService,
+} from "./valuation/recommendation.mjs";
 import {
   TheCardApiClient,
   TheCardApiError,
@@ -1133,16 +1137,21 @@ async function runCardAutopilot(userId, originalCard) {
   const preferences = await cloudServices.preferences.get(userId);
   let card = originalCard;
   let snapshot = null;
+  let selectedRecommendation = null;
   try {
     snapshot = await valuationRecommendations.snapshot(card, {
       minimumValuationCents: accountValuationFloor(preferences),
     });
-    if (shouldAutomaticallySaveValuation({ card, preferences, recommendation: snapshot.recommendation })) {
+    selectedRecommendation = recommendationForStrategy(
+      snapshot,
+      preferences.valuationStrategy,
+    );
+    if (shouldAutomaticallySaveValuation({ card, preferences, recommendation: selectedRecommendation })) {
       card = await collectionStore.updateConfirmedValuation(userId, card.collectionId, {
-        amountCents: snapshot.recommendation.amountCents,
-        currency: snapshot.recommendation.currency,
-        confidence: snapshot.recommendation.confidence,
-        method: snapshot.recommendation.method,
+        amountCents: selectedRecommendation.amountCents,
+        currency: selectedRecommendation.currency,
+        confidence: selectedRecommendation.confidence,
+        method: selectedRecommendation.method,
         userAdjusted: false,
       }) ?? card;
     }
@@ -1178,7 +1187,7 @@ async function runCardAutopilot(userId, originalCard) {
   const decision = assessAutopilot({
     card,
     preferences,
-    recommendation: snapshot?.recommendation ?? null,
+    recommendation: selectedRecommendation,
     connection,
     draft: editableDraft,
   });

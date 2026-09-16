@@ -470,6 +470,17 @@ export function buildSaleStrategyOptions(
   };
 }
 
+export function recommendationForStrategy(snapshot, strategy = "balanced") {
+  const recommendation = snapshot?.recommendation ?? null;
+  if (!recommendation) return null;
+  return {
+    ...recommendation,
+    amountCents:
+      snapshot.saleStrategyOptions?.[strategy]?.amountCents ??
+      recommendation.amountCents,
+  };
+}
+
 export function buildValuationRecommendation({
   soldSnapshot = null,
   activeSnapshot = null,
