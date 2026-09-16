@@ -85,6 +85,36 @@ function normalizeWebDetection(webDetection = {}) {
     .slice(0, 30);
 }
 
+function normalizedPrintedText(annotation, { side, label }) {
+  const text = annotation?.fullTextAnnotation?.text ?? annotation?.textAnnotations?.[0]?.description;
+  if (typeof text !== "string" || !text.trim()) return null;
+  return {
+    type: "printed_card_text",
+    text: text.replace(/\s+/g, " ").trim().slice(0, 4_000),
+    url: null,
+    imageUrl: null,
+    strength: label.includes("detail") ? 0.92 : 0.88,
+    imageSide: side,
+    imageLabel: label,
+  };
+}
+
+function visionImages(intake) {
+  const images = [
+    { side: "front", label: "front card", dataUrl: intake.frontImage, webDetection: true },
+  ];
+  for (const detail of intake.frontDetailImages ?? []) {
+    images.push({ side: "front", label: `front ${detail.label} detail`, dataUrl: detail.image, webDetection: false });
+  }
+  if (intake.backImage) {
+    images.push({ side: "back", label: "back card", dataUrl: intake.backImage, webDetection: false });
+    for (const detail of intake.backDetailImages ?? []) {
+      images.push({ side: "back", label: `back ${detail.label} detail`, dataUrl: detail.image, webDetection: false });
+    }
+  }
+  return images;
+}
+
 export function googleVisionConfiguration(environment = process.env) {
   if (environment.GOOGLE_VISION_ENABLED !== "true") return null;
   const encoded = environment.GOOGLE_CLOUD_CREDENTIALS_BASE64?.trim();
@@ -106,7 +136,7 @@ export function googleVisionConfiguration(environment = process.env) {
   return {
     credentials,
     projectId: environment.GOOGLE_CLOUD_PROJECT_ID?.trim() || credentials.project_id,
-    timeoutMs: Math.max(500, Math.min(8_000, Number(environment.GOOGLE_VISION_TIMEOUT_MS) || 3_000)),
+    timeoutMs: Math.max(500, Math.min(12_000, Number(environment.GOOGLE_VISION_TIMEOUT_MS) || 6_000)),
   };
 }
 
@@ -134,13 +164,18 @@ export class GoogleWebEvidenceProvider {
   }
 
   async analyze(intake) {
-    const content = imageContent(intake.frontImage);
-    const key = createHash("sha256").update(content).digest("base64url");
+    const images = visionImages(intake).map((image) => ({
+      ...image,
+      content: imageContent(image.dataUrl),
+    }));
+    const hash = createHash("sha256");
+    for (const image of images) hash.update(image.side).update(image.label).update(image.content);
+    const key = hash.digest("base64url");
     const cached = this.cache.get(key);
     if (cached && cached.expiresAt > this.now()) return structuredClone(cached.value);
     if (cached) this.cache.delete(key);
     if (this.inFlight.has(key)) return structuredClone(await this.inFlight.get(key));
-    const pending = this.#request(content);
+    const pending = this.#request(images);
     this.inFlight.set(key, pending);
     try {
       const value = await pending;
@@ -152,7 +187,7 @@ export class GoogleWebEvidenceProvider {
     }
   }
 
-  async #request(content) {
+  async #request(images) {
     const accessToken = await this.auth.getAccessToken();
     if (!accessToken) throw new Error("Google Cloud did not issue an access token.");
     const response = await this.fetch(visionEndpoint, {
@@ -163,19 +198,35 @@ export class GoogleWebEvidenceProvider {
         "x-goog-user-project": this.projectId,
       },
       body: JSON.stringify({
-        requests: [{
-          image: { content },
-          features: [{ type: "WEB_DETECTION", maxResults: 15 }],
-        }],
+        requests: images.map((image) => ({
+          image: { content: image.content },
+          features: [
+            ...(image.webDetection ? [{ type: "WEB_DETECTION", maxResults: 30 }] : []),
+            { type: "TEXT_DETECTION", maxResults: 30 },
+          ],
+        })),
       }),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     const payload = await response.json().catch(() => ({}));
-    const annotation = payload?.responses?.[0];
-    if (!response.ok || annotation?.error?.message) {
-      throw new Error(annotation?.error?.message || `Google Vision returned HTTP ${response.status}.`);
+    const annotations = payload?.responses ?? [];
+    const firstError = annotations.find((annotation) => annotation?.error?.message)?.error?.message;
+    if (!response.ok || !Array.isArray(annotations) || annotations.length === 0) {
+      throw new Error(firstError || `Google Vision returned HTTP ${response.status}.`);
     }
-    return { provider: this.name, signals: normalizeWebDetection(annotation?.webDetection) };
+    const signals = normalizeWebDetection(annotations[0]?.webDetection);
+    for (const [index, annotation] of annotations.entries()) {
+      if (annotation?.error?.message) continue;
+      const printedText = normalizedPrintedText(annotation, images[index]);
+      if (printedText && !signals.some((signal) =>
+        signal.type === printedText.type &&
+        signal.imageSide === printedText.imageSide &&
+        signal.text === printedText.text
+      )) {
+        signals.push(printedText);
+      }
+    }
+    return { provider: this.name, signals };
   }
 }
 
@@ -213,4 +264,9 @@ export class WebEvidenceOrchestrator {
   }
 }
 
-export const googleWebEvidenceInternals = { normalizeWebDetection, imageContent };
+export const googleWebEvidenceInternals = {
+  normalizeWebDetection,
+  normalizedPrintedText,
+  visionImages,
+  imageContent,
+};

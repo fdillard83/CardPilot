@@ -221,6 +221,86 @@ test("market consensus profiles retain only web-supported saved identity fields"
   assert.equal(profile.rookieStatus, undefined);
 });
 
+test("clear Google OCR from the card back fills a missing year", () => {
+  const extraction = {
+    fields: { player: visible("Nick Kurtz", 0.95), year: visible(null, 0) },
+    evidence: [],
+  };
+  const result = applyEvidenceConsensus(extraction, [{
+    provider: "google_web_detection",
+    status: "completed",
+    signals: [{
+      type: "printed_card_text",
+      text: "Nick Kurtz PP-30 © 2025 The Topps Company",
+      url: null,
+      imageUrl: null,
+      imageSide: "back",
+      imageLabel: "back lower detail band detail",
+      strength: 0.92,
+    }],
+  }]);
+
+  assert.equal(result.fields.year.value, "2025");
+  assert.equal(result.fields.year.inferenceSource, "web");
+  assert.ok(result.fields.year.confidence >= 0.74);
+});
+
+test("front OCR needs an independent matching result before filling a year", () => {
+  const extraction = {
+    fields: { player: visible("Nick Kurtz", 0.95), year: visible(null, 0) },
+    evidence: [],
+  };
+  const ocr = {
+    type: "printed_card_text",
+    text: "2025 Nick Kurtz",
+    url: null,
+    imageUrl: null,
+    imageSide: "front",
+    imageLabel: "front card",
+    strength: 0.88,
+  };
+  const uncorroborated = applyEvidenceConsensus(extraction, [{
+    provider: "google_web_detection",
+    status: "completed",
+    signals: [ocr],
+  }]);
+  assert.equal(uncorroborated.fields.year.value, null);
+
+  const corroborated = applyEvidenceConsensus(extraction, [{
+    provider: "google_web_detection",
+    status: "completed",
+    signals: [ocr, {
+      type: "full_matching_page",
+      text: "2025 Topps Nick Kurtz PP-30",
+      url: "https://example.com/2025-nick-kurtz",
+      imageUrl: null,
+      strength: 0.94,
+    }],
+  }]);
+  assert.equal(corroborated.fields.year.value, "2025");
+});
+
+test("anniversary wording cannot turn an old design year into the issue year", () => {
+  const extraction = {
+    fields: { player: visible("Nick Kurtz", 0.95), year: visible(null, 0) },
+    evidence: [],
+  };
+  const result = applyEvidenceConsensus(extraction, [{
+    provider: "google_web_detection",
+    status: "completed",
+    signals: [{
+      type: "printed_card_text",
+      text: "Nick Kurtz 1952 design anniversary",
+      url: null,
+      imageUrl: null,
+      imageSide: "back",
+      imageLabel: "back card",
+      strength: 0.9,
+    }],
+  }]);
+  assert.equal(result.fields.year.value, null);
+});
+
 test("backward reconciliation restores a repeated Google year consensus", () => {
   const originalExtraction = {
     fields: { year: visible("2026", 0.62) },

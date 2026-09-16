@@ -113,6 +113,7 @@ function yearConsensus(providerResults, fields = {}) {
         "full_matching_page",
         "partial_matching_page",
         "best_guess_label",
+        "printed_card_text",
       ].includes(signal.type)) continue;
       const signalYears = yearsInSignal(signal);
       // Marketplace pages often contain unrelated years in recommendations,
@@ -120,6 +121,12 @@ function yearConsensus(providerResults, fields = {}) {
       if (signalYears.length !== 1) continue;
       const identity = fields.player?.value ?? fields.character?.value;
       if (identity && !signalSupportsValue(signal, identity)) continue;
+      const onlyYear = signalYears[0];
+      const anniversaryPattern = new RegExp(
+        `(?:anniversary|years?\\s+of|throwback|retro|design|commemorative)[^.!?]{0,35}\\b${onlyYear}\\b|\\b${onlyYear}\\b[^.!?]{0,35}(?:anniversary|years?\\s+of|throwback|retro|design|commemorative)`,
+        "i",
+      );
+      if (signal.type === "printed_card_text" && anniversaryPattern.test(signal.text)) continue;
       for (const year of signalYears) {
         const claim = claims.get(year) ?? {
           year,
@@ -128,12 +135,16 @@ function yearConsensus(providerResults, fields = {}) {
           providers: new Set(),
           fullMatches: 0,
           partialMatches: 0,
+          printedBackText: 0,
+          printedFrontText: 0,
         };
         claim.score += signal.strength;
         claim.signals.push(signal);
         claim.providers.add(providerResult.provider);
         if (signal.type === "full_matching_page") claim.fullMatches += 1;
         if (signal.type === "partial_matching_page") claim.partialMatches += 1;
+        if (signal.type === "printed_card_text" && signal.imageSide === "back") claim.printedBackText += 1;
+        if (signal.type === "printed_card_text" && signal.imageSide === "front") claim.printedFrontText += 1;
         claims.set(year, claim);
       }
     }
@@ -144,7 +155,17 @@ function yearConsensus(providerResults, fields = {}) {
   const runnerUpScore = ranked[1]?.score ?? 0;
   const hasStrongExactMatch = best.fullMatches >= 2 && best.score >= 1.8;
   const hasRepeatedPartialSupport = best.partialMatches >= 2 && best.score >= 1.4;
-  if ((!hasStrongExactMatch && !hasRepeatedPartialSupport) || best.score - runnerUpScore < 0.3) {
+  // One clear back-card OCR reading is direct printed evidence, while front
+  // OCR is allowed to participate only when another source corroborates it.
+  const hasBackTextSupport = best.printedBackText >= 1 && best.score >= 0.84;
+  const hasCorroboratedFrontText =
+    best.printedFrontText >= 1 &&
+    (best.fullMatches >= 1 || best.partialMatches >= 1) &&
+    best.score >= 1.45;
+  if (
+    (!hasStrongExactMatch && !hasRepeatedPartialSupport && !hasBackTextSupport && !hasCorroboratedFrontText) ||
+    best.score - runnerUpScore < 0.3
+  ) {
     return null;
   }
   return best;
