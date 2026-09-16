@@ -408,12 +408,23 @@ export function buildSaleStrategyOptions(
   if (!recommendation) return null;
   const activeFloor = activeMarketFloor(activeSnapshot, grading);
   const fallbackFloor = recommendation.typicalRange.lowAmountCents;
+  const recommendationCeiling = Math.max(
+    1,
+    roundDownToNickelCents(
+      Math.max(1, recommendation.amountCents - 5),
+    ),
+  );
+  const activeTarget = activeFloor === null
+    ? Math.max(
+        1,
+        roundDownToNickelCents(Math.max(1, fallbackFloor - 5)),
+      )
+    : Math.max(1, roundDownToNickelCents(Math.max(1, activeFloor - 5)));
   const unconstrainedFasterAmount = Math.max(
     1,
-    roundDownToNickelCents(activeFloor === null
-      ? Math.min(recommendation.amountCents, fallbackFloor - 5)
-      : activeFloor - 5),
+    Math.min(activeTarget, recommendationCeiling),
   );
+  const limitedByRecommendation = activeTarget > recommendationCeiling;
   const validMinimumListingPriceCents = Number.isInteger(minimumListingPriceCents) &&
     minimumListingPriceCents > 0
     ? minimumListingPriceCents
@@ -437,6 +448,8 @@ export function buildSaleStrategyOptions(
       label: "Sell faster",
       rationale: limitedByFloor
         ? "Sell Faster is below your floor limit. Floor limit used instead."
+        : limitedByRecommendation
+          ? "A compatible active asking price was unusually high, so Sell Faster was kept below the grounded recommendation range."
         : activeFloor === null
           ? "No compatible active listing was available, so this uses the lower recommendation range rounded down to the nearest nickel."
           : "Targets 5¢ below the lowest compatible active buyer total, rounded down to the nearest nickel. Shipping is subtracted when the listing is finalized.",

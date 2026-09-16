@@ -77,7 +77,7 @@ test("selling strategies separate the market floor from midpoint and upper value
   assert.equal(snapshot.saleStrategyOptions.maximize_value.amountCents, 295);
 });
 
-test("Sell Faster is not capped by a lower sold-based recommendation when active listings exist", () => {
+test("Sell Faster cannot be inflated by active listings above the grounded recommendation", () => {
   const options = buildSaleStrategyOptions(
     {
       amountCents: 100,
@@ -100,7 +100,8 @@ test("Sell Faster is not capped by a lower sold-based recommendation when active
     raw,
   );
 
-  assert.equal(options.sell_faster.amountCents, 2495);
+  assert.equal(options.sell_faster.amountCents, 95);
+  assert.match(options.sell_faster.rationale, /unusually high/i);
 });
 
 test("Sell Faster rounds the five-cent undercut down to a whole nickel", () => {
@@ -242,7 +243,11 @@ test("exact sold and active evidence are blended with more weight on active list
     completedSalesCount: 4,
   });
   assert.equal(snapshot.activeAskingReference.amountCents, 6000);
-  assert.equal(snapshot.saleStrategyOptions.sell_faster.amountCents, 5495);
+  assert.equal(snapshot.saleStrategyOptions.sell_faster.amountCents, 5290);
+  assert.ok(
+    snapshot.saleStrategyOptions.sell_faster.amountCents <
+      snapshot.saleStrategyOptions.balanced.amountCents,
+  );
 });
 
 test("active asking evidence is a low-confidence fallback when sales are absent", () => {
