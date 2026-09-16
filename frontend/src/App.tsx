@@ -1147,21 +1147,22 @@ function App() {
       });
       const payload = (await response.json().catch(() => null)) as (Partial<EbayImageSearchResult> & { error?: string }) | null;
       if (!response.ok || !Array.isArray(payload?.candidates)) throw new Error(payload?.error ?? "Identity search was unavailable.");
-      if (requestId !== ebayIdentityRequestIdRef.current) return;
+      if (requestId !== ebayIdentityRequestIdRef.current) return cardIdentification;
+      let resolvedIdentification = cardIdentification;
       if (payload.yearVerification || payload.designConsensus) {
-        let catalogFeedback = cardIdentification;
         if (payload.yearVerification) {
-          catalogFeedback = withVisualYearVerification(
-            catalogFeedback,
+          resolvedIdentification = withVisualYearVerification(
+            resolvedIdentification,
             payload.yearVerification,
           );
         }
         if (payload.designConsensus) {
-          catalogFeedback = withCrossPlayerDesignConsensus(
-            catalogFeedback,
+          resolvedIdentification = withCrossPlayerDesignConsensus(
+            resolvedIdentification,
             payload.designConsensus,
           );
         }
+        const consensusIdentification = resolvedIdentification;
         setIdentification((current) => {
           if (!current) return current;
           let updated = current;
@@ -1174,8 +1175,9 @@ function App() {
           originalIdentificationRef.current = updated;
           return updated;
         });
-        if (catalogFeedback !== cardIdentification) {
-          void loadCardCatalogCandidates(catalogFeedback);
+        originalIdentificationRef.current = consensusIdentification;
+        if (consensusIdentification !== cardIdentification) {
+          void loadCardCatalogCandidates(consensusIdentification);
         }
       }
       setEbaySearch((existing) => {
@@ -1190,8 +1192,10 @@ function App() {
           designConsensus: payload.designConsensus ?? existing?.designConsensus ?? null,
         };
       });
+      return resolvedIdentification;
     } catch {
       // Image matches remain available when the optional keyword corroboration degrades.
+      return cardIdentification;
     } finally {
       if (requestId === ebayIdentityRequestIdRef.current) setIsSearchingEbayIdentity(false);
     }
@@ -1375,12 +1379,17 @@ function App() {
         setIsSearchingEbay(false);
         clearPokemonCatalogState();
       } else {
-        void loadEbayIdentityCandidates(payload.identification);
-        void loadCardCatalogCandidates(payload.identification);
-        void loadPokemonCatalogCandidates(payload.identification);
         if (accountPreferences.automationMode === "autopilot") {
+          setIdentificationProgress("Autopilot is cross-checking the front image before saving");
+          const corroboratedIdentification = await loadEbayIdentityCandidates(payload.identification);
+          void loadCardCatalogCandidates(corroboratedIdentification);
+          void loadPokemonCatalogCandidates(corroboratedIdentification);
           setIdentificationProgress("Autopilot is pricing and preparing the eBay listing");
-          await saveIdentificationToCollection(payload.identification);
+          await saveIdentificationToCollection(corroboratedIdentification);
+        } else {
+          void loadEbayIdentityCandidates(payload.identification);
+          void loadCardCatalogCandidates(payload.identification);
+          void loadPokemonCatalogCandidates(payload.identification);
         }
       }
     } catch (caughtError) {
@@ -2579,7 +2588,7 @@ function App() {
 
             {identification.backPhoto.suggested && !backFile && (
               <div className="follow-up-note">
-                <strong>A back photo could materially improve this match.</strong>
+                <strong>Optional: a back photo could materially improve this difficult match.</strong>
                 <span>{identification.backPhoto.reason} Estimated gain: +{Math.round(identification.backPhoto.expectedConfidenceGain * 100)} points.</span>
               </div>
             )}
@@ -2588,7 +2597,7 @@ function App() {
               <>
                 <div className="result-actions">
                   {identification.backPhoto.suggested && !backFile && (
-                    <button className="secondary-button" type="button" onClick={() => openPicker("back")}>Take back photo</button>
+                    <button className="secondary-button" type="button" onClick={() => openPicker("back")}>Add optional back photo</button>
                   )}
                   {!isUnsupportedIdentification(identification) && (
                     <button
