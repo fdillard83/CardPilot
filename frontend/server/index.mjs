@@ -2147,7 +2147,10 @@ app.post("/api/ebay/listings/apply-price-positioning", async (request, response)
         if (exactTargetItemPriceCents < position.minimumPriceCents) {
           throw new Error("Your account minimum prevents the requested exact delivered-price position.");
         }
-        if (requestedShippingChange && requested.shippingService === "STANDARD_ENVELOPE" && exactTargetItemPriceCents >= 2_000) {
+        const nextShippingService = requestedShippingChange
+          ? requested.shippingService
+          : position.ownShippingService;
+        if (nextShippingService === "STANDARD_ENVELOPE" && exactTargetItemPriceCents >= 2_000) {
           throw new Error("eBay Standard Envelope requires an eligible item price below $20.");
         }
         await assertListingCostSafety(userId, {
@@ -2155,7 +2158,7 @@ app.post("/api/ebay/listings/apply-price-positioning", async (request, response)
           priceCents: exactTargetItemPriceCents,
           fulfillmentPolicyId: saved.fulfillmentPolicyId,
         }, token, nextShippingCostCents);
-        if (position.currentDeliveredPriceCents <= position.lowestCompetitorDeliveredPriceCents - position.undercutCents ||
+        if (position.currentDeliveredPriceCents === position.lowestCompetitorDeliveredPriceCents - position.undercutCents ||
           exactTargetItemPriceCents !== requested.proposedPriceCents) {
           throw new Error("The market position changed after this review. Check it again before applying.");
         }

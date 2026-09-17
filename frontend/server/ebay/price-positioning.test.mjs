@@ -49,6 +49,44 @@ test("price positioning excludes the seller's own listing and respects the accou
   assert.equal(result.limitedByMinimum, true);
 });
 
+test("delivered positioning proposes a safe price increase when the exact market moved higher", () => {
+  const result = deliveredPricePosition({
+    snapshot: { groups: [{ matchTier: "exact", classification: "raw", label: "Raw / ungraded", confidence: "high", listings: [
+      listing({ totalPriceCents: 1_500 }),
+    ] }] },
+    grading: { isGraded: false },
+    ownListingId: "mine",
+    currentItemPriceCents: 900,
+    ownShippingCostCents: 100,
+    minimumPriceCents: 199,
+    undercutCents: 5,
+  });
+
+  assert.equal(result.proposedItemPriceCents, 1_395);
+  assert.equal(result.proposedDeliveredPriceCents, 1_495);
+  assert.equal(result.shouldChange, true);
+  assert.equal(result.shouldLower, false);
+  assert.equal(result.priceDirection, "increase");
+});
+
+test("delivered positioning identifies an unchanged market position", () => {
+  const result = deliveredPricePosition({
+    snapshot: { groups: [{ matchTier: "exact", classification: "raw", label: "Raw / ungraded", confidence: "high", listings: [
+      listing({ totalPriceCents: 1_005 }),
+    ] }] },
+    grading: { isGraded: false },
+    ownListingId: "mine",
+    currentItemPriceCents: 900,
+    ownShippingCostCents: 100,
+    minimumPriceCents: 199,
+    undercutCents: 5,
+  });
+
+  assert.equal(result.proposedDeliveredPriceCents, 1_000);
+  assert.equal(result.shouldChange, false);
+  assert.equal(result.priceDirection, "unchanged");
+});
+
 test("shipping policies expose the amount paid by the buyer", () => {
   assert.equal(fulfillmentBuyerShippingCents({ shippingOptions: [{ optionType: "DOMESTIC", shippingServices: [{ shippingCost: { value: "1.25" } }] }] }), 125);
   assert.equal(fulfillmentBuyerShippingCents({ shippingOptions: [{ optionType: "DOMESTIC", shippingServices: [{ freeShipping: true, shippingCost: { value: "9.99" } }] }] }), 0);

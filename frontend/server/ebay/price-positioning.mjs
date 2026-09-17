@@ -63,6 +63,11 @@ export function deliveredPricePosition({
   const floor = Math.max(1, cents(minimumPriceCents) ?? 1);
   const undercut = Math.max(0, cents(undercutCents) ?? 5);
   const targetItemPrice = Math.max(floor, lowest.totalPriceCents - ownShipping - undercut);
+  const priceDirection = targetItemPrice > currentPrice
+    ? "increase"
+    : targetItemPrice < currentPrice
+      ? "decrease"
+      : "unchanged";
   const visuallyConfirmed = lowest.visualMatchStatus === "matched" || lowest.confirmedReference === true;
   const safeToReprice = lowest.groupConfidence !== "low" || visuallyConfirmed;
   return {
@@ -78,6 +83,8 @@ export function deliveredPricePosition({
     minimumPriceCents: floor,
     limitedByMinimum: targetItemPrice === floor && floor > lowest.totalPriceCents - ownShipping - undercut,
     shouldLower: targetItemPrice < currentPrice,
+    shouldChange: targetItemPrice !== currentPrice,
+    priceDirection,
     safeToReprice,
     exactMatchCount: candidates.length,
     confidence: groups.some((group) => group.confidence === "high")

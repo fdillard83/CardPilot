@@ -73,6 +73,8 @@ type DeliveredPricePosition = {
   confidence?: "low" | "medium" | "high";
   safeToReprice?: boolean;
   shouldLower?: boolean;
+  shouldChange?: boolean;
+  priceDirection?: "increase" | "decrease" | "unchanged";
   limitedByMinimum?: boolean;
   lowestCompetitor?: { title: string; itemWebUrl: string | null };
   profitability?: {
@@ -133,20 +135,35 @@ function reviewedDeliveredPriceChange(
   if (shippingCostCents === null || shippingCostCents > 10_000) return null;
   const targetDeliveredPriceCents = (position.lowestCompetitorDeliveredPriceCents ?? 0) - (position.undercutCents ?? 5);
   const proposedItemPriceCents = targetDeliveredPriceCents - shippingCostCents;
-  if (targetDeliveredPriceCents >= (position.currentDeliveredPriceCents ?? 0) ||
+  const shippingService = shippingChoice?.enabled
+    ? shippingChoice.service
+    : position.ownShippingService ?? "GROUND";
+  if (targetDeliveredPriceCents === (position.currentDeliveredPriceCents ?? 0) ||
     proposedItemPriceCents < (position.minimumPriceCents ?? 1)) return null;
-  if (shippingChoice?.enabled && shippingChoice.service === "STANDARD_ENVELOPE" && proposedItemPriceCents >= 2_000) return null;
+  if (shippingService === "STANDARD_ENVELOPE" && proposedItemPriceCents >= 2_000) return null;
   return {
     proposedItemPriceCents,
     shippingCostCents,
     targetDeliveredPriceCents,
     shippingChanged: shippingChoice?.enabled === true,
-    shippingService: shippingChoice?.service ?? position.ownShippingService ?? "GROUND",
+    shippingService,
   };
 }
 
 function canApplyDeliveredPricePosition(position: DeliveredPricePosition) {
   return reviewedDeliveredPriceChange(position) !== null;
+}
+
+function hasActionableDeliveredPricePosition(position: DeliveredPricePosition) {
+  if (!position.ok || !position.safeToReprice ||
+    !Number.isInteger(position.currentDeliveredPriceCents) ||
+    !Number.isInteger(position.lowestCompetitorDeliveredPriceCents)) return false;
+  const targetDeliveredPriceCents =
+    (position.lowestCompetitorDeliveredPriceCents ?? 0) - (position.undercutCents ?? 5);
+  if (targetDeliveredPriceCents === position.currentDeliveredPriceCents) return false;
+  // A user can reduce buyer-paid shipping to $0, so a target beneath the item
+  // price floor is the only target that can never become a valid change.
+  return targetDeliveredPriceCents >= (position.minimumPriceCents ?? 1);
 }
 
 function searchableText(card: SavedCollectionCard) {
@@ -1658,8 +1675,17 @@ export function CollectionView({
         collectionId,
         error: "CardPilot could not compare this delivered price.",
       }));
+      const actionableResults = orderedResults.filter(hasActionableDeliveredPricePosition);
+      const skippedCount = orderedResults.length - actionableResults.length;
       setSelectedPricePositionIds(uniqueCollectionIds);
-      setPricePositions(orderedResults);
+      setPricePositions(actionableResults);
+      setPricePositionMessage(
+        actionableResults.length === 0
+          ? `No actionable price changes were found. ${skippedCount} listing${skippedCount === 1 ? " was" : "s were"} already positioned, below a price floor, or lacked safe exact-card evidence.`
+          : skippedCount > 0
+            ? `${actionableResults.length} actionable price change${actionableResults.length === 1 ? "" : "s"} found. ${skippedCount} non-actionable listing${skippedCount === 1 ? " was" : "s were"} omitted.`
+            : `${actionableResults.length} actionable price change${actionableResults.length === 1 ? "" : "s"} found.`,
+      );
       onPriceComparisonComplete();
       setMarketMinimumWarnings((current) => {
         const next = { ...current };
@@ -1670,8 +1696,8 @@ export function CollectionView({
         }
         return next;
       });
-      setSelectedPriceApplyIds(orderedResults.filter(canApplyDeliveredPricePosition).map((position) => position.collectionId));
-      setPriceShippingChoices(Object.fromEntries(orderedResults.filter((position) => position.ok).map((position) => [position.collectionId, {
+      setSelectedPriceApplyIds(actionableResults.filter(canApplyDeliveredPricePosition).map((position) => position.collectionId));
+      setPriceShippingChoices(Object.fromEntries(actionableResults.map((position) => [position.collectionId, {
         enabled: false,
         amount: amountInputFromCents(position.ownShippingCostCents ?? 0),
         service: position.ownShippingService ?? "GROUND",
@@ -3207,8 +3233,8 @@ export function CollectionView({
       {collectionSection === "collection" && activeListingCards.length > 0 && <section className="collection-price-positioning" aria-labelledby="delivered-price-title">
         <div>
           <span>Match the lowest exact-card buyer total</span>
-          <strong id="delivered-price-title">Set selected buyer totals below the closest exact match</strong>
-          <small>CardPilot compares the full amount a buyer pays: item price plus shipping. The default target is 5¢ below; your saved Account setting controls the exact amount. By default CardPilot changes only the item price, but you can explicitly choose a different shipping charge for an individual card during review.</small>
+          <strong id="delivered-price-title">Review actionable buyer-total price changes</strong>
+          <small>CardPilot compares the full amount a buyer pays: item price plus shipping. The target is below the closest exact match by the amount saved in Account settings. Safe increases and decreases are both available. Unchanged, below-floor, and otherwise non-actionable cards are omitted.</small>
         </div>
         <label className="collection-price-threshold">
           <span>Only compare current item prices at or above</span>
@@ -3251,6 +3277,7 @@ export function CollectionView({
             const checked = canApply && selectedPriceApplyIds.includes(position.collectionId);
             const currency = position.currency ?? "USD";
             const targetBuyerTotal = (position.lowestCompetitorDeliveredPriceCents ?? 0) - (position.undercutCents ?? 5);
+            const priceDirection = targetBuyerTotal > (position.currentDeliveredPriceCents ?? 0) ? "Increase" : "Decrease";
             return <li className={`${position.ok ? "" : "unavailable"}${checked ? " selected" : ""}`} key={position.collectionId}>
               <label className="collection-price-review-choice">
                 <input type="checkbox" checked={checked} disabled={!canApply || priceApplyBusy} onChange={() => setSelectedPriceApplyIds((current) => current.includes(position.collectionId) ? current.filter((id) => id !== position.collectionId) : [...current, position.collectionId])} />
@@ -3267,13 +3294,12 @@ export function CollectionView({
                   <label><span>New buyer shipping charge</span><div className="account-inline-unit"><span>$</span><input type="text" inputMode="decimal" value={shippingChoice.amount} disabled={priceApplyBusy} onChange={(event) => setPriceShippingChoices((current) => ({ ...current, [position.collectionId]: { ...shippingChoice, amount: event.target.value } }))} /></div></label>
                   <label><span>Shipping method</span><select value={shippingChoice.service} disabled={priceApplyBusy} onChange={(event) => setPriceShippingChoices((current) => ({ ...current, [position.collectionId]: { ...shippingChoice, service: event.target.value as DeliveredPriceShippingChoice["service"] } }))}><option value="STANDARD_ENVELOPE">eBay Standard Envelope</option><option value="GROUND">USPS Ground Advantage</option><option value="PRIORITY">USPS Priority Mail</option></select></label>
                 </div>}
-                {reviewedChange && <strong className="collection-price-equation">New item price {formatPrice(reviewedChange.proposedItemPriceCents, currency)} + {reviewedChange.shippingChanged ? "new" : "unchanged"} shipping {formatPrice(reviewedChange.shippingCostCents, currency)} = {formatPrice(reviewedChange.targetDeliveredPriceCents, currency)}</strong>}
+                {reviewedChange && <strong className="collection-price-equation">{priceDirection} item price to {formatPrice(reviewedChange.proposedItemPriceCents, currency)} + {reviewedChange.shippingChanged ? "new" : "unchanged"} shipping {formatPrice(reviewedChange.shippingCostCents, currency)} = {formatPrice(reviewedChange.targetDeliveredPriceCents, currency)}</strong>}
                 <small>{formatPrice(position.undercutCents ?? 5, currency)} below the lowest exact-match buyer total · {position.exactMatchCount} exact match{position.exactMatchCount === 1 ? "" : "es"} · {position.confidence} confidence</small>
                 <MarketMinimumProfitabilityWarning position={position} />
                 {position.lowestCompetitor?.itemWebUrl && <a href={position.lowestCompetitor.itemWebUrl} target="_blank" rel="noreferrer">Inspect the matching listing used</a>}
                 {!position.safeToReprice && <small>Not selectable: the exact-card evidence is not strong enough.</small>}
-                {position.safeToReprice && !reviewedChange && (position.currentDeliveredPriceCents ?? 0) <= targetBuyerTotal && <small>Not selectable: your buyer total is already at or below this position.</small>}
-                {position.safeToReprice && !reviewedChange && (position.currentDeliveredPriceCents ?? 0) > targetBuyerTotal && <small>Not selectable: enter a valid shipping charge that keeps the item price above your account minimum. Standard Envelope also requires an item price below $20.</small>}
+                {position.safeToReprice && !reviewedChange && <small>Choose a valid shipping charge and service that keeps the item price above your account minimum. Standard Envelope also requires an item price below $20.</small>}
               </>}
             </li>;
           })}</ul>
